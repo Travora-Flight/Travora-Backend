@@ -69,11 +69,13 @@ public class AdminDashboardService : IAdminDashboardService
 
         var lastRequests = lastOrders.Select(o => new LastRequestItem
         {
-            OrderId = o.Id,
-            ClientName = o.Customer?.FullName ?? "Unknown",
-            Type = o.IsPackage ? "package_service" : "service",
+            OrderId = o.OrderId,
+            ClientName = o.Customer != null ? $"{o.Customer.Firstname} {o.Customer.Lastname}" : "Unknown",
+            Type = o.PackageId > 0 ? "package_service" : "service",
             Status = o.OrderStatus.ToString().ToLower(),
-            AssignedEmployee = o.OrderServices.FirstOrDefault(os => os.AssignedEmployee != null)?.AssignedEmployee?.FullName ?? "Not Assigned",
+            AssignedEmployee = o.OrderServices.FirstOrDefault(os => os.AssignedEmployee != null)?.AssignedEmployee != null
+                ? $"{o.OrderServices.First(os => os.AssignedEmployee != null).AssignedEmployee!.Firstname} {o.OrderServices.First(os => os.AssignedEmployee != null).AssignedEmployee!.Lastname}"
+                : "Not Assigned",
             Time = o.CreatedAt.ToString("hh:mm tt")
         }).ToList();
 

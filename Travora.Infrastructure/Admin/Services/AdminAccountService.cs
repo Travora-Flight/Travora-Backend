@@ -22,10 +22,10 @@ public class AdminAccountService : IAdminAccountService
 
         return new AdminAccountResponse
         {
-            AdminId = admin.Id,
+            AdminId = admin.AdminId,
             FullName = admin.FullName,
             Email = admin.Email,
-            Phone = admin.MobileNumber ?? string.Empty,
+            Phone = admin.PhoneNumber ?? string.Empty,
             IsSuperAdmin = admin.IsSuperAdmin
         };
     }
@@ -41,16 +41,16 @@ public class AdminAccountService : IAdminAccountService
 
         admin.FullName = request.FullName;
         admin.Email = request.Email;
-        admin.MobileNumber = request.Phone;
+        admin.PhoneNumber = request.Phone;
 
         await _db.SaveChangesAsync();
 
         return new AdminAccountResponse
         {
-            AdminId = admin.Id,
+            AdminId = admin.AdminId,
             FullName = admin.FullName,
             Email = admin.Email,
-            Phone = admin.MobileNumber ?? string.Empty,
+            Phone = admin.PhoneNumber ?? string.Empty,
             IsSuperAdmin = admin.IsSuperAdmin
         };
     }
