@@ -48,6 +48,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAdminDashboardService, Travora.Infrastructure.AdminPanel.Services.AdminDashboardService>();
         services.AddScoped<IAdminEmployeeService, Travora.Infrastructure.AdminPanel.Services.AdminEmployeeService>();
         services.AddScoped<IAdminRequestService, Travora.Infrastructure.AdminPanel.Services.AdminRequestService>();
+        services.AddScoped<IAdminLiveTrackerService, Travora.Infrastructure.AdminPanel.Services.AdminLiveTrackerService>();
+        services.AddScoped<IAdminPassportService, Travora.Infrastructure.AdminPanel.Services.AdminPassportService>();
 
         // Admin Validators
         var fluentValidationAssemblies = new[] { typeof(Travora.Application.Validators.Admin.Employees.CreateEmployeeValidator).Assembly };

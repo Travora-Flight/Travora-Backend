@@ -48,4 +48,6 @@ app.UseRateLimiter();
 // 3. باقي الـ Middleware
 app.UseTravoraMiddleware();
 
+app.MapHub<Travora.API.Hubs.LiveTrackingHub>("/hubs/admin/live-tracking");
+
 app.Run();

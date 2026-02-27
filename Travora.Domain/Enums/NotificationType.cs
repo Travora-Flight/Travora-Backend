@@ -11,5 +11,6 @@ public enum NotificationType
     FlightDelayed,
     FlightCancelled,
     BoardingReminder,
-    DeliveryScheduled
+    DeliveryScheduled,
+    AccountAlert
 }
