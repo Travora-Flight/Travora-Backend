@@ -2,7 +2,11 @@ using Microsoft.EntityFrameworkCore;
 using Travora.API.Configurations;
 using Travora.Shared.Settings;
 using Travora.Application.Interfaces;
+using Travora.Application.Interfaces.External.Communication;
+using Travora.Application.Interfaces.External.FileStorage;
 using Travora.Infrastructure.Data;
+using Travora.Infrastructure.ExternalServices.Communication;
+using Travora.Infrastructure.ExternalServices.FileStorage.Cloudinary;
 using Travora.Infrastructure.Identity.Services;
 
 namespace Travora.API.Extensions;
@@ -37,18 +41,20 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IJwtTokenGenerator>(new JwtTokenGenerator(jwtSettings));
         services.AddScoped<IAuthService, AuthService>();
 
-        // Cloudinary Settings
+        // Cloudinary Settings + Service
         var cloudinarySettings = configuration.GetSection("CloudinarySettings").Get<CloudinarySettings>();
         if (cloudinarySettings != null)
         {
             services.AddSingleton(cloudinarySettings);
+            services.AddSingleton<ICloudinaryService>(new CloudinaryService(cloudinarySettings));
         }
 
-        // Email Settings
+        // Email Settings + Service
         var emailSettings = configuration.GetSection("MailSettings").Get<EmailSettings>();
         if (emailSettings != null)
         {
             services.AddSingleton(emailSettings);
+            services.AddScoped<IEmailService, EmailService>();
         }
 
         // App Settings (API integrations)

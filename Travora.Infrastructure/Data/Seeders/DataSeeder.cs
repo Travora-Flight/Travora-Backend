@@ -12,6 +12,27 @@ public static class DataSeeder
         await SeedAdminAsync(db);
         await SeedCheckpointsAsync(db);
         await SeedVehiclesAsync(db);
+        await SeedAppSettingsAsync(db);
+    }
+
+    private static async Task SeedAppSettingsAsync(ApplicationDbContext db)
+    {
+        if (await db.AppSettings.AnyAsync()) return;
+
+        db.AppSettings.Add(new AppSettings
+        {
+            CompanyName = "Travora",
+            CompanyEmail = "info@travora.com",
+            CompanyPhone = "+20 100 123 4567",
+            CompanyAddress = "Cairo, Egypt",
+            Timezone = "+2 GMT",
+            Language = "English",
+            ShowEmployeeNamesOnMap = true,
+            AutoRefresh = true,
+            CreatedAt = DateTime.UtcNow
+        });
+
+        await db.SaveChangesAsync();
     }
 
     private static async Task SeedAdminAsync(ApplicationDbContext db)
