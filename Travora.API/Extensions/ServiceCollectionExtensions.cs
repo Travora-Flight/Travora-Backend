@@ -41,6 +41,11 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IJwtTokenGenerator>(new JwtTokenGenerator(jwtSettings));
         services.AddScoped<IAuthService, AuthService>();
 
+        // Admin Services
+        services.AddScoped<IAdminAccountService, Travora.Infrastructure.AdminPanel.Services.AdminAccountService>();
+        services.AddScoped<IAdminSettingsService, Travora.Infrastructure.AdminPanel.Services.AdminSettingsService>();
+        services.AddScoped<IAdminDashboardService, Travora.Infrastructure.AdminPanel.Services.AdminDashboardService>();
+
         // Cloudinary Settings + Service
         var cloudinarySettings = configuration.GetSection("CloudinarySettings").Get<CloudinarySettings>();
         if (cloudinarySettings != null)
