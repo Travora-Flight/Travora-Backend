@@ -17,7 +17,7 @@ public class AuthController : ControllerBase
         _authService = authService;
     }
 
-    [HttpPost("admin/login")]
+    [HttpPost("/api/v1/admin/auth/login")]
     public async Task<IActionResult> AdminLogin([FromBody] LoginRequest request)
     {
         var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
