@@ -35,6 +35,10 @@ public static class ServiceCollectionExtensions
                 options.Configuration = redisSettings.ConnectionString;
                 options.InstanceName = redisSettings.InstanceName;
             });
+            
+            // Register IConnectionMultiplexer directly for StackExchange.Redis usage
+            services.AddSingleton<StackExchange.Redis.IConnectionMultiplexer>(sp => 
+                StackExchange.Redis.ConnectionMultiplexer.Connect(redisSettings.ConnectionString));
         }
 
         // JWT Token Generator + Auth Service
@@ -51,6 +55,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAdminLiveTrackerService, Travora.Infrastructure.AdminPanel.Services.AdminLiveTrackerService>();
         services.AddScoped<IAdminPassportService, Travora.Infrastructure.AdminPanel.Services.AdminPassportService>();
         services.AddScoped<IAdminPricingService, Travora.Infrastructure.AdminPanel.Services.AdminPricingService>();
+        services.AddScoped<IAdminReportService, Travora.Infrastructure.AdminPanel.Services.AdminReportService>();
 
         // Admin Validators
         var fluentValidationAssemblies = new[] { typeof(Travora.Application.Validators.Admin.Employees.CreateEmployeeValidator).Assembly };
