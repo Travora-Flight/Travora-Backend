@@ -16,10 +16,12 @@ public class LoginLog
     public string SessionToken { get; set; } = string.Empty;
 
     // Foreign keys
+    public int? AdminId { get; set; }
     public int? CustomerId { get; set; }
     public int? EmployeeId { get; set; }
 
     // Navigation properties
+    public Admin? Admin { get; set; }
     public Customer? Customer { get; set; }
     public Employee? Employee { get; set; }
 }

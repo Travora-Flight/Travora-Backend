@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Travora.API.Configurations;
 using Travora.Shared.Settings;
+using Travora.Application.Interfaces;
 using Travora.Infrastructure.Data;
 using Travora.Infrastructure.Identity.Services;
 
@@ -31,9 +32,10 @@ public static class ServiceCollectionExtensions
             });
         }
 
-        // JWT Token Generator
+        // JWT Token Generator + Auth Service
         var jwtSettings = configuration.GetSection("JwtSettings").Get<JwtSettings>()!;
-        services.AddSingleton(new JwtTokenGenerator(jwtSettings));
+        services.AddSingleton<IJwtTokenGenerator>(new JwtTokenGenerator(jwtSettings));
+        services.AddScoped<IAuthService, AuthService>();
 
         // Cloudinary Settings
         var cloudinarySettings = configuration.GetSection("CloudinarySettings").Get<CloudinarySettings>();

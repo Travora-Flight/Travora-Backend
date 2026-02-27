@@ -19,7 +19,6 @@ public static class ApplicationBuilderExtensions
         app.UseCors("TravoraPolicy");
         app.UseAuthentication();
         app.UseAuthorization();
-        app.MapGet("/", () => Results.Redirect("/swagger"));
         app.MapControllers();
 
         return app;

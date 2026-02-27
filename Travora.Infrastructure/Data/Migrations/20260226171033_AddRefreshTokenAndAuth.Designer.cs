@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Travora.Infrastructure.Data;
 
@@ -11,9 +12,11 @@ using Travora.Infrastructure.Data;
 namespace Travora.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260226171033_AddRefreshTokenAndAuth")]
+    partial class AddRefreshTokenAndAuth
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1840,9 +1843,6 @@ namespace Travora.Infrastructure.Data.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("LogId"));
 
-                    b.Property<int?>("AdminId")
-                        .HasColumnType("int");
-
                     b.Property<int?>("CustomerId")
                         .HasColumnType("int");
 
@@ -1887,8 +1887,6 @@ namespace Travora.Infrastructure.Data.Migrations
                         .HasColumnType("int");
 
                     b.HasKey("LogId");
-
-                    b.HasIndex("AdminId");
 
                     b.HasIndex("CustomerId");
 
@@ -3275,11 +3273,6 @@ namespace Travora.Infrastructure.Data.Migrations
 
             modelBuilder.Entity("Travora.Domain.Entities.LoginLog", b =>
                 {
-                    b.HasOne("Travora.Domain.Entities.Admin", "Admin")
-                        .WithMany()
-                        .HasForeignKey("AdminId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.HasOne("Travora.Domain.Entities.Customer", "Customer")
                         .WithMany("LoginLogs")
                         .HasForeignKey("CustomerId")
@@ -3289,8 +3282,6 @@ namespace Travora.Infrastructure.Data.Migrations
                         .WithMany("LoginLogs")
                         .HasForeignKey("EmployeeId")
                         .OnDelete(DeleteBehavior.Restrict);
-
-                    b.Navigation("Admin");
 
                     b.Navigation("Customer");
 

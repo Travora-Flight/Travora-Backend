@@ -15,6 +15,11 @@ public class LoginLogConfiguration : IEntityTypeConfiguration<LoginLog>
         builder.Property(l => l.FailureReason).HasMaxLength(300);
         builder.Property(l => l.SessionToken).HasMaxLength(500);
 
+        builder.HasOne(l => l.Admin)
+            .WithMany()
+            .HasForeignKey(l => l.AdminId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         builder.HasOne(l => l.Customer)
             .WithMany(c => c.LoginLogs)
             .HasForeignKey(l => l.CustomerId)

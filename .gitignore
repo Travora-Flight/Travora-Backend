@@ -677,5 +677,7 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
-Travora.API/appsettings.*.json
-Travora.API/appsettings.json
+Travora.APIappsettings.*.json
+Travora.API/appsettings.jsonT r a v o r a . A P I / a p p s e t t i n g s . * . j s o n 
+ 
+ 
