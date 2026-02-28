@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json.Serialization;
 using Travora.API.Extensions;
 using Travora.API.Middleware;
 using Travora.Infrastructure.Data;
@@ -7,7 +8,12 @@ using Travora.Infrastructure.Data.Seeders;
 var builder = WebApplication.CreateBuilder(args);
 
 // ===== تسجيل الخدمات =====
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        // السطر ده هو اللي بيحول الأرقام لأسماء الـ Enum في السواجر والـ API كله
+        options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+    });
 builder.Services.AddEndpointsApiExplorer();
 
 // Swagger مع JWT

@@ -3,7 +3,7 @@ using Travora.Domain.Enums;
 
 namespace Travora.Domain.Entities;
 
-public class Employee : IHasTimestamps, ISoftDelete
+public class Employee : IHasTimestamps
 {
     public int EmployeeId { get; set; }
     public string Firstname { get; set; } = string.Empty;
@@ -21,6 +21,7 @@ public class Employee : IHasTimestamps, ISoftDelete
     public DateTime HireDate { get; set; } = DateTime.UtcNow;
     public ShiftType ShiftType { get; set; }
     public bool IsActive { get; set; } = true;
+    public bool IsDeleted { get; set; } = false;
     public bool IsFirstLogin { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }

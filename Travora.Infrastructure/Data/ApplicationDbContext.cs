@@ -97,6 +97,10 @@ public class ApplicationDbContext : DbContext
                 modelBuilder.Entity(entityType.ClrType).HasQueryFilter(filter);
             }
         }
+
+        modelBuilder.Entity<Employee>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<Service>().HasQueryFilter(s => !s.IsDeleted);
+        modelBuilder.Entity<Package>().HasQueryFilter(p => !p.IsDeleted);
     }
 
     public override int SaveChanges()

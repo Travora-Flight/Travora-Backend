@@ -3,7 +3,7 @@ using Travora.Domain.Enums;
 
 namespace Travora.Domain.Entities;
 
-public class Service : IHasTimestamps, ISoftDelete
+public class Service : IHasTimestamps
 {
     public int ServiceId { get; set; }
     public string ServiceCode { get; set; } = string.Empty;
@@ -12,6 +12,7 @@ public class Service : IHasTimestamps, ISoftDelete
     public decimal BasePrice { get; set; }
     public string Description { get; set; } = string.Empty;
     public bool IsActive { get; set; } = true;
+    public bool IsDeleted { get; set; } = false;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
 

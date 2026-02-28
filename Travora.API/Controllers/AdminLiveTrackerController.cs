@@ -23,8 +23,7 @@ public class AdminLiveTrackerController : ControllerBase
         return Ok(result);
     }
 
-    [HttpGet("{employeeId}")]
-    [Route("~/api/v1/admin/employees/{employeeId}/location-details")]
+    [HttpGet("~/api/v1/admin/employees/{employeeId}/location-details")]
     public async Task<IActionResult> GetEmployeeLocationDetailsAsync(int employeeId)
     {
         var result = await _liveTrackerService.GetEmployeeLocationDetailsAsync(employeeId);

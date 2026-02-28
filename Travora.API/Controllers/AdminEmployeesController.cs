@@ -27,9 +27,9 @@ public class AdminEmployeesController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetEmployeesAsync([FromQuery] string? search, [FromQuery] int page = 1, [FromQuery] int pageSize = 10)
+    public async Task<IActionResult> GetEmployeesAsync([FromQuery] string? search, [FromQuery] Travora.Domain.Enums.EmployeeFilterStatus status = Travora.Domain.Enums.EmployeeFilterStatus.Active, [FromQuery] int page = 1, [FromQuery] int pageSize = 10)
     {
-        var result = await _employeeService.GetEmployeesAsync(search, page, pageSize);
+        var result = await _employeeService.GetEmployeesAsync(search, status.ToString(), page, pageSize);
         return Ok(result);
     }
 

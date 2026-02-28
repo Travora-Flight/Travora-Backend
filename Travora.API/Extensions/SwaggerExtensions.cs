@@ -18,6 +18,20 @@ public static class SwaggerExtensions
                     Email = "support@travora.com"
                 }
             });
+            options.OrderActionsBy(apiDesc =>
+            {
+                // بنجيب اسم الـ Controller
+                var controllerName = apiDesc.ActionDescriptor.RouteValues["controller"];
+
+                // لو الكنترولر اسمه Auth، هنديله الأولوية "0" عشان يترسم فوق خالص
+                if (controllerName == "Auth")
+                {
+                    return "0";
+                }
+
+                // أي كنترولر تاني هنديله "1" وبعدين اسمه، عشان ينزلوا تحت ويترتبوا أبجدي
+                return $"1_{controllerName}";
+            });
 
             // إعداد JWT في Swagger
             options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme

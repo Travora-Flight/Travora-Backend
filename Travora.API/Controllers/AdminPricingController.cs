@@ -1,13 +1,13 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Travora.Application.DTOs.Admin.Pricing;
 using Travora.Application.Interfaces;
 
 namespace Travora.API.Controllers;
 
 [ApiController]
-[Route("api/v1/admin/pricing")]
+[Route("api/v1/admin/dashboard")]
 [Authorize(Roles = "admin")]
+[Tags("AdminPricing")]
 public class AdminPricingController : ControllerBase
 {
     private readonly IAdminPricingService _pricingService;
@@ -17,24 +17,10 @@ public class AdminPricingController : ControllerBase
         _pricingService = pricingService;
     }
 
-    [HttpGet]
-    public async Task<IActionResult> GetPricingOverviewAsync()
+    [HttpGet("Pricing")]
+    public async Task<IActionResult> GetDashboardPricingStatsAsync()
     {
-        var result = await _pricingService.GetPricingOverviewAsync();
-        return Ok(result);
-    }
-
-    [HttpPatch("services/{serviceId}")]
-    public async Task<IActionResult> UpdateServicePriceAsync(int serviceId, [FromBody] UpdateServicePriceRequest request)
-    {
-        await _pricingService.UpdateServicePriceAsync(serviceId, request);
-        return Ok(new { success = true });
-    }
-
-    [HttpPatch("packages/{packageId}")]
-    public async Task<IActionResult> UpdatePackagePricingAsync(int packageId, [FromBody] UpdatePackagePricingRequest request)
-    {
-        await _pricingService.UpdatePackagePricingAsync(packageId, request);
-        return Ok(new { success = true });
+        var overview = await _pricingService.GetPricingOverviewAsync();
+        return Ok(new { stats = overview.Stats });
     }
 }

@@ -2,7 +2,7 @@ using Travora.Domain.Common;
 
 namespace Travora.Domain.Entities;
 
-public class Package : IHasTimestamps, ISoftDelete
+public class Package : IHasTimestamps
 {
     public int PackageId { get; set; }
     public string PackageCode { get; set; } = string.Empty;
@@ -22,6 +22,7 @@ public class Package : IHasTimestamps, ISoftDelete
 
     public decimal? Discount { get; set; }
     public bool IsActive { get; set; } = true;
+    public bool IsDeleted { get; set; } = false;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
 

@@ -6,6 +6,7 @@ using Travora.Application.Interfaces.External.FileStorage;
 using Travora.Domain.Entities;
 using Travora.Domain.Enums;
 using Travora.Infrastructure.Data;
+using FluentValidation;
 
 namespace Travora.Infrastructure.AdminPanel.Services;
 
@@ -25,22 +26,30 @@ public class AdminEmployeeService : IAdminEmployeeService
         _emailService = emailService;
     }
 
-    public async Task<EmployeePagedResponse> GetEmployeesAsync(string? search, int page, int pageSize)
+    public async Task<EmployeePagedResponse> GetEmployeesAsync(string? search, string? status, int page, int pageSize)
     {
-        var query = _db.Employees.AsQueryable();
+        var baseQuery = _db.Employees.AsQueryable();
 
         if (!string.IsNullOrWhiteSpace(search))
         {
             var searchLower = search.ToLower();
-            query = query.Where(e => 
+            baseQuery = baseQuery.Where(e => 
                 e.Firstname.ToLower().Contains(searchLower) ||
                 e.Lastname.ToLower().Contains(searchLower) ||
                 e.Email.ToLower().Contains(searchLower) ||
                 e.PhoneNumber.Contains(searchLower));
         }
 
-        var total = await query.CountAsync();
-        
+        var activeCount = await baseQuery.CountAsync(e => e.IsActive == true);
+        var inactiveCount = await baseQuery.CountAsync(e => e.IsActive == false);
+        var total = activeCount + inactiveCount;
+
+        var query = baseQuery;
+        if (string.Equals(status, "active", StringComparison.OrdinalIgnoreCase))
+            query = query.Where(e => e.IsActive == true);
+        else if (string.Equals(status, "inactive", StringComparison.OrdinalIgnoreCase))
+            query = query.Where(e => e.IsActive == false);
+
         var employees = await query
             .OrderByDescending(e => e.CreatedAt)
             .Skip((page - 1) * pageSize)
@@ -60,6 +69,8 @@ public class AdminEmployeeService : IAdminEmployeeService
         return new EmployeePagedResponse
         {
             Employees = employees,
+            ActiveCount = activeCount,
+            InactiveCount = inactiveCount,
             Total = total
         };
     }
@@ -98,7 +109,12 @@ public class AdminEmployeeService : IAdminEmployeeService
 
     public async Task<CreateEmployeeResponse> CreateEmployeeAsync(int adminId, CreateEmployeeRequest request)
     {
-        // 1) Validation is already done via FluentValidation but check DB rules
+        // 1) Validation
+        var validator = new Travora.Application.Validators.Admin.Employees.CreateEmployeeValidator();
+        var validationResult = await validator.ValidateAsync(request);
+        if (!validationResult.IsValid)
+            throw new ValidationException(validationResult.Errors);
+
         if (await _db.Employees.AnyAsync(e => e.NationalId == request.NationalId))
             throw new InvalidOperationException("National ID already exists");
 
@@ -238,8 +254,7 @@ public class AdminEmployeeService : IAdminEmployeeService
         var e = await _db.Employees.FindAsync(employeeId)
             ?? throw new KeyNotFoundException("Employee not found");
 
-        // Soft delete based on ISoftDelete global filter implementation
-        e.IsActive = false;
+        e.IsDeleted = true;
         await _db.SaveChangesAsync();
         return true;
     }

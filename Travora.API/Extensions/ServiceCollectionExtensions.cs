@@ -9,6 +9,7 @@ using Travora.Infrastructure.ExternalServices.Communication;
 using Travora.Infrastructure.ExternalServices.FileStorage.Cloudinary;
 using Travora.Infrastructure.Identity.Services;
 using FluentValidation;
+using FluentValidation.AspNetCore;
 
 namespace Travora.API.Extensions;
 
@@ -60,6 +61,7 @@ public static class ServiceCollectionExtensions
         // Admin Validators
         var fluentValidationAssemblies = new[] { typeof(Travora.Application.Validators.Admin.Employees.CreateEmployeeValidator).Assembly };
         services.AddValidatorsFromAssemblies(fluentValidationAssemblies);
+        services.AddFluentValidationAutoValidation();
 
         // Cloudinary Settings + Service
         var cloudinarySettings = configuration.GetSection("CloudinarySettings").Get<CloudinarySettings>();

@@ -4,7 +4,7 @@ namespace Travora.Application.Interfaces;
 
 public interface IAdminEmployeeService
 {
-    Task<EmployeePagedResponse> GetEmployeesAsync(string? search, int page, int pageSize);
+    Task<EmployeePagedResponse> GetEmployeesAsync(string? search, string? status, int page, int pageSize);
     Task<EmployeeProfileResponse> GetEmployeeProfileAsync(int employeeId);
     Task<CreateEmployeeResponse> CreateEmployeeAsync(int adminId, CreateEmployeeRequest request);
     Task<EmployeeProfileResponse> UpdateEmployeeAsync(int employeeId, UpdateEmployeeRequest request);
