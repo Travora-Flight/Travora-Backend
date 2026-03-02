@@ -17,6 +17,7 @@ public class Customer : IHasTimestamps, ISoftDelete
     public string Email { get; set; } = string.Empty;
     public string PasswordHash { get; set; } = string.Empty;
     public bool IsActive { get; set; } = true;
+    public bool IsDeleted { get; set; } = false;
     public CustomerAccountStatus AccountStatus { get; set; } = CustomerAccountStatus.PendingVerification;
     public bool EmailVerified { get; set; } = false;
     public bool ProfileCompleted { get; set; } = false;

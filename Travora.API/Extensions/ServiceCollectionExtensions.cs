@@ -10,6 +10,7 @@ using Travora.Infrastructure.ExternalServices.FileStorage.Cloudinary;
 using Travora.Infrastructure.Identity.Services;
 using FluentValidation;
 using FluentValidation.AspNetCore;
+using Hangfire;
 
 namespace Travora.API.Extensions;
 
@@ -57,6 +58,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAdminPassportService, Travora.Infrastructure.AdminPanel.Services.AdminPassportService>();
         services.AddScoped<IAdminPricingService, Travora.Infrastructure.AdminPanel.Services.AdminPricingService>();
         services.AddScoped<IAdminReportService, Travora.Infrastructure.AdminPanel.Services.AdminReportService>();
+        services.AddScoped<IReportGeneratorJob, Travora.Infrastructure.BackgroundJobs.ReportGeneratorJob>();
 
         // Admin Validators
         var fluentValidationAssemblies = new[] { typeof(Travora.Application.Validators.Admin.Employees.CreateEmployeeValidator).Assembly };
@@ -87,6 +89,7 @@ public static class ServiceCollectionExtensions
         services.Configure<PassportOcrSettings>(configuration.GetSection("PassportOcr"));
         services.Configure<SeedSettings>(configuration.GetSection("SeedSettings"));
 
+
         // HttpClient للـ APIs الخارجية
         services.AddHttpClient("AirlineApi", client =>
         {
@@ -107,6 +110,15 @@ public static class ServiceCollectionExtensions
                 client.Timeout = TimeSpan.FromSeconds(aviationEdge.TimeoutSeconds);
             }
         });
+
+        // Hangfire (Background jobs)
+        services.AddHangfire(config => config
+            .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+            .UseSimpleAssemblyNameTypeSerializer()
+            .UseRecommendedSerializerSettings()
+            .UseSqlServerStorage(connectionString));
+            
+        services.AddHangfireServer();
 
         return services;
     }

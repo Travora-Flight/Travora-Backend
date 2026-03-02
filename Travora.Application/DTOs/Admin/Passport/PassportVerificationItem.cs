@@ -1,13 +1,5 @@
 namespace Travora.Application.DTOs.Admin.Passport;
 
-public class PassportVerificationListResponse
-{
-    public int PendingCount { get; set; }
-    public int ApprovedCount { get; set; }
-    public int RejectedCount { get; set; }
-    public List<PassportVerificationItem> Passports { get; set; } = new();
-}
-
 public class PassportVerificationItem
 {
     public int DocumentId { get; set; }
@@ -22,18 +14,4 @@ public class PassportVerificationItem
     public string Status { get; set; } = string.Empty;
     public decimal OcrConfidenceScore { get; set; }
     public bool ManualReviewRequired { get; set; }
-}
-
-public class PassportInfoDetails
-{
-    public string PassportNumber { get; set; } = string.Empty;
-    public string Nationality { get; set; } = string.Empty;
-    public string DateOfBirth { get; set; } = string.Empty;
-    public string IssueDate { get; set; } = string.Empty;
-    public string ExpiryDate { get; set; } = string.Empty;
-}
-
-public class RejectPassportRequest
-{
-    public string Reason { get; set; } = string.Empty;
 }

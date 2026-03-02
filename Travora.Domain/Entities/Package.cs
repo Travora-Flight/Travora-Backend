@@ -2,7 +2,7 @@ using Travora.Domain.Common;
 
 namespace Travora.Domain.Entities;
 
-public class Package : IHasTimestamps
+public class Package : IHasTimestamps, ISoftDelete
 {
     public int PackageId { get; set; }
     public string PackageCode { get; set; } = string.Empty;

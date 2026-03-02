@@ -20,7 +20,7 @@ public class CloudinaryService : ICloudinaryService
     {
         var extension = Path.GetExtension(fileName).ToLower();
         
-        if (extension == ".pdf" || extension == ".txt" || extension == ".csv")
+        if (extension == ".txt" || extension == ".csv")
         {
             var rawParams = new RawUploadParams
             {

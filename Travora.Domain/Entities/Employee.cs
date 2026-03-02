@@ -3,7 +3,7 @@ using Travora.Domain.Enums;
 
 namespace Travora.Domain.Entities;
 
-public class Employee : IHasTimestamps
+public class Employee : IHasTimestamps, ISoftDelete
 {
     public int EmployeeId { get; set; }
     public string Firstname { get; set; } = string.Empty;

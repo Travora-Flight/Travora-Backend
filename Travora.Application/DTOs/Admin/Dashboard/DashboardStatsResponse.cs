@@ -15,6 +15,4 @@ public class DashboardStatsResponse
     public int DoneRequestsGrowth { get; set; }
     
     public List<WeeklyActivityItem> WeeklyActivity { get; set; } = new();
-    public List<OnlineEmployeeItem> OnlineEmployees { get; set; } = new();
-    public List<LastRequestItem> LastRequests { get; set; } = new();
 }

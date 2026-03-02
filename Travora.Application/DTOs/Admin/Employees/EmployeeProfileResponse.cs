@@ -17,16 +17,3 @@ public class EmployeeProfileResponse
     public int? VehicleId { get; set; }
     public int? CheckpointId { get; set; }
 }
-
-public class EmployeeContactInfo
-{
-    public string Email { get; set; } = string.Empty;
-    public string Mobile { get; set; } = string.Empty;
-}
-
-public class EmployeeAdditionalDetails
-{
-    public string DateOfBirth { get; set; } = string.Empty;
-    public string ShiftType { get; set; } = string.Empty;
-    public string NationalId { get; set; } = string.Empty;
-}

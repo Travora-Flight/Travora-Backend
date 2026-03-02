@@ -1,6 +1,8 @@
+using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using Travora.Application.DTOs.Admin.Reports;
 using Travora.Application.Interfaces;
+using Travora.Domain.Entities;
 using Travora.Domain.Enums;
 using Travora.Infrastructure.Data;
 
@@ -9,109 +11,88 @@ namespace Travora.Infrastructure.AdminPanel.Services;
 public class AdminReportService : IAdminReportService
 {
     private readonly ApplicationDbContext _db;
+    private readonly IBackgroundJobClient _backgroundJobClient;
 
-    public AdminReportService(ApplicationDbContext db)
+    public AdminReportService(ApplicationDbContext db, IBackgroundJobClient backgroundJobClient)
     {
         _db = db;
+        _backgroundJobClient = backgroundJobClient;
     }
 
-    public async Task<ReportDashboardResponse> GetDashboardReportsAsync(DateTime? startDate, DateTime? endDate)
+    public async Task<ReportDashboardDataResponse> GetDashboardStatsAsync()
     {
-        var query = _db.Orders.AsQueryable();
+        var total = await _db.Reports.CountAsync();
+        var completed = await _db.Reports.CountAsync(r => !string.IsNullOrEmpty(r.ReportFilePath));
+        var padding = await _db.Reports.CountAsync(r => string.IsNullOrEmpty(r.ReportFilePath));
 
-        if (startDate.HasValue) query = query.Where(o => o.CreatedAt >= startDate.Value);
-        if (endDate.HasValue) query = query.Where(o => o.CreatedAt <= endDate.Value);
-
-        var orders = await query.ToListAsync();
-
-        var totalRevenue = orders.Where(o => o.OrderStatus == OrderStatus.Completed).Sum(o => o.TotalAmount);
-        var totalOrders = orders.Count;
-        var completed = orders.Count(o => o.OrderStatus == OrderStatus.Completed);
-        var cancelled = orders.Count(o => o.OrderStatus == OrderStatus.Cancelled);
-        var average = completed > 0 ? totalRevenue / completed : 0;
-
-        return new ReportDashboardResponse
+        return new ReportDashboardDataResponse
         {
-            TotalRevenue = totalRevenue,
-            TotalOrders = totalOrders,
-            CompletedOrders = completed,
-            CancelledOrders = cancelled,
-            AverageOrderValue = Math.Round(average, 2)
+            Stats = new ReportStatsResponse
+            {
+                Total = total,
+                Completed = completed,
+                InProgress = padding > 0 ? padding : 0, 
+                Pending = 0 // Keeping it simple for stats
+            }
         };
     }
 
-    public async Task<List<OrderReportItem>> GetOrderReportsAsync(DateTime? startDate, DateTime? endDate, string? status)
+    public async Task<List<ReportListItemResponse>> GetReportsAsync()
     {
-        var query = _db.Orders
-            .Include(o => o.Customer)
-            .AsQueryable();
-
-        if (startDate.HasValue) query = query.Where(o => o.CreatedAt >= startDate.Value);
-        if (endDate.HasValue) query = query.Where(o => o.CreatedAt <= endDate.Value);
-
-        if (!string.IsNullOrWhiteSpace(status))
-        {
-            if (Enum.TryParse<OrderStatus>(status, true, out var parsedStatus))
-                query = query.Where(o => o.OrderStatus == parsedStatus);
-        }
-
-        var orders = await query
-            .OrderByDescending(o => o.CreatedAt)
-            .Take(100) // limit for UI performance if no pagination
-            .ToListAsync();
-
-        return orders.Select(o => new OrderReportItem
-        {
-            OrderId = o.OrderId,
-            ClientName = o.Customer != null ? $"{o.Customer.Firstname} {o.Customer.Lastname}" : "Unknown",
-            ServiceType = o.PackageId > 0 ? "Package" : "Service",
-            TotalAmount = o.TotalAmount,
-            Status = o.OrderStatus.ToString().ToLower(),
-            CreatedAt = o.CreatedAt.ToString("yyyy-MM-dd HH:mm")
-        }).ToList();
-    }
-
-    public async Task<List<EmployeePerformanceItem>> GetEmployeePerformanceAsync(DateTime? startDate, DateTime? endDate)
-    {
-        var query = _db.OrderServices
-            .Include(os => os.AssignedEmployee)
-            .Where(os => os.AssignedEmployeeId != null && os.ServiceStatus == ServiceStatus.Completed)
-            .AsQueryable();
-
-        if (startDate.HasValue) query = query.Where(os => os.CreatedAt >= startDate.Value);
-        if (endDate.HasValue) query = query.Where(os => os.CreatedAt <= endDate.Value);
-
-        var stats = await query
-            .GroupBy(os => os.AssignedEmployeeId)
-            .Select(g => new
+        return await _db.Reports
+            .OrderByDescending(r => r.CreatedAt)
+            .Select(r => new ReportListItemResponse
             {
-                EmployeeId = g.Key.Value,
-                CompletedTasks = g.Count()
+                ReportId = r.ReportId,
+                Name = r.ReportName,
+                Type = r.ReportType.ToString(),
+                Date = r.CreatedAt.ToString("MMM dd, yyyy"),
+                Status = string.IsNullOrEmpty(r.ReportFilePath) ? "inProgress" : "completed"
             })
             .ToListAsync();
+    }
 
-        var employeeIds = stats.Select(s => s.EmployeeId).ToList();
-        var employees = await _db.Employees
-            .Where(e => employeeIds.Contains(e.EmployeeId))
-            .ToListAsync();
-
-        var result = new List<EmployeePerformanceItem>();
-        foreach (var stat in stats)
+    public async Task<object> CreateReportAsync(CreateReportRequest request, int adminId)
+    {
+        var report = new Report
         {
-            var emp = employees.FirstOrDefault(e => e.EmployeeId == stat.EmployeeId);
-            if (emp != null)
-            {
-                result.Add(new EmployeePerformanceItem
-                {
-                    EmployeeId = emp.EmployeeId,
-                    EmployeeName = $"{emp.Firstname} {emp.Lastname}",
-                    JobRole = emp.JobRole.ToString(),
-                    CompletedTasks = stat.CompletedTasks,
-                    Rating = 5.0m // Mock rating, you can implement real rating logic
-                });
-            }
-        }
+            ReportName = request.ReportName,
+            ReportType = request.ReportType,
+            PeriodStartDate = request.StartDate,
+            PeriodEndDate = request.EndDate,
+            GeneratedByAdminId = adminId
+        };
 
-        return result.OrderByDescending(r => r.CompletedTasks).ToList();
+        _db.Reports.Add(report);
+        await _db.SaveChangesAsync();
+
+        // Enqueue Job for processing in background
+        _backgroundJobClient.Enqueue<IReportGeneratorJob>(job => job.GeneratePdfReportAsync(report.ReportId));
+
+        return new
+        {
+            success = true,
+            reportId = report.ReportId,
+            message = "Report generation started in background."
+        };
+    }
+
+    public async Task<Report?> GetReportByIdAsync(int reportId)
+    {
+        return await _db.Reports
+            .Include(r => r.GeneratedByAdmin)
+            .FirstOrDefaultAsync(r => r.ReportId == reportId);
+    }
+
+    public async Task<string> GetReportExportUrlAsync(int reportId)
+    {
+        var report = await _db.Reports.FindAsync(reportId);
+        if (report == null)
+            throw new KeyNotFoundException("Report not found");
+
+        if (string.IsNullOrEmpty(report.ReportFilePath))
+            throw new ApplicationException("Report is still generating or failed. No file available yet.");
+
+        return report.ReportFilePath;
     }
 }

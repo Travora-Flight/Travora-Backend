@@ -4,6 +4,8 @@ using Travora.API.Extensions;
 using Travora.API.Middleware;
 using Travora.Infrastructure.Data;
 using Travora.Infrastructure.Data.Seeders;
+using Hangfire;
+using QuestPDF.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -34,6 +36,8 @@ builder.Services.AddInfrastructureServices(builder.Configuration);
 // SignalR
 builder.Services.AddSignalR();
 
+QuestPDF.Settings.License = LicenseType.Community;
+
 var app = builder.Build();
 
 // ===== Seed Data عند التشغيل =====
@@ -53,6 +57,13 @@ app.UseRateLimiter();
 
 // 3. باقي الـ Middleware
 app.UseTravoraMiddleware();
+
+// 4. Hangfire Dashboard (optional secure config later, for now just open map)
+app.UseHangfireDashboard("/hangfire", new DashboardOptions
+{
+    // By default Hangfire allows local requests only which is fine for dev
+    DashboardTitle = "Travora Background Jobs"
+});
 
 app.MapHub<Travora.API.Hubs.LiveTrackingHub>("/hubs/admin/live-tracking");
 

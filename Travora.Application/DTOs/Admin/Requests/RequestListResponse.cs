@@ -9,9 +9,3 @@ public class RequestListResponse
     public string AssignedEmployee { get; set; } = string.Empty;
     public string Time { get; set; } = string.Empty;
 }
-
-public class RequestPagedResponse
-{
-    public List<RequestListResponse> Requests { get; set; } = new();
-    public int Total { get; set; }
-}

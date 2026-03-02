@@ -92,15 +92,12 @@ public class ApplicationDbContext : DbContext
             if (typeof(ISoftDelete).IsAssignableFrom(entityType.ClrType))
             {
                 var parameter = System.Linq.Expressions.Expression.Parameter(entityType.ClrType, "e");
-                var property = System.Linq.Expressions.Expression.Property(parameter, nameof(ISoftDelete.IsActive));
-                var filter = System.Linq.Expressions.Expression.Lambda(property, parameter);
+                var property = System.Linq.Expressions.Expression.Property(parameter, nameof(ISoftDelete.IsDeleted));
+                var condition = System.Linq.Expressions.Expression.Not(property);
+                var filter = System.Linq.Expressions.Expression.Lambda(condition, parameter);
                 modelBuilder.Entity(entityType.ClrType).HasQueryFilter(filter);
             }
         }
-
-        modelBuilder.Entity<Employee>().HasQueryFilter(e => !e.IsDeleted);
-        modelBuilder.Entity<Service>().HasQueryFilter(s => !s.IsDeleted);
-        modelBuilder.Entity<Package>().HasQueryFilter(p => !p.IsDeleted);
     }
 
     public override int SaveChanges()
