@@ -132,6 +132,8 @@ public class AdminLiveTrackerService : IAdminLiveTrackerService
 
         string status = "offline";
         decimal lat = 0, lng = 0;
+        decimal? speedKmh = null, heading = null;
+        bool isMoving = false;
         string lastUpdated = "offline";
         string? currentTask = null;
 
@@ -145,6 +147,9 @@ public class AdminLiveTrackerService : IAdminLiveTrackerService
                 if (root.TryGetProperty("status", out var statusProp)) status = statusProp.GetString() ?? "available";
                 if (root.TryGetProperty("latitude", out var latProp)) lat = latProp.GetDecimal();
                 if (root.TryGetProperty("longitude", out var lngProp)) lng = lngProp.GetDecimal();
+                if (root.TryGetProperty("speed", out var speedProp)) speedKmh = speedProp.GetDecimal();
+                if (root.TryGetProperty("isMoving", out var movingProp)) isMoving = movingProp.GetBoolean();
+                if (root.TryGetProperty("heading", out var headingProp)) heading = headingProp.GetDecimal();
                     
                 if (root.TryGetProperty("updatedAt", out var updatedProp))
                 {
@@ -181,6 +186,9 @@ public class AdminLiveTrackerService : IAdminLiveTrackerService
             CurrentTask = currentTask,
             Latitude = lat,
             Longitude = lng,
+            SpeedKmh = speedKmh,
+            IsMoving = isMoving,
+            Heading = heading,
             LastUpdated = lastUpdated
         };
     }
