@@ -16,6 +16,7 @@ public class Employee : IHasTimestamps, ISoftDelete
     public string NationalId { get; set; } = string.Empty;
     public JobRole JobRole { get; set; }
     public string ProfileImagePath { get; set; } = string.Empty;
+    public string? Address { get; set; }
     public string NationalIdPhotoPath { get; set; } = string.Empty;
     public string? DriverLicensePath { get; set; }
     public DateTime HireDate { get; set; } = DateTime.UtcNow;

@@ -7,8 +7,8 @@ public class Baggage : IHasTimestamps
 {
     public int BaggageId { get; set; }
     public BaggageOwnerType OwnerType { get; set; }
-    public int TotalWeight { get; set; }
-    public int BaggageNumber { get; set; }
+    public decimal? TotalWeight { get; set; }
+    public string? BaggageNumber { get; set; }
     public string Description { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }

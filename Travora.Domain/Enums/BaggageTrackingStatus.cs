@@ -1,8 +1,5 @@
 namespace Travora.Domain.Enums;
 
-/// <summary>
-/// Baggage tracking status - replaces the old varchar status column.
-/// </summary>
 public enum BaggageTrackingStatus
 {
     Registered = 1,

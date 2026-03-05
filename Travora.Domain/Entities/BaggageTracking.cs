@@ -13,12 +13,12 @@ public class BaggageTracking
     // Foreign keys
     public int HandledByEmployeeId { get; set; }
     public int BaggageId { get; set; }
-    public int CheckpointId { get; set; }
+    public int? CheckpointId { get; set; }
     public int? TriggeredByScanId { get; set; }
 
     // Navigation properties
     public Employee HandledByEmployee { get; set; } = null!;
     public Baggage Baggage { get; set; } = null!;
-    public Checkpoint Checkpoint { get; set; } = null!;
+    public Checkpoint? Checkpoint { get; set; }
     public QrScan? TriggeredByScan { get; set; }
 }
