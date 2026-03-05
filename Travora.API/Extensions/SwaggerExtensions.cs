@@ -18,6 +18,8 @@ public static class SwaggerExtensions
                     Email = "support@travora.com"
                 }
             });
+            // Avoid duplicate schema ID conflicts between namespaces
+            options.CustomSchemaIds(type => type.FullName?.Replace("Travora.Application.DTOs.", "").Replace(".", "_") ?? type.Name);
             options.OrderActionsBy(apiDesc =>
             {
                 // بنجيب اسم الـ Controller

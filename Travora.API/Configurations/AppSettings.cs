@@ -1,3 +1,5 @@
+using Travora.Shared.Settings;
+
 namespace Travora.API.Configurations;
 
 public class AppSettings

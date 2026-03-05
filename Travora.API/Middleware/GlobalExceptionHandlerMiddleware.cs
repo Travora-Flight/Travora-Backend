@@ -22,6 +22,12 @@ public class GlobalExceptionHandlerMiddleware
         }
         catch (Exception ex)
         {
+            // Let Swagger errors pass through for debugging
+            if (context.Request.Path.StartsWithSegments("/swagger"))
+            {
+                _logger.LogError(ex, "Swagger error: {Message}", ex.Message);
+                throw;
+            }
             await HandleExceptionAsync(context, ex);
         }
     }

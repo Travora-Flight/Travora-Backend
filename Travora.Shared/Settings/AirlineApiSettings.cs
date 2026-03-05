@@ -1,4 +1,4 @@
-namespace Travora.API.Configurations;
+namespace Travora.Shared.Settings;
 
 public class AirlineApiSettings
 {

@@ -66,5 +66,6 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
 });
 
 app.MapHub<Travora.API.Hubs.LiveTrackingHub>("/hubs/admin/live-tracking");
+app.MapHub<Travora.API.Hubs.EmployeeHub>("/hubs/employee");
 
 app.Run();

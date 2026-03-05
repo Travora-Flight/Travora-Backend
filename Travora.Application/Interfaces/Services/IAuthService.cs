@@ -9,4 +9,5 @@ public interface IAuthService
     Task<AuthResponse> LoginCustomerAsync(string email, string password, string ipAddress, string userAgent);
     Task<AuthResponse> RefreshTokenAsync(string refreshToken);
     Task LogoutAsync(string refreshToken);
+    Task<object> ChangePasswordFirstLoginAsync(int employeeId, string tempPassword, string newPassword, string confirmPassword);
 }

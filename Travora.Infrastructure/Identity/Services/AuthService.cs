@@ -237,6 +237,30 @@ public class AuthService : IAuthService
         }
     }
 
+    public async Task<object> ChangePasswordFirstLoginAsync(int employeeId, string tempPassword, string newPassword, string confirmPassword)
+    {
+        var employee = await _db.Employees.FindAsync(employeeId)
+            ?? throw new UnauthorizedAccessException("Employee not found");
+
+        if (!employee.IsFirstLogin)
+            throw new InvalidOperationException("Password already changed");
+
+        if (string.IsNullOrEmpty(employee.TempPassword) || !BCrypt.Net.BCrypt.Verify(tempPassword, employee.TempPassword))
+            throw new UnauthorizedAccessException("Temp password incorrect");
+
+        if (newPassword != confirmPassword)
+            throw new ArgumentException("Passwords do not match");
+
+        employee.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
+        employee.TempPassword = null;
+        employee.IsFirstLogin = false;
+        employee.UpdatedAt = DateTime.UtcNow;
+
+        await _db.SaveChangesAsync();
+
+        return new { success = true, message = "Password changed successfully" };
+    }
+
     // ===== Private Helpers =====
 
     private async Task<string> CreateRefreshToken(int userId, UserType userType)

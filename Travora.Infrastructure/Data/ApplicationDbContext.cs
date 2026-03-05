@@ -86,6 +86,11 @@ public class ApplicationDbContext : DbContext
         // تطبيق كل الـ Configurations من الـ Assembly
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(ApplicationDbContext).Assembly);
 
+        // ===== Decimal Precision =====
+        modelBuilder.Entity<Baggage>()
+            .Property(b => b.TotalWeight)
+            .HasPrecision(18, 2);
+
         // فلتر Soft Delete العام لكل Entity بتطبق ISoftDelete
         foreach (var entityType in modelBuilder.Model.GetEntityTypes())
         {

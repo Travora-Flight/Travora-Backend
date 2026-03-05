@@ -14,6 +14,8 @@ using Hangfire;
 
 namespace Travora.API.Extensions;
 
+using Travora.Application.Interfaces.Services.Employee;
+
 public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddInfrastructureServices(this IServiceCollection services, IConfiguration configuration)
@@ -25,6 +27,15 @@ public static class ServiceCollectionExtensions
             {
                 sqlOptions.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName);
                 sqlOptions.EnableRetryOnFailure(3);
+            })
+            .ConfigureWarnings(warnings =>
+            {
+                // الـ Warnings دي متوقعة بسبب الـ ISoftDelete Query Filter - مش مشكلة
+                warnings.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.PossibleIncorrectRequiredNavigationWithQueryFilterInteractionWarning);
+                // الـ Decimal Precision warnings
+                warnings.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ShadowForeignKeyPropertyCreated);
+                // الـ Pending Migration warning - بنعمل migration يدوي
+                warnings.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning);
             })
         );
 
@@ -59,6 +70,17 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAdminPricingService, Travora.Infrastructure.AdminPanel.Services.AdminPricingService>();
         services.AddScoped<IAdminReportService, Travora.Infrastructure.AdminPanel.Services.AdminReportService>();
         services.AddScoped<IReportGeneratorJob, Travora.Infrastructure.BackgroundJobs.ReportGeneratorJob>();
+
+        // Employee Services
+        services.AddScoped<IEmployeeDashboardService, Travora.Infrastructure.EmployeePanel.Services.EmployeeDashboardService>();
+        services.AddScoped<IEmployeeTaskService, Travora.Infrastructure.EmployeePanel.Services.EmployeeTaskService>();
+        services.AddScoped<IEmployeeBaggageService, Travora.Infrastructure.EmployeePanel.Services.EmployeeBaggageService>();
+        services.AddScoped<IEmployeeLocationService, Travora.Infrastructure.EmployeePanel.Services.EmployeeLocationService>();
+        services.AddScoped<IEmployeeNotificationService, Travora.Infrastructure.EmployeePanel.Services.EmployeeNotificationService>();
+        services.AddScoped<IEmployeeAccountService, Travora.Infrastructure.EmployeePanel.Services.EmployeeAccountService>();
+
+        // Hub Services
+        services.AddScoped<Travora.Application.Interfaces.Hubs.ILiveTrackingHubService, Travora.API.Services.LiveTrackingHubService>();
 
         // Admin Validators
         var fluentValidationAssemblies = new[] { typeof(Travora.Application.Validators.Admin.Employees.CreateEmployeeValidator).Assembly };
