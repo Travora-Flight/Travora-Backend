@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Travora.Infrastructure.Data;
 
@@ -11,9 +12,11 @@ using Travora.Infrastructure.Data;
 namespace Travora.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260302231713_EmployeePortalDomainChanges")]
+    partial class EmployeePortalDomainChanges
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -464,7 +467,6 @@ namespace Travora.Infrastructure.Data.Migrations
                         .HasColumnType("int");
 
                     b.Property<decimal?>("TotalWeight")
-                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<DateTime?>("UpdatedAt")
@@ -1088,7 +1090,7 @@ namespace Travora.Infrastructure.Data.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<int>("CustomsTypeCustomsItemId")
+                    b.Property<int>("CustomsType")
                         .HasColumnType("int");
 
                     b.Property<DateTime>("DeclarationTimestamp")
@@ -1113,8 +1115,6 @@ namespace Travora.Infrastructure.Data.Migrations
                         .HasColumnType("datetime2");
 
                     b.HasKey("CustomsId");
-
-                    b.HasIndex("CustomsTypeCustomsItemId");
 
                     b.HasIndex("OrderId");
 
@@ -1314,9 +1314,6 @@ namespace Travora.Infrastructure.Data.Migrations
                         .HasColumnType("int");
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("EmployeeId"));
-
-                    b.Property<string>("Address")
-                        .HasColumnType("nvarchar(max)");
 
                     b.Property<int?>("CheckpointId")
                         .HasColumnType("int");
@@ -3178,19 +3175,11 @@ namespace Travora.Infrastructure.Data.Migrations
 
             modelBuilder.Entity("Travora.Domain.Entities.CustomsDeclaration", b =>
                 {
-                    b.HasOne("Travora.Domain.Entities.CustomsItem", "CustomsType")
-                        .WithMany()
-                        .HasForeignKey("CustomsTypeCustomsItemId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
                     b.HasOne("Travora.Domain.Entities.Order", "Order")
                         .WithMany("CustomsDeclarations")
                         .HasForeignKey("OrderId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
-
-                    b.Navigation("CustomsType");
 
                     b.Navigation("Order");
                 });
