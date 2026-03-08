@@ -17,7 +17,7 @@ public class CountryConfiguration : IEntityTypeConfiguration<Country>
         builder.Property(c => c.Capital).HasMaxLength(100);
         builder.Property(c => c.CurrencyCode).HasMaxLength(5);
         builder.Property(c => c.CurrencyName).HasMaxLength(50);
-        builder.Property(c => c.PhonePrefix).HasMaxLength(10);
+        builder.Property(c => c.PhonePrefix).HasMaxLength(100);
         builder.Property(c => c.FipsCode).HasMaxLength(10);
 
         builder.HasIndex(c => c.Iso2Code).IsUnique();
