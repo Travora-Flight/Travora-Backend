@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.Authorization;
+using System.Security.Claims;
 using Travora.Application.DTOs.Auth;
 using Travora.Application.Interfaces;
 
@@ -32,6 +34,16 @@ public class AuthController : ControllerBase
         var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         var ua = Request.Headers.UserAgent.ToString();
         var response = await _authService.LoginEmployeeAsync(request.Email, request.Password, ip, ua);
+        return Ok(response);
+    }
+
+    [HttpPost("employee/change-password-first-login")]
+    [Authorize(Roles = "employee")]
+    public async Task<IActionResult> ChangePasswordFirstLogin([FromBody] ChangePasswordFirstLoginRequest request)
+    {
+        var employeeId = int.Parse(User.FindFirstValue("employeeId")!);
+        var response = await _authService.ChangePasswordFirstLoginAsync(
+            employeeId, request.TempPassword, request.NewPassword, request.ConfirmPassword);
         return Ok(response);
     }
 

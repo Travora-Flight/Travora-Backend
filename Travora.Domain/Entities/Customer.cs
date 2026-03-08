@@ -8,6 +8,7 @@ public class Customer : IHasTimestamps, ISoftDelete
     public int CustomerId { get; set; }
     public string Firstname { get; set; } = string.Empty;
     public string Lastname { get; set; } = string.Empty;
+    public string Username { get; set; } = string.Empty;
     public string PassportNumber { get; set; } = string.Empty;
     public DateTime PassportExpiryDate { get; set; }
     public DateTime DateOfBirth { get; set; }

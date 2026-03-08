@@ -34,12 +34,12 @@ public class AdminPassportController : ControllerBase
     }
 
     [HttpPost("{documentId}/approve")]
-    public async Task<IActionResult> ApprovePassportAsync(int documentId)
+    public async Task<IActionResult> ApprovePassportAsync(int documentId, [FromBody] ApprovePassportRequest request)
     {
         var adminId = GetAdminId();
         if (adminId == 0) return Unauthorized();
 
-        await _passportService.ApprovePassportAsync(documentId, adminId);
+        await _passportService.ApprovePassportAsync(documentId, adminId, request);
         return Ok(new { success = true });
     }
 

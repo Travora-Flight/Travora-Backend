@@ -5,6 +5,6 @@ namespace Travora.Application.Interfaces;
 public interface IAdminPassportService
 {
     Task<PassportVerificationListResponse> GetPassportVerificationsAsync(string? status);
-    Task<bool> ApprovePassportAsync(int documentId, int adminId);
+    Task<bool> ApprovePassportAsync(int documentId, int adminId, ApprovePassportRequest request);
     Task<bool> RejectPassportAsync(int documentId, int adminId, RejectPassportRequest request);
 }

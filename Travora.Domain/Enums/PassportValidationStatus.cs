@@ -7,5 +7,6 @@ public enum PassportValidationStatus
     Invalid = 3,
     Expired = 4,
     Passed = 5,
-    Failed = 6
+    Failed = 6,
+    RequiresManualReview = 7
 }

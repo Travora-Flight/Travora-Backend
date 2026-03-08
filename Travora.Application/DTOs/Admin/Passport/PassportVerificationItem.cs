@@ -10,7 +10,6 @@ public class PassportVerificationItem
     public string Email { get; set; } = string.Empty;
     public string PassportImageUrl { get; set; } = string.Empty;
     public PassportInfoDetails PassportInfo { get; set; } = new();
-    public string Address { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
     public decimal OcrConfidenceScore { get; set; }
     public bool ManualReviewRequired { get; set; }
