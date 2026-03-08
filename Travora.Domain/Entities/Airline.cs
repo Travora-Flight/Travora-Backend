@@ -11,7 +11,7 @@ public class Airline : IHasTimestamps
     public string NameCountry { get; set; } = string.Empty;
     public string CodeIso2Country { get; set; } = string.Empty;
     public string Callsign { get; set; } = string.Empty;
-    public string CodeHub { get; set; } = string.Empty;
+    public string? CodeHub { get; set; }
     public int Founding { get; set; }
     public int SizeAirline { get; set; }
     public decimal AgeFleet { get; set; }

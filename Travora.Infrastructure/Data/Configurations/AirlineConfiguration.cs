@@ -18,7 +18,7 @@ public class AirlineConfiguration : IEntityTypeConfiguration<Airline>
         builder.Property(a => a.CodeHub).HasMaxLength(5);
         builder.Property(a => a.IataPrefixAccounting).HasMaxLength(10);
         builder.Property(a => a.Type).HasMaxLength(50);
-        builder.Property(a => a.StatusAirline).HasMaxLength(20);
+        builder.Property(a => a.StatusAirline).HasMaxLength(50);
         builder.Property(a => a.LogoUrl).HasMaxLength(500);
         builder.Property(a => a.AgeFleet).HasPrecision(5, 1);
 
