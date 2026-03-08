@@ -6,6 +6,7 @@ using Travora.Infrastructure.Data;
 using Travora.Infrastructure.Data.Seeders;
 using Hangfire;
 using QuestPDF.Infrastructure;
+using Travora.Application.Interfaces.Services.Admin;
 
 var builder = WebApplication.CreateBuilder(args);
 

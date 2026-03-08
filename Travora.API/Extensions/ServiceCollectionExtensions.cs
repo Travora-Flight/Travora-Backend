@@ -15,6 +15,7 @@ using Hangfire;
 namespace Travora.API.Extensions;
 
 using Travora.Application.Interfaces.Services.Employee;
+using Travora.Application.Interfaces.Services.Admin;
 
 public static class ServiceCollectionExtensions
 {
@@ -60,6 +61,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAuthService, AuthService>();
 
         // Admin Services
+        services.AddScoped<IAviationSeederService, Travora.Infrastructure.AdminPanel.Services.AviationSeederService>();
         services.AddScoped<IAdminAccountService, Travora.Infrastructure.AdminPanel.Services.AdminAccountService>();
         services.AddScoped<IAdminSettingsService, Travora.Infrastructure.AdminPanel.Services.AdminSettingsService>();
         services.AddScoped<IAdminDashboardService, Travora.Infrastructure.AdminPanel.Services.AdminDashboardService>();
@@ -78,6 +80,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IEmployeeLocationService, Travora.Infrastructure.EmployeePanel.Services.EmployeeLocationService>();
         services.AddScoped<IEmployeeNotificationService, Travora.Infrastructure.EmployeePanel.Services.EmployeeNotificationService>();
         services.AddScoped<IEmployeeAccountService, Travora.Infrastructure.EmployeePanel.Services.EmployeeAccountService>();
+
+        // Customer Services
+        services.AddScoped<Travora.Application.Interfaces.Services.Customer.ICustomerAuthService, Travora.Infrastructure.CustomerPanel.Services.CustomerAuthService>();
+        services.AddScoped<Travora.Application.Interfaces.Services.Customer.IPassportOcrService, Travora.Infrastructure.CustomerPanel.Services.PassportOcrService>();
 
         // Hub Services
         services.AddScoped<Travora.Application.Interfaces.Hubs.ILiveTrackingHubService, Travora.API.Services.LiveTrackingHubService>();
@@ -128,7 +134,8 @@ public static class ServiceCollectionExtensions
             var aviationEdge = configuration.GetSection("AviationEdge").Get<AviationEdgeSettings>();
             if (aviationEdge != null)
             {
-                client.BaseAddress = new Uri(aviationEdge.BaseUrl);
+                var baseUrl = aviationEdge.BaseUrl.EndsWith("/") ? aviationEdge.BaseUrl : $"{aviationEdge.BaseUrl}/";
+                client.BaseAddress = new Uri(baseUrl);
                 client.Timeout = TimeSpan.FromSeconds(aviationEdge.TimeoutSeconds);
             }
         });
