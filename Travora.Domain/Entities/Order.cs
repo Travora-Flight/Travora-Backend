@@ -7,6 +7,7 @@ public class Order : IHasTimestamps
 {
     public int OrderId { get; set; }
     public OrderStatus OrderStatus { get; set; } = OrderStatus.Pending;
+    public string? TicketNumber { get; set; }
 
     // Companions Pricing
     public int ExtraCompanionsCount { get; set; } = 0;

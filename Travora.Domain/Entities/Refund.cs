@@ -8,6 +8,8 @@ public class Refund : IHasTimestamps
     public int RefundId { get; set; }
     public decimal RefundAmount { get; set; }
     public RefundStatus RefundStatus { get; set; } = RefundStatus.Requested;
+    public string Reason { get; set; } = string.Empty;
+    public string? AdminNotes { get; set; }
     public DateTime RequestedAt { get; set; } = DateTime.UtcNow;
     public DateTime? ProcessedAt { get; set; }
     public string RefundTransactionId { get; set; } = string.Empty;

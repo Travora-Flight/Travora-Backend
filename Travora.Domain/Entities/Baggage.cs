@@ -9,6 +9,7 @@ public class Baggage : IHasTimestamps
     public BaggageOwnerType OwnerType { get; set; }
     public decimal? TotalWeight { get; set; }
     public string? BaggageNumber { get; set; }
+    public string? Destination { get; set; }
     public string Description { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }

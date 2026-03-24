@@ -13,12 +13,12 @@ public class FlightConfiguration : IEntityTypeConfiguration<Flight>
         builder.Property(f => f.FlightIataNumber).HasMaxLength(10);
         builder.Property(f => f.FlightIcaoNumber).HasMaxLength(10);
         builder.Property(f => f.FlightType).HasMaxLength(20);
-        builder.Property(f => f.DepartureIataCode).HasMaxLength(5);
+        builder.Property(f => f.DepartureIataCode).HasMaxLength(50);
         builder.Property(f => f.DepartureIcaoCode).HasMaxLength(5);
         builder.Property(f => f.DepartureTerminal).HasMaxLength(10);
         builder.Property(f => f.DepartureGate).HasMaxLength(10);
         builder.Property(f => f.DepartureBaggage).HasMaxLength(10);
-        builder.Property(f => f.ArrivalIataCode).HasMaxLength(5);
+        builder.Property(f => f.ArrivalIataCode).HasMaxLength(50);
         builder.Property(f => f.ArrivalIcaoCode).HasMaxLength(5);
         builder.Property(f => f.ArrivalTerminal).HasMaxLength(10);
         builder.Property(f => f.ArrivalGate).HasMaxLength(10);

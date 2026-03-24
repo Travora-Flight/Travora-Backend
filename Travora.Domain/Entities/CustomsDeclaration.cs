@@ -6,7 +6,7 @@ namespace Travora.Domain.Entities;
 public class CustomsDeclaration : IHasTimestamps
 {
     public int CustomsId { get; set; }
-    public CustomsItem CustomsType { get; set; }
+    public CustomsType CustomsType { get; set; }
     public decimal TotalDeclaredValue { get; set; } = 0;
     public decimal TotalCustomsFee { get; set; } = 0;
     public DateTime DeclarationTimestamp { get; set; } = DateTime.UtcNow;

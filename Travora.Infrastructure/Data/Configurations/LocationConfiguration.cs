@@ -10,7 +10,6 @@ public class LocationConfiguration : IEntityTypeConfiguration<Location>
     {
         builder.HasKey(l => l.LocationId);
         builder.Property(l => l.StreetAddress).HasMaxLength(300);
-        builder.Property(l => l.Apartment).HasMaxLength(50);
         builder.Property(l => l.City).HasMaxLength(100);
         builder.Property(l => l.State).HasMaxLength(100);
         builder.Property(l => l.Country).HasMaxLength(100);
