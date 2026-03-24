@@ -26,6 +26,14 @@ public class EmployeeBaggageController : ControllerBase
         return Ok(response);
     }
 
+    [HttpPost("{baggageId}/lock")]
+    public async Task<IActionResult> LockBaggage(int baggageId, [FromBody] LockBaggageRequest request)
+    {
+        var employeeId = int.Parse(User.FindFirstValue("employeeId")!);
+        var response = await _baggageService.AssignLockCodeAsync(employeeId, baggageId, request);
+        return Ok(response);
+    }
+
     [HttpPost("{baggageId}/photos")]
     public async Task<IActionResult> UploadPhotos(int baggageId, [FromForm] List<IFormFile> photos)
     {
