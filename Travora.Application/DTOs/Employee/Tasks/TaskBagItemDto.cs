@@ -9,5 +9,4 @@ public class TaskBagItemDto
     public string? CurrentStatus { get; set; }
     public bool IsScanned { get; set; }
     public int PhotosCount { get; set; }
-    public BagOwnerDto? Owner { get; set; }
 }

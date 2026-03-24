@@ -15,5 +15,5 @@ public class TaskDetailResponse
     public ClientInfoDto? ClientInfo { get; set; }
     public int TotalBaggageCount { get; set; }
     public int ScannedCount { get; set; }
-    public List<TaskBagItemDto> Bags { get; set; } = new();
+    public List<BaggageGroupDto> Bags { get; set; } = new();
 }
