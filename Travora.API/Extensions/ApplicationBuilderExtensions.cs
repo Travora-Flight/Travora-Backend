@@ -14,8 +14,10 @@ public static class ApplicationBuilderExtensions
                 options.RoutePrefix = "swagger";
             });
         }
-
-        app.UseHttpsRedirection();
+        if (!app.Environment.IsDevelopment())
+        {
+            app.UseHttpsRedirection();
+        }
         app.UseCors("TravoraPolicy");
         app.UseAuthentication();
         app.UseAuthorization();

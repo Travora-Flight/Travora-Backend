@@ -1,4 +1,5 @@
 using Travora.Shared.Settings;
+using Travora.Infrastructure.Configurations;
 
 namespace Travora.API.Configurations;
 

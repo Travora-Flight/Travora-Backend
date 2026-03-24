@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Travora.Infrastructure.Configurations;
 using Travora.API.Configurations;
 using Travora.Shared.Settings;
 using Travora.Application.Interfaces;
@@ -11,6 +12,7 @@ using Travora.Infrastructure.Identity.Services;
 using FluentValidation;
 using FluentValidation.AspNetCore;
 using Hangfire;
+using Travora.Application.Interfaces.Services;
 
 namespace Travora.API.Extensions;
 
@@ -84,9 +86,19 @@ public static class ServiceCollectionExtensions
         // Customer Services
         services.AddScoped<Travora.Application.Interfaces.Services.Customer.ICustomerAuthService, Travora.Infrastructure.CustomerPanel.Services.CustomerAuthService>();
         services.AddScoped<Travora.Application.Interfaces.Services.Customer.IPassportOcrService, Travora.Infrastructure.CustomerPanel.Services.PassportOcrService>();
+        services.AddScoped<Travora.Application.Interfaces.Services.Customer.IDoorToDoorOrderService, Travora.Infrastructure.CustomerPanel.Services.DoorToDoorOrderService>();
+        services.AddScoped<Travora.Application.Interfaces.Services.Customer.ICarServiceOrderService, Travora.Infrastructure.CustomerPanel.Services.CarServiceOrderService>();
+        services.AddScoped<Travora.Application.Interfaces.Services.Customer.IBagTrackingOrderService, Travora.Infrastructure.CustomerPanel.Services.BagTrackingOrderService>();
+        services.AddScoped<Travora.Application.Interfaces.Services.Customer.ICustomerOrderService, Travora.Infrastructure.CustomerPanel.Services.CustomerOrderService>();
 
         // Hub Services
         services.AddScoped<Travora.Application.Interfaces.Hubs.ILiveTrackingHubService, Travora.API.Services.LiveTrackingHubService>();
+        services.AddScoped<INotificationPusher, Travora.API.Services.NotificationPusher>();
+
+        // Payment Services
+        services.AddScoped<IPaymobService, Travora.Infrastructure.Services.PaymobService>();
+        services.AddScoped<IRefundService, Travora.Infrastructure.Services.RefundService>();
+        services.AddScoped<IPaymentMethodService, Travora.Infrastructure.Services.PaymentMethodService>();
 
         // Admin Validators
         var fluentValidationAssemblies = new[] { typeof(Travora.Application.Validators.Admin.Employees.CreateEmployeeValidator).Assembly };
@@ -113,9 +125,10 @@ public static class ServiceCollectionExtensions
         services.Configure<AirlineApiSettings>(configuration.GetSection("AirlineApi"));
         services.Configure<AviationEdgeSettings>(configuration.GetSection("AviationEdge"));
         services.Configure<AviationWeatherSettings>(configuration.GetSection("AviationWeather"));
-        services.Configure<GeocodingSettings>(configuration.GetSection("Geocoding"));
+        services.Configure<Travora.Infrastructure.Configurations.GeocodingSettings>(configuration.GetSection("Geocoding"));
         services.Configure<PassportOcrSettings>(configuration.GetSection("PassportOcr"));
         services.Configure<SeedSettings>(configuration.GetSection("SeedSettings"));
+        services.Configure<PaymobSettings>(configuration.GetSection("Paymob"));
 
 
         // HttpClient للـ APIs الخارجية
@@ -139,6 +152,35 @@ public static class ServiceCollectionExtensions
                 client.Timeout = TimeSpan.FromSeconds(aviationEdge.TimeoutSeconds);
             }
         });
+
+        // Geocoding Http Client
+        services.AddHttpClient("NominatimGeocoding", client =>
+        {
+            var geocodingSettings = configuration.GetSection("Geocoding").Get<Travora.Infrastructure.Configurations.GeocodingSettings>();
+            if (geocodingSettings != null)
+            {
+                client.BaseAddress = new Uri(geocodingSettings.BaseUrl);
+                client.DefaultRequestHeaders.Add("User-Agent", geocodingSettings.UserAgent);
+            }
+        });
+
+        // Paymob Http Client
+        services.AddHttpClient("Paymob", client =>
+        {
+            var paymobSettings = configuration.GetSection("Paymob").Get<PaymobSettings>();
+            if (paymobSettings != null)
+            {
+                client.BaseAddress = new Uri(paymobSettings.BaseUrl);
+                client.Timeout = TimeSpan.FromSeconds(30);
+            }
+        });
+
+        // Register External Services
+        services.AddScoped<Travora.Application.Interfaces.External.IAirlineService, Travora.Infrastructure.ExternalServices.Communication.AirlineService>();
+        services.AddScoped<Travora.Application.Interfaces.External.IGeocodingService, Travora.Infrastructure.ExternalServices.Communication.NominatimGeocodingService>();
+        
+        // Register Draft Order Service (Redis)
+        services.AddScoped<Travora.Application.Interfaces.Services.IDraftOrderService, Travora.Infrastructure.Services.DraftOrderService>();
 
         // Hangfire (Background jobs)
         services.AddHangfire(config => config
