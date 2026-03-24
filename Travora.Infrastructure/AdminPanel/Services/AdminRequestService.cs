@@ -152,13 +152,47 @@ public class AdminRequestService : IAdminRequestService
         var employee = await _db.Employees.FindAsync(request.EmployeeId)
             ?? throw new KeyNotFoundException("Employee not found");
 
-        var primaryService = order.OrderServices.FirstOrDefault() 
-            ?? throw new InvalidOperationException("This order has no services to assign");
+        // لو فيه OrderServiceId محدد → assign لخدمة معينة
+        if (request.OrderServiceId.HasValue)
+        {
+            var targetService = order.OrderServices
+                .FirstOrDefault(s => s.OrderServiceId == request.OrderServiceId.Value)
+                ?? throw new KeyNotFoundException("Order service not found");
 
-        primaryService.AssignedEmployeeId = request.EmployeeId;
-        order.OrderStatus = OrderStatus.InProgress;
+            if (targetService.ServiceStatus != ServiceStatus.Pending)
+                throw new InvalidOperationException("هذه الخدمة مش في حالة Pending");
+
+            targetService.AssignedEmployeeId = request.EmployeeId;
+            targetService.ServiceStatus = ServiceStatus.Assigned;
+            targetService.AssignedAt = DateTime.UtcNow;
+            targetService.UpdatedAt = DateTime.UtcNow;
+        }
+        else
+        {
+            // Fallback: assign لأول خدمة Pending
+            var pendingService = order.OrderServices
+                .FirstOrDefault(s => s.ServiceStatus == ServiceStatus.Pending)
+                ?? throw new InvalidOperationException("لا توجد خدمات في حالة Pending");
+
+            pendingService.AssignedEmployeeId = request.EmployeeId;
+            pendingService.ServiceStatus = ServiceStatus.Assigned;
+            pendingService.AssignedAt = DateTime.UtcNow;
+            pendingService.UpdatedAt = DateTime.UtcNow;
+        }
+
+        // Notification
+        _db.Notifications.Add(new Domain.Entities.Notification
+        {
+            UserId = request.EmployeeId,
+            UserType = UserType.Employee,
+            NotificationType = NotificationType.OrderUpdated,
+            Title = "تم تعيينك على مهمة جديدة",
+            Message = "تم تعيينك يدوياً من قِبَل الإدارة",
+            NotificationChannel = NotificationChannel.InApp,
+            OrderId = order.OrderId
+        });
+
         order.UpdatedAt = DateTime.UtcNow;
-
         await _db.SaveChangesAsync();
         return true;
     }

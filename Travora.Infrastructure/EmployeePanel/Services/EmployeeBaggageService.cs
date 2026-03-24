@@ -53,6 +53,11 @@ public class EmployeeBaggageService : IEmployeeBaggageService
         var baggage = await _db.Baggages.FindAsync(request.BaggageId)
             ?? throw new KeyNotFoundException("Baggage not found");
 
+        var alreadyScanned = await _db.QrScans
+            .AnyAsync(q => q.BaggageId == baggage.BaggageId);
+        if (alreadyScanned)
+            throw new InvalidOperationException("هذه الشنطة تم مسحها مسبقاً");
+
         if (baggage.OrderId != orderService.OrderId)
             throw new InvalidOperationException("الشنطة مش في الأوردر ده");
 
@@ -110,6 +115,7 @@ public class EmployeeBaggageService : IEmployeeBaggageService
         // 4) Update baggage in DB
         baggage.BaggageNumber = tag.TagNumber;
         baggage.TotalWeight = tag.WeightKg;
+        baggage.Destination = tag.Destination;
         baggage.UpdatedAt = DateTime.UtcNow;
 
         // 4) Get GPS from Redis
@@ -207,10 +213,24 @@ public class EmployeeBaggageService : IEmployeeBaggageService
         if (baggage.BaggageNumber == null)
             throw new InvalidOperationException("يجب سكان الشنطة الأول");
 
-        // Validate photo count
-        var minPhotos = employee.JobRole == JobRole.Driver ? 3 : 3;
-        if (photos.Count < minPhotos)
-            throw new InvalidOperationException($"يجب رفع {minPhotos} صور على الأقل");
+        // Requires active lock before uploading photos
+        var hasActiveLock = await _db.SecurityLocks
+            .AnyAsync(l => l.BaggageId == baggageId && l.IsActive && !l.IsDeleted);
+        
+        if (!hasActiveLock)
+            throw new InvalidOperationException("يجب تسجيل كود القفل الأول");
+
+        // Validate photo count (max 6 per baggage) directly against the DB
+        var existingCount = await _db.BaggagePhotos.CountAsync(p => p.BaggageId == baggageId);
+        if (existingCount >= 6)
+            throw new InvalidOperationException("وصلت للحد الأقصى 6 صور لهذه الشنطة");
+
+        var allowedToAdd = 6 - existingCount;
+        if (photos.Count > allowedToAdd)
+            throw new InvalidOperationException($"يمكن إضافة {allowedToAdd} صور فقط، الشنطة عندها {existingCount} صور");
+
+        if (photos.Count < 3 && existingCount == 0)
+            throw new InvalidOperationException("يجب رفع 3 صور على الأقل للبدء");
 
         // Validate file types
         var allowedTypes = new[] { "image/jpg", "image/jpeg", "image/png" };
@@ -246,6 +266,65 @@ public class EmployeeBaggageService : IEmployeeBaggageService
             PhotosAdded = photos.Count,
             TotalPhotos = totalPhotos,
             Photos = uploadedUrls
+        };
+    }
+
+    public async Task<LockBaggageResponse> AssignLockCodeAsync(int employeeId, int baggageId, LockBaggageRequest request)
+    {
+        var employee = await _db.Employees.FindAsync(employeeId)
+            ?? throw new KeyNotFoundException("Employee not found");
+
+        var baggage = await _db.Baggages
+            .Include(b => b.Order).ThenInclude(o => o.OrderServices)
+            .Include(b => b.SecurityLocks)
+            .FirstOrDefaultAsync(b => b.BaggageId == baggageId)
+            ?? throw new KeyNotFoundException("Baggage not found");
+
+        // Validations
+        var hasAssignedService = baggage.Order.OrderServices
+            .Any(os => os.AssignedEmployeeId == employeeId && os.ServiceStatus == ServiceStatus.InProgress);
+
+        if (!hasAssignedService)
+            throw new UnauthorizedAccessException("هذه الإجراء غير متاح لك حالياً. يجب أن تكون مخصصاً للطلب وأن يكون قيد التنفيذ.");
+
+        if (baggage.BaggageNumber == null)
+            throw new InvalidOperationException("يجب مسح الشنطة الأول (Scan) قبل تعيين القفل.");
+
+        if (baggage.SecurityLocks.Any(l => l.IsActive))
+            throw new InvalidOperationException("هذه الشنطة مربوطة بقفل نشط بالفعل.");
+
+        if (string.IsNullOrWhiteSpace(request.LockCode) || request.LockCode.Length != 9 || !request.LockCode.StartsWith("112371"))
+            throw new InvalidOperationException("كود القفل غير صحيح، يجب أن يتكون من 9 أرقام ويبدأ بـ 112371.");
+
+        if (!request.LockCode.All(char.IsDigit))
+            throw new InvalidOperationException("كود القفل يجب أن يحتوي على أرقام فقط.");
+
+        // Check if lock code is already active on another bag
+        var lockExists = await _db.SecurityLocks
+            .AnyAsync(l => l.LockCode == request.LockCode && l.IsActive && !l.IsDeleted);
+
+        if (lockExists)
+            throw new InvalidOperationException("هذا القفل مستخدم حالياً مع شنطة أخرى.");
+
+        // Assigned new lock
+        var newLock = new SecurityLock
+        {
+            LockCode = request.LockCode,
+            AppliedAt = DateTime.UtcNow,
+            IsActive = true,
+            AppliedByEmployeeId = employeeId,
+            BaggageId = baggageId
+        };
+
+        _db.SecurityLocks.Add(newLock);
+        await _db.SaveChangesAsync();
+
+        return new LockBaggageResponse
+        {
+            Success = true,
+            BaggageId = baggage.BaggageId,
+            LockCode = newLock.LockCode,
+            Message = "تم تعيين القفل بنجاح."
         };
     }
 

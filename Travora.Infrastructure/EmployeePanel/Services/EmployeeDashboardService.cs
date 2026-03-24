@@ -25,7 +25,7 @@ public class EmployeeDashboardService : IEmployeeDashboardService
 
         // Stats
         var newTasks = await _db.OrderServices
-            .CountAsync(os => os.AssignedEmployeeId == employeeId && os.ServiceStatus == ServiceStatus.Pending);
+            .CountAsync(os => os.AssignedEmployeeId == employeeId && os.ServiceStatus == ServiceStatus.Assigned);
 
         var ongoingTasks = await _db.OrderServices
             .CountAsync(os => os.AssignedEmployeeId == employeeId && os.ServiceStatus == ServiceStatus.InProgress);
@@ -33,8 +33,7 @@ public class EmployeeDashboardService : IEmployeeDashboardService
         var completedTasks = await _db.OrderServices
             .CountAsync(os => os.AssignedEmployeeId == employeeId
                 && os.ServiceStatus == ServiceStatus.Completed
-                && os.ActualEndTime != null
-                && os.ActualEndTime.Value.Date == today);
+                && os.ActualEndTime != null);
 
         // Current in-progress tasks
         var currentTasks = await _db.OrderServices
@@ -54,7 +53,7 @@ public class EmployeeDashboardService : IEmployeeDashboardService
         // New assigned pending requests (top 10)
         var thirtyMinutesFromNow = now.AddMinutes(30);
         var newAssignedRequests = await _db.OrderServices
-            .Where(os => os.AssignedEmployeeId == employeeId && os.ServiceStatus == ServiceStatus.Pending)
+            .Where(os => os.AssignedEmployeeId == employeeId && os.ServiceStatus == ServiceStatus.Assigned)
             .Include(os => os.Order).ThenInclude(o => o.PickupLocation)
             .Include(os => os.PackageService).ThenInclude(ps => ps.Service)
             .OrderBy(os => os.ScheduledStartTime)

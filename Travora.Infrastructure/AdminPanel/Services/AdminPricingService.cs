@@ -43,8 +43,9 @@ public class AdminPricingService : IAdminPricingService
                 PackageName = p.PackageName,
                 IsActive = p.IsActive,
                 TotalPrice = p.TotalBasePrice,
+                FinalPrice = p.TotalBasePrice - (p.TotalBasePrice * (p.Discount ?? 0) / 100),
                 Discount = p.Discount,
-                Currency = "EGP",
+                Currency = p.Currency,
                 IncludedCompanions = p.IncludedCompanionsCount,
                 ExtraCompanionPrice = p.ExtraCompanionPrice,
                 IncludedBags = p.IncludedBaggageCount,
@@ -113,7 +114,7 @@ public class AdminPricingService : IAdminPricingService
                 TotalPrice = p.TotalBasePrice,
                 FinalPrice = p.TotalBasePrice - (p.TotalBasePrice * (p.Discount ?? 0) / 100),
                 Discount = p.Discount,
-                Currency = "EGP",
+                Currency = p.Currency,
                 IncludedCompanions = p.IncludedCompanionsCount,
                 ExtraCompanionPrice = p.ExtraCompanionPrice,
                 IncludedBags = p.IncludedBaggageCount,
@@ -253,15 +254,13 @@ public class AdminPricingService : IAdminPricingService
         package.PackageCode = $"PKG{package.PackageId:D3}";
         await _db.SaveChangesAsync();
 
-        decimal finalPrice = totalPrice - (totalPrice * (package.Discount ?? 0) / 100);
-
         return new CreatePackageResponse
         {
             PackageId = package.PackageId,
             Code = package.PackageCode,
             PackageName = package.PackageName,
-            TotalPrice = totalPrice,
-            FinalPrice = finalPrice,
+            TotalPrice = package.TotalBasePrice,
+            FinalPrice = package.TotalBasePrice - (package.TotalBasePrice * (package.Discount ?? 0) / 100),
             Discount = package.Discount,
             Services = serviceDetails
         };
