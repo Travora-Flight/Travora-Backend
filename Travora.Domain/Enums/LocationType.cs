@@ -6,5 +6,7 @@ public enum LocationType
     Work = 2,
     Hotel = 3,
     Airport = 4,
-    Other = 5
+    Other = 5,
+    Pickup = 6,
+    Delivery = 7
 }

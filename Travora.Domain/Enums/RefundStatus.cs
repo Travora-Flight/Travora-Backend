@@ -6,5 +6,6 @@ public enum RefundStatus
     Pending = 1,
     Approved = 2,
     Rejected = 3,
-    Processed = 4
+    Processed = 4,
+    Failed = 5
 }
