@@ -681,3 +681,7 @@ Travora.APIappsettings.*.json
 Travora.API/appsettings.jsonT r a v o r a . A P I / a p p s e t t i n g s . * . j s o n 
  
  
+*.js
+raw.json
+swagger.json
+Travora_API_Collection.postman_collection.json
