@@ -73,6 +73,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAdminPassportService, Travora.Infrastructure.AdminPanel.Services.AdminPassportService>();
         services.AddScoped<IAdminPricingService, Travora.Infrastructure.AdminPanel.Services.AdminPricingService>();
         services.AddScoped<IAdminReportService, Travora.Infrastructure.AdminPanel.Services.AdminReportService>();
+        services.AddScoped<IAdminVehicleService, Travora.Infrastructure.AdminPanel.Services.AdminVehicleService>();
+        services.AddScoped<IAdminCheckpointService, Travora.Infrastructure.AdminPanel.Services.AdminCheckpointService>();
         services.AddScoped<IReportGeneratorJob, Travora.Infrastructure.BackgroundJobs.ReportGeneratorJob>();
 
         // Employee Services
@@ -84,6 +86,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IEmployeeAccountService, Travora.Infrastructure.EmployeePanel.Services.EmployeeAccountService>();
 
         // Customer Services
+        services.AddScoped<Travora.Application.Interfaces.Services.Customer.ICustomerProfileService, Travora.Infrastructure.CustomerPanel.Services.CustomerProfileService>();
         services.AddScoped<Travora.Application.Interfaces.Services.Customer.ICustomerAuthService, Travora.Infrastructure.CustomerPanel.Services.CustomerAuthService>();
         services.AddScoped<Travora.Application.Interfaces.Services.Customer.IPassportOcrService, Travora.Infrastructure.CustomerPanel.Services.PassportOcrService>();
         services.AddScoped<Travora.Application.Interfaces.Services.Customer.IDoorToDoorOrderService, Travora.Infrastructure.CustomerPanel.Services.DoorToDoorOrderService>();

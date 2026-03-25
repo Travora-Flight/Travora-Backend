@@ -40,6 +40,13 @@ public class AdminEmployeesController : ControllerBase
         return Ok(result);
     }
 
+    [HttpGet("form-data")]
+    public async Task<IActionResult> GetFormDataAsync()
+    {
+        var result = await _employeeService.GetFormDataAsync();
+        return Ok(result);
+    }
+
     [HttpPost]
     public async Task<IActionResult> CreateEmployeeAsync([FromForm] CreateEmployeeRequest request)
     {

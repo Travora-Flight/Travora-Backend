@@ -107,6 +107,30 @@ public class AdminEmployeeService : IAdminEmployeeService
         };
     }
 
+    public async Task<EmployeeFormDataResponse> GetFormDataAsync()
+    {
+        var activeVehicles = await _db.Vehicles
+            .Where(v => !v.Employees.Any(e => e.IsActive && !e.IsDeleted))
+            .Select(v => new IdNamePair { Id = v.VehicleId, DisplayName = $"{v.Brand} {v.Model} - {v.PlateNumber} ({v.Year})" })
+            .ToListAsync();
+
+        var activeCheckpoints = await _db.Checkpoints
+            .Where(c => !c.Employees.Any(e => e.IsActive && !e.IsDeleted))
+            .Select(c => new IdNamePair { Id = c.CheckpointId, DisplayName = c.CheckpointName })
+            .ToListAsync();
+
+        var jobRoles = Enum.GetNames(typeof(JobRole)).ToList();
+        var shiftTypes = Enum.GetNames(typeof(ShiftType)).ToList();
+
+        return new EmployeeFormDataResponse
+        {
+            AvailableVehicles = activeVehicles,
+            AvailableCheckpoints = activeCheckpoints,
+            JobRoles = jobRoles,
+            ShiftTypes = shiftTypes
+        };
+    }
+
     public async Task<CreateEmployeeResponse> CreateEmployeeAsync(int adminId, CreateEmployeeRequest request)
     {
         // 1) Validation
@@ -117,6 +141,20 @@ public class AdminEmployeeService : IAdminEmployeeService
 
         if (await _db.Employees.AnyAsync(e => e.NationalId == request.NationalId))
             throw new InvalidOperationException("National ID already exists");
+
+        if (request.JobRole == JobRole.Driver && request.VehicleId.HasValue)
+        {
+            var vehicleExists = await _db.Vehicles.AnyAsync(v => v.VehicleId == request.VehicleId);
+            if (!vehicleExists) throw new KeyNotFoundException("المركبة غير موجودة");
+
+            var vehicleInUse = await _db.Employees.AnyAsync(e => e.VehicleId == request.VehicleId && e.IsActive && !e.IsDeleted);
+            if (vehicleInUse) throw new InvalidOperationException("هذه المركبة معينة لموظف آخر بالفعل");
+        }
+        else if (request.JobRole == JobRole.BaggageHandler && request.CheckpointId.HasValue)
+        {
+            var checkpointExists = await _db.Checkpoints.AnyAsync(c => c.CheckpointId == request.CheckpointId);
+            if (!checkpointExists) throw new KeyNotFoundException("نقطة التفتيش غير موجودة");
+        }
 
         // 2) Generate Email
         string generatedEmail = await GenerateUniqueEmailAsync(request.FirstName, request.LastName);
@@ -201,6 +239,20 @@ public class AdminEmployeeService : IAdminEmployeeService
         if (request.DateOfBirth.HasValue) e.DateOfBirth = request.DateOfBirth.Value;
         if (request.JobRole.HasValue) e.JobRole = request.JobRole.Value;
         if (request.ShiftType.HasValue) e.ShiftType = request.ShiftType.Value;
+
+        if (e.JobRole == JobRole.Driver && request.VehicleId.HasValue && request.VehicleId != e.VehicleId)
+        {
+            var vehicleExists = await _db.Vehicles.AnyAsync(v => v.VehicleId == request.VehicleId);
+            if (!vehicleExists) throw new KeyNotFoundException("المركبة غير موجودة");
+
+            var vehicleInUse = await _db.Employees.AnyAsync(emp => emp.VehicleId == request.VehicleId && emp.IsActive && !emp.IsDeleted && emp.EmployeeId != employeeId);
+            if (vehicleInUse) throw new InvalidOperationException("هذه المركبة معينة لموظف آخر بالفعل");
+        }
+        else if (e.JobRole == JobRole.BaggageHandler && request.CheckpointId.HasValue && request.CheckpointId != e.CheckpointId)
+        {
+            var checkpointExists = await _db.Checkpoints.AnyAsync(c => c.CheckpointId == request.CheckpointId);
+            if (!checkpointExists) throw new KeyNotFoundException("نقطة التفتيش غير موجودة");
+        }
 
         if (request.ProfilePhoto != null)
         {
