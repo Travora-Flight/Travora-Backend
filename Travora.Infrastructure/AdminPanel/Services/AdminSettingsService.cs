@@ -47,12 +47,12 @@ public class AdminSettingsService : IAdminSettingsService
         var settings = await _db.AppSettings.FirstOrDefaultAsync() 
             ?? new Domain.Entities.AppSettings();
 
-        settings.CompanyName = request.CompanyName;
-        settings.CompanyEmail = request.Email;
-        settings.CompanyPhone = request.Phone;
-        settings.CompanyAddress = request.Address;
-        settings.Timezone = request.Timezone;
-        settings.Language = request.Language;
+        if (request.CompanyName != null) settings.CompanyName    = request.CompanyName;
+        if (request.Email       != null) settings.CompanyEmail   = request.Email;
+        if (request.Phone       != null) settings.CompanyPhone   = request.Phone;
+        if (request.Address     != null) settings.CompanyAddress = request.Address;
+        if (request.Timezone    != null) settings.Timezone       = request.Timezone;
+        if (request.Language    != null) settings.Language       = request.Language;
 
         if (settings.SettingsId == 0)
             _db.AppSettings.Add(settings);
@@ -67,8 +67,8 @@ public class AdminSettingsService : IAdminSettingsService
         var settings = await _db.AppSettings.FirstOrDefaultAsync() 
             ?? new Domain.Entities.AppSettings();
 
-        settings.ShowEmployeeNamesOnMap = request.ShowEmployeeNamesOnMap;
-        settings.AutoRefresh = request.AutoRefresh;
+        if (request.ShowEmployeeNamesOnMap.HasValue) settings.ShowEmployeeNamesOnMap = request.ShowEmployeeNamesOnMap.Value;
+        if (request.AutoRefresh.HasValue)            settings.AutoRefresh            = request.AutoRefresh.Value;
 
         if (settings.SettingsId == 0)
             _db.AppSettings.Add(settings);

@@ -23,6 +23,7 @@ public class PaymentMethodService : IPaymentMethodService
             .Select(pm => new PaymentMethodDto
             {
                 PaymentMethodId = pm.PaymentMethodId,
+                CardHolderName = pm.CardHolderName,
                 CardLastFour = pm.CardLastFour,
                 CardBrand = pm.CardBrand,
                 CardExpiryMonth = pm.CardExpiryMonth,
@@ -74,6 +75,13 @@ public class PaymentMethodService : IPaymentMethodService
 
         if (activeCount <= 1)
             return (false, "لا يمكن حذف الكارت الوحيد");
+
+        // تحقق إن البطاقة مش مستخدمة في order نشط
+        var hasActiveOrder = await _db.Payments
+            .AnyAsync(p => p.PaymentMethodId == paymentMethodId && p.Invoice.Order.OrderStatus != Travora.Domain.Enums.OrderStatus.Cancelled);
+
+        if (hasActiveOrder)
+            return (false, "لا يمكن حذف بطاقة مرتبطة بطلب نشط");
 
         var now = DateTime.UtcNow;
         target.IsDeleted = true;

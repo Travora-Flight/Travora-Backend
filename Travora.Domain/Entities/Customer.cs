@@ -22,6 +22,7 @@ public class Customer : IHasTimestamps, ISoftDelete
     public CustomerAccountStatus AccountStatus { get; set; } = CustomerAccountStatus.PendingVerification;
     public bool EmailVerified { get; set; } = false;
     public bool ProfileCompleted { get; set; } = false;
+    public string? ProfileImagePath { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
     public DateTime? LastLogin { get; set; }

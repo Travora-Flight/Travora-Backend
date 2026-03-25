@@ -11,10 +11,14 @@ namespace Travora.API.Controllers;
 public class CustomerPaymentMethodController : ControllerBase
 {
     private readonly IPaymentMethodService _paymentMethodService;
+    private readonly Travora.Application.Interfaces.Services.Customer.ICustomerProfileService _profileService;
 
-    public CustomerPaymentMethodController(IPaymentMethodService paymentMethodService)
+    public CustomerPaymentMethodController(
+        IPaymentMethodService paymentMethodService,
+        Travora.Application.Interfaces.Services.Customer.ICustomerProfileService profileService)
     {
         _paymentMethodService = paymentMethodService;
+        _profileService = profileService;
     }
 
     [HttpGet]
@@ -23,6 +27,18 @@ public class CustomerPaymentMethodController : ControllerBase
         var customerId = int.Parse(User.FindFirstValue("customerId")!);
         var result = await _paymentMethodService.GetCustomerPaymentMethodsAsync(customerId);
         return Ok(result);
+    }
+
+    [HttpPost]
+    public async Task<IActionResult> AddPaymentMethod([FromBody] Travora.Application.DTOs.Customer.Profile.AddPaymentMethodRequest request)
+    {
+        var customerId = int.Parse(User.FindFirstValue("customerId")!);
+        var (success, message, data) = await _profileService.AddPaymentMethodAsync(customerId, request);
+        
+        if (!success)
+            return BadRequest(new { success, message });
+
+        return Ok(new { success, message, data });
     }
 
     [HttpPost("{id}/set-default")]
