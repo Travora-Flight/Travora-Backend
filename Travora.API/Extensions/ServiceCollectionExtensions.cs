@@ -178,9 +178,27 @@ public static class ServiceCollectionExtensions
             }
         });
 
+        // Aviation Weather Http Client
+        services.AddHttpClient("AviationWeather", client =>
+        {
+            var weatherSettings = configuration.GetSection("AviationWeather").Get<AviationWeatherSettings>();
+            if (weatherSettings != null)
+            {
+                var baseUrl = weatherSettings.BaseUrl.EndsWith("/") ? weatherSettings.BaseUrl : $"{weatherSettings.BaseUrl}/";
+                client.BaseAddress = new Uri(baseUrl);
+            }
+            client.DefaultRequestHeaders.Add("User-Agent", "Travora/1.0");
+            client.Timeout = TimeSpan.FromSeconds(15);
+        });
+
         // Register External Services
         services.AddScoped<Travora.Application.Interfaces.External.IAirlineService, Travora.Infrastructure.ExternalServices.Communication.AirlineService>();
         services.AddScoped<Travora.Application.Interfaces.External.IGeocodingService, Travora.Infrastructure.ExternalServices.Communication.NominatimGeocodingService>();
+
+        // Aviation Weather Services
+        services.AddScoped<Travora.Application.Interfaces.External.Weather.IAviationWeatherService, Travora.Infrastructure.ExternalServices.Weather.AviationWeatherApiService>();
+        services.AddScoped<Travora.Application.Interfaces.External.Weather.IWeatherCache, Travora.Infrastructure.Caching.WeatherCacheService>();
+        services.AddScoped<IAirportDetailsService, Travora.Infrastructure.Services.AirportDetailsService>();
         
         // Register Draft Order Service (Redis)
         services.AddScoped<Travora.Application.Interfaces.Services.IDraftOrderService, Travora.Infrastructure.Services.DraftOrderService>();
