@@ -769,7 +769,7 @@ public class CustomerOrderService : ICustomerOrderService
         if (packageName is not (PackageNames.DoorToDoor or PackageNames.CarServiceToAirport))
             throw new InvalidOperationException("بطاقة الصعود غير متاحة لهذا النوع من الطلبات");
 
-        if (order.OrderStatus != OrderStatus.Confirmed && order.OrderStatus != OrderStatus.rescheduled && order.OrderStatus != OrderStatus.InProgress)
+        if (order.OrderStatus != OrderStatus.Confirmed && order.OrderStatus != OrderStatus.rescheduled && order.OrderStatus != OrderStatus.InProgress && order.OrderStatus != OrderStatus.Completed)
             throw new InvalidOperationException("يجب إتمام الدفع أولاً");
 
         // If already generated, return from DB

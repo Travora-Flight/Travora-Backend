@@ -640,7 +640,20 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
                     p.PackageName == PackageNames.DoorToDoor, cancellationToken);
 
                 string flightNo = draft.FlightInfo.FlightNumber;
-                var flight = await _context.Flights.FirstOrDefaultAsync(f => f.FlightNumber == flightNo, cancellationToken);
+
+                // 1) استخرج IATA codes من draft
+                var depIata = (draft.FlightInfo.DepartureIataCode
+                    ?? draft.FlightInfo.DepartureAirport
+                    ?? "").Trim();
+                var arrIata = (draft.FlightInfo.ArrivalIataCode
+                    ?? draft.FlightInfo.ArrivalAirport
+                    ?? "").Trim();
+
+                // 2) ابحث عن الرحلة بالـ FlightNumber
+                var flight = await _context.Flights
+                    .FirstOrDefaultAsync(f => f.FlightNumber == flightNo, cancellationToken);
+
+                // 3) لو جديدة → أنشئها
                 if (flight == null)
                 {
                     flight = new Domain.Entities.Flight
@@ -648,18 +661,44 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
                         FlightNumber = flightNo,
                         AirlineIcaoCode = (draft.FlightInfo.AirlineIcaoCode ?? "MS").Trim(),
                         AirlineName = draft.FlightInfo.AirlineName ?? string.Empty,
-                        DepartureIataCode = (draft.FlightInfo.DepartureAirport ?? "CAI").Trim().Substring(0, Math.Min(35, (draft.FlightInfo.DepartureAirport ?? "CAI").Trim().Length)),
-                        ArrivalIataCode = (draft.FlightInfo.ArrivalAirport ?? "JFK").Trim().Substring(0, Math.Min(35, (draft.FlightInfo.ArrivalAirport ?? "JFK").Trim().Length)),
+                        DepartureIataCode = depIata,
+                        ArrivalIataCode = arrIata,
                         DepartureTerminal = draft.FlightInfo.Terminal,
                         DepartureGate = draft.FlightInfo.Gate,
                         ScheduledDepartureTime = draft.FlightInfo.DepartureTimeUtc,
-                        ScheduledArrivalTime = draft.FlightInfo.ArrivalTimeUtc ?? draft.FlightInfo.DepartureTimeUtc.AddHours(4),
+                        ScheduledArrivalTime = draft.FlightInfo.ArrivalTimeUtc
+                            ?? draft.FlightInfo.DepartureTimeUtc.AddHours(4),
                         FlightStatus = Domain.Enums.FlightStatus.Scheduled,
                         DataSource = "AirlineSimulation"
                     };
                     _context.Flights.Add(flight);
-                    await _context.SaveChangesAsync(cancellationToken);
                 }
+                // 4) لو موجودة → حدّث البيانات
+                else
+                {
+                    flight.DepartureIataCode = depIata;
+                    flight.ArrivalIataCode = arrIata;
+                    flight.DepartureTerminal = draft.FlightInfo.Terminal ?? flight.DepartureTerminal;
+                    flight.DepartureGate = draft.FlightInfo.Gate ?? flight.DepartureGate;
+                    flight.ScheduledDepartureTime = draft.FlightInfo.DepartureTimeUtc;
+                    flight.ScheduledArrivalTime = draft.FlightInfo.ArrivalTimeUtc
+                        ?? draft.FlightInfo.DepartureTimeUtc.AddHours(4);
+                    flight.UpdatedAt = DateTime.UtcNow;
+                }
+
+                // 5) اربط بالـ Airport من جدول Airports
+                var departureAirport = await _context.Airports
+                    .FirstOrDefaultAsync(a => a.CodeIataAirport == depIata, cancellationToken);
+                if (departureAirport != null)
+                    flight.DepartureAirportId = departureAirport.AirportId;
+
+                var arrivalAirport = await _context.Airports
+                    .FirstOrDefaultAsync(a => a.CodeIataAirport == arrIata, cancellationToken);
+                if (arrivalAirport != null)
+                    flight.ArrivalAirportId = arrivalAirport.AirportId;
+
+                // 6) احفظ
+                await _context.SaveChangesAsync(cancellationToken);
 
                 var pickupLocation = new Domain.Entities.Location
                 {

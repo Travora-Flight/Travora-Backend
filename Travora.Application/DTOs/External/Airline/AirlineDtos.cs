@@ -50,6 +50,8 @@ public class AirlineFlightInfo
     public string? Gate { get; set; }
     public string? AirlineName { get; set; }
     public string? AirlineIcaoCode { get; set; }
+    public string? DepartureIataCode { get; set; }
+    public string? ArrivalIataCode { get; set; }
     public string? OriginCity { get; set; }
     public string? DestinationCity { get; set; }
     public string? FlightDate { get; set; }
@@ -140,6 +142,11 @@ public class AirlineBagItem
 public class AirlineIssueBoardingPassRequest
 {
     public string TicketNumber { get; set; } = string.Empty;
+}
+
+public class AirlineIssueBoardingPassWrapper
+{
+    public List<AirlineIssueBoardingPassResponse>? BoardingPasses { get; set; }
 }
 
 public class AirlineIssueBoardingPassResponse

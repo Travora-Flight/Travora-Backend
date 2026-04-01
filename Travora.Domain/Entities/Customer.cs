@@ -28,7 +28,6 @@ public class Customer : IHasTimestamps, ISoftDelete
     public DateTime? LastLogin { get; set; }
 
     // Navigation properties
-    public ICollection<CustomerCompanion> CustomerCompanions { get; set; } = new List<CustomerCompanion>();
     public ICollection<Location> Locations { get; set; } = new List<Location>();
     public ICollection<Order> Orders { get; set; } = new List<Order>();
     public ICollection<SavedFlight> SavedFlights { get; set; } = new List<SavedFlight>();

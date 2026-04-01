@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Travora.Application.DTOs.Employee.Tasks;
+using Travora.Application.Interfaces.Services;
 using Travora.Application.Interfaces.Services.Employee;
 using Travora.Domain.Entities;
 using Travora.Domain.Enums;
@@ -10,10 +11,12 @@ namespace Travora.Infrastructure.EmployeePanel.Services;
 public class EmployeeTaskService : IEmployeeTaskService
 {
     private readonly ApplicationDbContext _db;
+    private readonly INotificationPusher _pusher;
 
-    public EmployeeTaskService(ApplicationDbContext db)
+    public EmployeeTaskService(ApplicationDbContext db, INotificationPusher pusher)
     {
         _db = db;
+        _pusher = pusher;
     }
 
     public async Task<TaskDetailResponse> GetTaskDetailAsync(int employeeId, int orderServiceId)
@@ -149,6 +152,13 @@ public class EmployeeTaskService : IEmployeeTaskService
 
         await _db.SaveChangesAsync();
 
+        await _pusher.PushToCustomerAsync(
+            order.CustomerId,
+            "جاري تنفيذ طلبك",
+            "الموظف في الطريق إليك",
+            "OrderUpdated",
+            order.OrderId);
+
         return new TaskActionResponse
         {
             Success = true,
@@ -243,6 +253,13 @@ public class EmployeeTaskService : IEmployeeTaskService
                         NotificationChannel = NotificationChannel.InApp,
                         OrderId = order.OrderId
                     });
+
+                    await _pusher.PushToEmployeeAsync(
+                        availableHandler.EmployeeId,
+                        "تم تعيينك على طلب جديد",
+                        "يرجى استلام الشنط من السواق في نقطة الـ Check-in",
+                        "NewTaskAssigned",
+                        order.OrderId);
                 }
             }
         }
@@ -288,6 +305,13 @@ public class EmployeeTaskService : IEmployeeTaskService
                         NotificationChannel = NotificationChannel.InApp,
                         OrderId = order.OrderId
                     });
+
+                    await _pusher.PushToEmployeeAsync(
+                        availableDriver.EmployeeId,
+                        "تم تعيينك على توصيل جديد",
+                        "يرجى استلام الشنط من المطار وتوصيلها للعميل",
+                        "NewTaskAssigned",
+                        order.OrderId);
                 }
                 // لو مفيش driver → فاضل Pending والـ Admin يعمل assign يدوي
             }
@@ -316,6 +340,25 @@ public class EmployeeTaskService : IEmployeeTaskService
         });
 
         await _db.SaveChangesAsync();
+
+        if (allCompleted)
+        {
+            await _pusher.PushToCustomerAsync(
+                order.CustomerId,
+                "تم إتمام طلبك بالكامل",
+                "تم تسليم شنطتك بنجاح ✅",
+                "OrderCompleted",
+                order.OrderId);
+        }
+        else
+        {
+            await _pusher.PushToCustomerAsync(
+                order.CustomerId,
+                "تم إكمال مرحلة من طلبك",
+                "جاري تنفيذ المرحلة التالية",
+                "OrderUpdated",
+                order.OrderId);
+        }
 
         return new TaskActionResponse
         {

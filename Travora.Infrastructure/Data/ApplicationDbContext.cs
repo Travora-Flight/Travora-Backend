@@ -46,7 +46,6 @@ public class ApplicationDbContext : DbContext
 
     // ===== المرافقين =====
     public DbSet<Companion> Companions => Set<Companion>();
-    public DbSet<CustomerCompanion> CustomerCompanions => Set<CustomerCompanion>();
 
     // ===== الجمارك =====
     public DbSet<CustomsDeclaration> CustomsDeclarations => Set<CustomsDeclaration>();

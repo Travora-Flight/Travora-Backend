@@ -6,6 +6,7 @@ using StackExchange.Redis;
 using Travora.Shared.Settings;
 using Travora.Application.DTOs.Employee.Baggage;
 using Travora.Application.Interfaces.External.FileStorage;
+using Travora.Application.Interfaces.Services;
 using Travora.Application.Interfaces.Services.Employee;
 using Travora.Domain.Entities;
 using Travora.Domain.Enums;
@@ -19,6 +20,7 @@ public class EmployeeBaggageService : IEmployeeBaggageService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ICloudinaryService _cloudinary;
     private readonly IConnectionMultiplexer _redis;
+    private readonly INotificationPusher _pusher;
     private readonly AirlineApiSettings _airlineSettings;
 
     public EmployeeBaggageService(
@@ -26,12 +28,14 @@ public class EmployeeBaggageService : IEmployeeBaggageService
         IHttpClientFactory httpClientFactory,
         ICloudinaryService cloudinary,
         IConnectionMultiplexer redis,
+        INotificationPusher pusher,
         IOptions<AirlineApiSettings> airlineSettings)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
         _cloudinary = cloudinary;
         _redis = redis;
+        _pusher = pusher;
         _airlineSettings = airlineSettings.Value;
     }
 
@@ -159,19 +163,47 @@ public class EmployeeBaggageService : IEmployeeBaggageService
         });
 
         // 7) Notification
-        _db.Notifications.Add(new Notification
-        {
-            UserId = order.CustomerId,
-            UserType = UserType.Customer,
-            NotificationType = NotificationType.BaggagePickedUp,
-            Title = "تم استلام شنطتك",
-            Message = "السواق استلم شنطتك وفي الطريق للمطار",
-            NotificationChannel = NotificationChannel.InApp,
-            OrderId = order.OrderId,
-            BaggageId = baggage.BaggageId
-        });
+        var orderWithBags = await _db.Orders
+            .Include(o => o.Baggages)
+                .ThenInclude(b => b.BaggageTrackings)
+            .FirstOrDefaultAsync(o => o.OrderId == baggage.OrderId);
 
-        await _db.SaveChangesAsync();
+        if (orderWithBags != null)
+        {
+            var allBagsScanned = orderWithBags.Baggages.All(b =>
+                b.BaggageTrackings.Any(bt =>
+                    bt.Status == BaggageTrackingStatus.PickedUp));
+
+            if (allBagsScanned)
+            {
+                var totalBags = orderWithBags.Baggages.Count;
+                var title = "تم استلام جميع شنطك";
+                var message = $"السواق استلم {totalBags} شنطة وفي الطريق للمطار";
+
+                // DB Notification
+                _db.Notifications.Add(new Notification
+                {
+                    UserId = order.CustomerId,
+                    UserType = UserType.Customer,
+                    NotificationType = NotificationType.BaggagePickedUp,
+                    Title = title,
+                    Message = message,
+                    NotificationChannel = NotificationChannel.InApp,
+                    OrderId = order.OrderId,
+                    BaggageId = null
+                });
+
+                await _db.SaveChangesAsync();
+
+                // SignalR Real-time
+                await _pusher.PushToCustomerAsync(
+                    order.CustomerId,
+                    title,
+                    message,
+                    "BaggagePickedUp",
+                    order.OrderId);
+            }
+        }
 
         var now = DateTime.UtcNow;
         return new BaggageScanResponse
@@ -400,6 +432,8 @@ public class EmployeeBaggageService : IEmployeeBaggageService
             GpsLongitude = gpsLng ?? 0
         });
 
+        await _db.SaveChangesAsync();
+
         // Notification
         _db.Notifications.Add(new Notification
         {
@@ -414,6 +448,14 @@ public class EmployeeBaggageService : IEmployeeBaggageService
         });
 
         await _db.SaveChangesAsync();
+
+        // SignalR Real-time
+        await _pusher.PushToCustomerAsync(
+            baggage.Order.CustomerId,
+            "تحديث شنطتك",
+            $"شنطتك الآن في {employee.Checkpoint.CheckpointName}",
+            "BaggageUpdated",
+            baggage.OrderId);
 
         return new CheckpointUpdateResponse
         {

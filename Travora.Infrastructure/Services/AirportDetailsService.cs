@@ -154,9 +154,9 @@ public class AirportDetailsService : IAirportDetailsService
             .Select(f => new AirportFlightDto
             {
                 Destination = f.DepartureAirport != null ? f.DepartureAirport.NameAirport : f.DepartureIataCode,
-                FlightNumber = f.FlightIataNumber,
+                FlightNumber = f.FlightNumber,
                 ScheduledTime = f.ScheduledArrivalTime.ToString("HH:mm"),
-                Gate = f.ArrivalGate ?? "—",
+                Gate = f.DepartureGate ?? "—",
                 Type = "Arrival",
                 Status = MapFlightStatus(f.FlightStatus)
             })

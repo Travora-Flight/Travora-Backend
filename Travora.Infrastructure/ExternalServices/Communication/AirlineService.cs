@@ -28,10 +28,8 @@ public class AirlineService : IAirlineService
             };
         }
         
-        var result = System.Text.Json.JsonSerializer.Deserialize<AirlineValidateTicketResponse>(
-            rawJson, 
-            new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true }
-        );
+        var options = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var result = System.Text.Json.JsonSerializer.Deserialize<AirlineValidateTicketResponse>(rawJson, options);
         
         var flightData = result?.Flight ?? result?.Ticket?.Flight ?? result?.FlightInfo;
         var passengerData = result?.Passenger ?? result?.Ticket?.Passenger ?? result?.PassengerInfo;
@@ -54,7 +52,10 @@ public class AirlineService : IAirlineService
             return new AirlineBaggageCheckResponse { TicketNumber = ticketNumber, TotalBaggageCount = 0 };
         }
 
-        var result = await response.Content.ReadFromJsonAsync<AirlineBaggageCheckResponse>(cancellationToken: cancellationToken);
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        var options = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var result = System.Text.Json.JsonSerializer.Deserialize<AirlineBaggageCheckResponse>(json, options);
+
         return result ?? new AirlineBaggageCheckResponse { TicketNumber = ticketNumber, TotalBaggageCount = 0 };
     }
 
@@ -67,7 +68,10 @@ public class AirlineService : IAirlineService
             return new AirlineCustomsLookupResponse { Found = false };
         }
 
-        var result = await response.Content.ReadFromJsonAsync<AirlineCustomsLookupResponse>(cancellationToken: cancellationToken);
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        var options = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var result = System.Text.Json.JsonSerializer.Deserialize<AirlineCustomsLookupResponse>(json, options);
+
         return result ?? new AirlineCustomsLookupResponse { Found = false };
     }
 
@@ -78,7 +82,10 @@ public class AirlineService : IAirlineService
         if (!response.IsSuccessStatusCode)
             return new AirlineBaggageByTicketResponse { TicketNumber = ticketNumber };
 
-        var result = await response.Content.ReadFromJsonAsync<AirlineBaggageByTicketResponse>(cancellationToken: cancellationToken);
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        var options = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var result = System.Text.Json.JsonSerializer.Deserialize<AirlineBaggageByTicketResponse>(json, options);
+
         return result ?? new AirlineBaggageByTicketResponse { TicketNumber = ticketNumber };
     }
 
@@ -89,8 +96,20 @@ public class AirlineService : IAirlineService
 
         response.EnsureSuccessStatusCode();
 
-        var options = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-        var result = await response.Content.ReadFromJsonAsync<AirlineIssueBoardingPassResponse>(options, cancellationToken: cancellationToken);
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        var options = new System.Text.Json.JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        };
+
+        // جرب الـ wrapper الأول
+        var wrapper = System.Text.Json.JsonSerializer.Deserialize<AirlineIssueBoardingPassWrapper>(json, options);
+        var result = wrapper?.BoardingPasses?.FirstOrDefault();
+
+        // لو مش wrapper → جرب object مباشر
+        if (result == null)
+            result = System.Text.Json.JsonSerializer.Deserialize<AirlineIssueBoardingPassResponse>(json, options);
+
         return result ?? new AirlineIssueBoardingPassResponse();
     }
 }

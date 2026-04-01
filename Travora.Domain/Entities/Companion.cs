@@ -13,7 +13,6 @@ public class Companion
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     // Navigation properties
-    public ICollection<CustomerCompanion> CustomerCompanions { get; set; } = new List<CustomerCompanion>();
     public ICollection<OrderCompanion> OrderCompanions { get; set; } = new List<OrderCompanion>();
     public ICollection<Baggage> Baggages { get; set; } = new List<Baggage>();
     public ICollection<BoardingPass> BoardingPasses { get; set; } = new List<BoardingPass>();
