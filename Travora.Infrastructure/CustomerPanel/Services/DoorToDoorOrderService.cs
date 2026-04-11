@@ -286,8 +286,8 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
 
         if (string.Equals(request.LocationType, "delivery", StringComparison.OrdinalIgnoreCase))
         {
-            if (string.IsNullOrEmpty(draft.SelectedSlot))
-                return new ResolveLocationResponse { IsValid = false, ErrorMessage = "يجب إكمال خطوة اختيار موعد الاستلام أولاً" };
+            if (string.IsNullOrEmpty(draft.PickupFormattedAddress))
+                return new ResolveLocationResponse { IsValid = false, ErrorMessage = "يجب إكمال خطوة تحديد موقع الاستلام أولاً" };
         }
         else // pickup
         {
@@ -345,6 +345,9 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
 
         if (string.IsNullOrEmpty(draft.PickupFormattedAddress))
             return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "يجب إكمال خطوة تحديد موقع الاستلام أولاً" };
+
+        if (string.IsNullOrEmpty(draft.DeliveryFormattedAddress))
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "يجب إكمال خطوة تحديد موقع التسليم أولاً" };
 
         var flightDate = draft.FlightInfo.DepartureTimeUtc.Date;
         var today = DateTime.UtcNow.Date;
@@ -951,6 +954,9 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         var draft = await _draftOrderService.GetDraftOrderAsync(customerId.ToString(), cancellationToken);
         if (draft == null || draft.FlightInfo == null)
             throw new Exception("Draft order not found. Please start from Step 1.");
+
+        if (string.IsNullOrEmpty(draft.SelectedSlot))
+            throw new Exception("يجب إكمال خطوة اختيار موعد الاستلام أولاً");
 
         var arrivalTimeUtc = draft.FlightInfo.ArrivalTimeUtc ?? draft.FlightInfo.DepartureTimeUtc.AddHours(4);
         var arrivalDate = arrivalTimeUtc.Date;

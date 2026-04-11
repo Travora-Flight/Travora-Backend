@@ -27,55 +27,20 @@ public class PaymentController : ControllerBase
     }
     [HttpPost("webhook")]
     [AllowAnonymous]
-    public async Task<IActionResult> Webhook()
+    public async Task<IActionResult> Webhook([FromQuery] string hmac, [FromBody] System.Text.Json.JsonElement payload)
     {
-        var formData = new Dictionary<string, string>();
-
-        var contentType = Request.ContentType ?? "";
-
-        if (contentType.Contains("application/json"))
-        {
-            // Paymob بيبعت JSON
-            using var reader = new StreamReader(Request.Body);
-            var body = await reader.ReadToEndAsync();
-            
-            var json = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(body);
-            
-            // استخرج الـ obj
-            if (json.TryGetProperty("obj", out var obj))
-                FlattenJsonElement(obj, formData, "");
-            
-            // استخرج الـ hmac من الـ query string
-        }
-        else
-        {
-            // form data
-            foreach (var key in Request.Form.Keys)
-                formData[key] = Request.Form[key].ToString();
-
-            if (Request.Form.ContainsKey("obj"))
-            {
-                var objJson = Request.Form["obj"].ToString();
-                try
-                {
-                    var obj = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(objJson);
-                    FlattenJsonElement(obj, formData, "");
-                }
-                catch { }
-            }
-        }
-
-        var hmac = Request.Query.ContainsKey("hmac")
-            ? Request.Query["hmac"].ToString()
-            : formData.GetValueOrDefault("hmac", "");
-
         try
         {
-            await _paymobService.HandleWebhookAsync(formData, hmac);
+            // بنبعت الـ JSON والـ HMAC للـ Service من غير أي لعب في الداتا
+            await _paymobService.HandleWebhookAsync(payload, hmac);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            // بنسجل أي إيرور عشان نقدر نتابعه، بس لازم نرد بـ Ok لـ Paymob
+            Console.WriteLine($"Webhook Error: {ex.Message}");
+        }
 
-        return Ok();
+        return Ok(); 
     }
     [HttpGet("status/{orderId}")]
     [Authorize(Roles = "customer")]
@@ -85,26 +50,4 @@ public class PaymentController : ControllerBase
         return Ok(response);
     }
 
-    /// <summary>
-    /// Flattens a JSON element into dot-notation keys for HMAC calculation
-    /// </summary>
-    private static void FlattenJsonElement(System.Text.Json.JsonElement element, Dictionary<string, string> dict, string prefix)
-    {
-        switch (element.ValueKind)
-        {
-            case System.Text.Json.JsonValueKind.Object:
-                foreach (var prop in element.EnumerateObject())
-                {
-                    var key = string.IsNullOrEmpty(prefix) ? prop.Name : $"{prefix}.{prop.Name}";
-                    FlattenJsonElement(prop.Value, dict, key);
-                }
-                break;
-            case System.Text.Json.JsonValueKind.Array:
-                break; // Skip arrays for HMAC
-            default:
-                if (!dict.ContainsKey(prefix))
-                    dict[prefix] = element.ToString();
-                break;
-        }
-    }
 }

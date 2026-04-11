@@ -5,6 +5,6 @@ namespace Travora.Application.Interfaces.Services;
 public interface IPaymobService
 {
     Task<PaymentInitiationResponse> InitiatePaymentAsync(int orderId, int customerId);
-    Task HandleWebhookAsync(Dictionary<string, string> formData, string hmacFromPaymob);
+    Task HandleWebhookAsync(System.Text.Json.JsonElement payload, string hmacFromPaymob);
     Task<PaymentStatusResponse> GetPaymentStatusAsync(int orderId);
 }

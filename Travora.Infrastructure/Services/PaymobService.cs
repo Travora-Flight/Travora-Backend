@@ -153,59 +153,78 @@ public class PaymobService : IPaymobService
         };
     }
 
-    public async Task HandleWebhookAsync(Dictionary<string, string> formData, string hmacFromPaymob)
+    public async Task HandleWebhookAsync(System.Text.Json.JsonElement payload, string hmacFromPaymob)
     {
-        var isRefund = formData.GetValueOrDefault("is_refund", "false");
-        if (string.Equals(isRefund, "true", StringComparison.OrdinalIgnoreCase))
+        // 1. فلتر الاسترداد: تجاهل الريكويست لو كان يخص Refund
+        var type = payload.TryGetProperty("type", out var t) ? t.GetString() : "";
+        if (string.Equals(type, "REFUND", StringComparison.OrdinalIgnoreCase))
             return;
 
-        // Verify HMAC
-        var hmacFields = new[]
-        {
-            "amount_cents", "created_at", "currency", "error_occured",
-            "has_parent_transaction", "id", "integration_id", "is_3d_secure",
-            "is_auth", "is_capture", "is_refunded", "is_standalone_payment",
-            "is_voided", "order.id", "owner", "pending", "source_data.pan",
-            "source_data.sub_type", "source_data.type", "success"
-        };
+        if (!payload.TryGetProperty("obj", out var obj))
+            return;
 
-        var concatenated = string.Join("", hmacFields.Select(f => formData.GetValueOrDefault(f, "")));
+        // تأكيد إضافي لتجاهل عمليات الدفع اللي معمولها استرداد
+        if (obj.TryGetProperty("is_refunded", out var isRef) && isRef.ValueKind == System.Text.Json.JsonValueKind.True)
+            return;
+
+        // 2. تجميع الـ HMAC بالترتيب الأبجدي الصارم واستخراج القيم خام من الـ JSON
+        var amount_cents = obj.GetProperty("amount_cents").GetRawText();
+        var created_at = obj.GetProperty("created_at").GetString();
+        var currency = obj.GetProperty("currency").GetString();
+        var error_occured = obj.GetProperty("error_occured").GetBoolean().ToString().ToLower();
+        var has_parent_transaction = obj.GetProperty("has_parent_transaction").GetBoolean().ToString().ToLower();
+        var id = obj.GetProperty("id").GetRawText();
+        var integration_id = obj.GetProperty("integration_id").GetRawText();
+        var is_3d_secure = obj.GetProperty("is_3d_secure").GetBoolean().ToString().ToLower();
+        var is_auth = obj.GetProperty("is_auth").GetBoolean().ToString().ToLower();
+        var is_capture = obj.GetProperty("is_capture").GetBoolean().ToString().ToLower();
+        var is_refunded = obj.GetProperty("is_refunded").GetBoolean().ToString().ToLower();
+        var is_standalone_payment = obj.GetProperty("is_standalone_payment").GetBoolean().ToString().ToLower();
+        var is_voided = obj.GetProperty("is_voided").GetBoolean().ToString().ToLower();
+        var order_id = obj.GetProperty("order").GetProperty("id").GetRawText();
+        var owner = obj.GetProperty("owner").GetRawText();
+        var pending = obj.GetProperty("pending").GetBoolean().ToString().ToLower();
+        var source_data_pan = obj.GetProperty("source_data").GetProperty("pan").GetString() ?? "";
+        var source_data_sub_type = obj.GetProperty("source_data").GetProperty("sub_type").GetString() ?? "";
+        var source_data_type = obj.GetProperty("source_data").GetProperty("type").GetString() ?? "";
+        var success_bool = obj.GetProperty("success").GetBoolean();
+        var success = success_bool.ToString().ToLower();
+
+        // دمج المتغيرات
+        var concatenated = amount_cents + created_at + currency + error_occured + has_parent_transaction +
+                        id + integration_id + is_3d_secure + is_auth + is_capture + is_refunded +
+                        is_standalone_payment + is_voided + order_id + owner + pending +
+                        source_data_pan + source_data_sub_type + source_data_type + success;
+
+        // التشفير والمقارنة (الحماية شغالة ومفيش كومنت)
         var computedHmac = ComputeHmacSha512(concatenated, _settings.HmacSecret);
 
-        // if (!string.Equals(computedHmac, hmacFromPaymob, StringComparison.OrdinalIgnoreCase))
-        //     throw new UnauthorizedAccessException("Invalid HMAC signature");
+        if (!string.Equals(computedHmac, hmacFromPaymob, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning("HMAC Mismatch! Computed: {Computed}, Received: {Received}", computedHmac, hmacFromPaymob);
+            throw new UnauthorizedAccessException("Invalid HMAC signature");
+        }
 
-        // Extract data
-        var merchantOrderId = formData.GetValueOrDefault("order.merchant_order_id", "");
-        var success = formData.GetValueOrDefault("success", "false");
-        var transactionId = formData.GetValueOrDefault("id", "");
-        var paymobOrderId = formData.GetValueOrDefault("order.id", "");
+        // 3. استخراج باقي الداتا عشان نحدث الداتا بيز
+        var merchantOrderIdStr = obj.GetProperty("order").GetProperty("merchant_order_id").GetString();
+        var transactionId = id;
+        var paymobOrderId = order_id;
 
-        if (!int.TryParse(merchantOrderId, out var orderId))
-            return; // Unknown order — return 200 silently
+        if (!int.TryParse(merchantOrderIdStr, out var orderId))
+            return; // أوردر غير معروف
 
-        var order = await _db.Orders
-            .Include(o => o.Invoices)
-            .FirstOrDefaultAsync(o => o.OrderId == orderId);
+        var order = await _db.Orders.Include(o => o.Invoices).FirstOrDefaultAsync(o => o.OrderId == orderId);
+        if (order == null) return;
 
-        if (order == null)
-            return; // Order not found — return 200 silently
+        var invoice = order.Invoices.FirstOrDefault(i => i.InvoiceStatus == InvoiceStatus.Pending || i.InvoiceStatus == InvoiceStatus.Draft);
+        if (invoice == null) return;
 
-        var invoice = order.Invoices.FirstOrDefault(i =>
-            i.InvoiceStatus == InvoiceStatus.Pending || i.InvoiceStatus == InvoiceStatus.Draft);
-
-        if (invoice == null)
-            return;
-
-        // Find payment by gateway order ID
-        var payment = await _db.Payments
-            .FirstOrDefaultAsync(p => p.OrderIdFromGateway == paymobOrderId && p.InvoiceId == invoice.InvoiceId);
-
+        var payment = await _db.Payments.FirstOrDefaultAsync(p => p.OrderIdFromGateway == paymobOrderId && p.InvoiceId == invoice.InvoiceId);
         var now = DateTime.UtcNow;
 
-        if (string.Equals(success, "true", StringComparison.OrdinalIgnoreCase))
+        if (success_bool)
         {
-            // Payment succeeded
+            // تم الدفع بنجاح
             invoice.InvoiceStatus = InvoiceStatus.Paid;
             invoice.PaidAt = now;
             invoice.UpdatedAt = now;
@@ -219,35 +238,25 @@ public class PaymobService : IPaymobService
                 payment.TransactionId = transactionId;
                 payment.UpdatedAt = now;
 
-                // Update PaymentMethod with real card data
-                var paymentMethod = await _db.PaymentMethods
-                    .FirstOrDefaultAsync(pm => pm.PaymentMethodId == payment.PaymentMethodId);
+                // تحديث بيانات كارت الدفع
+                var paymentMethod = await _db.PaymentMethods.FirstOrDefaultAsync(pm => pm.PaymentMethodId == payment.PaymentMethodId);
                 if (paymentMethod != null)
                 {
-                    var pan = formData.GetValueOrDefault("source_data.pan", "");
-                    var cardBrand = formData.GetValueOrDefault("source_data.type", "");
-                    var subType = formData.GetValueOrDefault("source_data.sub_type", "");
-
-                    if (pan.Length >= 4)
-                        paymentMethod.CardLastFour = pan[^4..];
-
-                    if (!string.IsNullOrEmpty(cardBrand))
-                        paymentMethod.CardBrand = cardBrand;
-
-                    paymentMethod.PaymentFunding = subType?.ToLower() switch
+                    if (source_data_pan.Length >= 4) paymentMethod.CardLastFour = source_data_pan[^4..];
+                    paymentMethod.CardBrand = source_data_type;
+                    paymentMethod.PaymentFunding = source_data_sub_type.ToLower() switch
                     {
                         "debit" => PaymentFunding.Debit,
                         "prepaid" => PaymentFunding.Prepaid,
                         _ => PaymentFunding.Credit
                     };
-
                     paymentMethod.UpdatedAt = now;
                 }
             }
         }
         else
         {
-            // Payment failed
+            // فشل الدفع
             invoice.InvoiceStatus = InvoiceStatus.Failed;
             invoice.UpdatedAt = now;
 
@@ -255,24 +264,26 @@ public class PaymobService : IPaymobService
             {
                 payment.PaymentStatus = PaymentStatus.Failed;
                 payment.TransactionId = transactionId;
-                payment.GatewayResponse = formData.GetValueOrDefault("data.message", "Payment failed");
+                
+                var gatewayMsg = "Payment failed";
+                if (obj.TryGetProperty("data", out var dataObj) && dataObj.TryGetProperty("message", out var msgProp))
+                    gatewayMsg = msgProp.GetString() ?? "Payment failed";
+                    
+                payment.GatewayResponse = gatewayMsg;
                 payment.UpdatedAt = now;
             }
         }
 
         await _db.SaveChangesAsync();
 
-        // Dispatch employee assignment AFTER SaveChanges so DB state is committed
-        if (string.Equals(success, "true", StringComparison.OrdinalIgnoreCase))
+        // 4. استكمال الخدمات وتعيين الموظفين بعد الدفع
+        if (success_bool)
         {
-            var orderWithPackage = await _db.Orders
-                .Include(o => o.Package)
-                .FirstOrDefaultAsync(o => o.OrderId == orderId);
+            var orderWithPackage = await _db.Orders.Include(o => o.Package).FirstOrDefaultAsync(o => o.OrderId == orderId);
 
             if (orderWithPackage?.Package?.PackageName == PackageNames.DoorToDoor)
                 await _doorToDoorOrderService.AssignEmployeesAfterPaymentAsync(orderId);
-            else if (orderWithPackage?.Package?.PackageName == PackageNames.CarServiceToAirport ||
-                     orderWithPackage?.Package?.PackageName == PackageNames.CarServiceFromAirport)
+            else if (orderWithPackage?.Package?.PackageName == PackageNames.CarServiceToAirport || orderWithPackage?.Package?.PackageName == PackageNames.CarServiceFromAirport)
                 await _carServiceOrderService.AssignEmployeesAfterPaymentAsync(orderId);
             else if (orderWithPackage?.Package?.PackageName == PackageNames.TrackingBaggage)
             {
@@ -286,24 +297,17 @@ public class PaymobService : IPaymobService
                 }
             }
 
-            // Auto-generate boarding passes for eligible packages (fire and forget)
+            // إنشاء البوردينج باس
             if (orderWithPackage?.Package?.PackageName is PackageNames.DoorToDoor or PackageNames.CarServiceToAirport)
             {
                 _ = Task.Run(async () =>
                 {
-                    try
-                    {
-                        await _customerOrderService.GenerateBoardingPassesAsync(orderId);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Failed to auto-generate boarding passes for order {OrderId}", orderId);
-                    }
+                    try { await _customerOrderService.GenerateBoardingPassesAsync(orderId); }
+                    catch (Exception ex) { _logger.LogError(ex, "Failed to auto-generate boarding passes for order {OrderId}", orderId); }
                 });
             }
         }
     }
-
     public async Task<PaymentStatusResponse> GetPaymentStatusAsync(int orderId)
     {
         var order = await _db.Orders
