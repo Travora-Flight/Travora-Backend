@@ -1,5 +1,4 @@
 using Microsoft.EntityFrameworkCore;
-using StackExchange.Redis;
 using System.Text.Json;
 using Travora.Application.DTOs.Admin.LiveTracker;
 using Travora.Application.Interfaces;
@@ -11,9 +10,9 @@ namespace Travora.Infrastructure.AdminPanel.Services;
 public class AdminLiveTrackerService : IAdminLiveTrackerService
 {
     private readonly ApplicationDbContext _db;
-    private readonly IConnectionMultiplexer _redis;
+    private readonly IUpstashRedisService _redis;
 
-    public AdminLiveTrackerService(ApplicationDbContext db, IConnectionMultiplexer redis)
+    public AdminLiveTrackerService(ApplicationDbContext db, IUpstashRedisService redis)
     {
         _db = db;
         _redis = redis;
@@ -27,13 +26,11 @@ public class AdminLiveTrackerService : IAdminLiveTrackerService
             .ToListAsync();
 
         var response = new LiveEmployeeResponse();
-        var server = _redis.GetServer(_redis.GetEndPoints().First());
-        var db = _redis.GetDatabase();
 
         foreach (var driver in drivers)
         {
             var key = $"employee:{driver.EmployeeId}:last_location";
-            var locationData = await db.StringGetAsync(key);
+            var locationData = await _redis.GetAsync(key);
             
             bool isOnline = false;
             string status = "offline";
@@ -42,12 +39,12 @@ public class AdminLiveTrackerService : IAdminLiveTrackerService
             string? currentTask = null;
             string locationDesc = "Unknown";
 
-            if (locationData.HasValue)
+            if (!string.IsNullOrEmpty(locationData))
             {
                 // Parse JSON Redis value assuming { latitude, longitude, status, updatedAt, location }
                 try
                 {
-                    using var doc = JsonDocument.Parse(locationData.ToString());
+                    using var doc = JsonDocument.Parse(locationData);
                     var root = doc.RootElement;
                     
                     isOnline = true;
@@ -126,9 +123,8 @@ public class AdminLiveTrackerService : IAdminLiveTrackerService
             .Select(e => new { e.EmployeeId, e.Firstname, e.Lastname })
             .FirstOrDefaultAsync() ?? throw new KeyNotFoundException("Driver not found");
 
-        var db = _redis.GetDatabase();
         var key = $"employee:{driver.EmployeeId}:last_location";
-        var locationData = await db.StringGetAsync(key);
+        var locationData = await _redis.GetAsync(key);
 
         string status = "offline";
         decimal lat = 0, lng = 0;
@@ -137,11 +133,11 @@ public class AdminLiveTrackerService : IAdminLiveTrackerService
         string lastUpdated = "offline";
         string? currentTask = null;
 
-        if (locationData.HasValue)
+        if (!string.IsNullOrEmpty(locationData))
         {
             try
             {
-                using var doc = JsonDocument.Parse(locationData.ToString());
+                using var doc = JsonDocument.Parse(locationData);
                 var root = doc.RootElement;
                     
                 if (root.TryGetProperty("status", out var statusProp)) status = statusProp.GetString() ?? "available";

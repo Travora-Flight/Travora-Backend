@@ -1,5 +1,4 @@
 using Microsoft.EntityFrameworkCore;
-using StackExchange.Redis;
 using System.Text.Json;
 using Travora.Application.DTOs.Admin.Dashboard;
 using Travora.Application.Interfaces;
@@ -11,9 +10,9 @@ namespace Travora.Infrastructure.AdminPanel.Services;
 public class AdminDashboardService : IAdminDashboardService
 {
     private readonly ApplicationDbContext _db;
-    private readonly IConnectionMultiplexer _redis;
+    private readonly IUpstashRedisService _redis;
 
-    public AdminDashboardService(ApplicationDbContext db, IConnectionMultiplexer redis)
+    public AdminDashboardService(ApplicationDbContext db, IUpstashRedisService redis)
     {
         _db = db;
         _redis = redis;
@@ -74,9 +73,7 @@ public class AdminDashboardService : IAdminDashboardService
     public async Task<OnlineEmployeesResponse> GetOnlineEmployeesAsync()
     {
         var employees = new List<OnlineEmployeeDetail>();
-        var db = _redis.GetDatabase();
-        var server = _redis.GetServer(_redis.GetEndPoints().First());
-        var keys = server.Keys(pattern: "employee:*:last_location").ToList();
+        var keys = await _redis.KeysAsync("employee:*:last_location");
 
         if (!keys.Any())
             return new OnlineEmployeesResponse { OnlineCount = 0, Employees = employees };
@@ -97,8 +94,8 @@ public class AdminDashboardService : IAdminDashboardService
         foreach (var emp in dbEmployees)
         {
             var key = $"employee:{emp.EmployeeId}:last_location";
-            var locationData = await db.StringGetAsync(key);
-            if (!locationData.HasValue) continue;
+            var locationData = await _redis.GetAsync(key);
+            if (string.IsNullOrEmpty(locationData)) continue;
 
             try
             {
@@ -199,9 +196,7 @@ public class AdminDashboardService : IAdminDashboardService
     public async Task<LiveLocationsResponse> GetLiveLocationsAsync()
     {
         var drivers = new List<LiveDriverItem>();
-        var db = _redis.GetDatabase();
-        var server = _redis.GetServer(_redis.GetEndPoints().First());
-        var keys = server.Keys(pattern: "employee:*:last_location").ToList();
+        var keys = await _redis.KeysAsync("employee:*:last_location");
 
         if (!keys.Any())
             return new LiveLocationsResponse { ActiveCount = 0, Drivers = drivers };
@@ -222,8 +217,8 @@ public class AdminDashboardService : IAdminDashboardService
         foreach (var emp in dbEmployees)
         {
             var key = $"employee:{emp.EmployeeId}:last_location";
-            var locationData = await db.StringGetAsync(key);
-            if (!locationData.HasValue) continue;
+            var locationData = await _redis.GetAsync(key);
+            if (string.IsNullOrEmpty(locationData)) continue;
 
             try
             {

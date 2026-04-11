@@ -35,13 +35,8 @@ public class AdminAccountService : IAdminAccountService
         var admin = await _db.Admins.FindAsync(adminId)
             ?? throw new KeyNotFoundException("Admin not found");
 
-        // Partial update — تحقق من email فقط لو في قيمة جديدة
-        if (request.Email != null && admin.Email != request.Email &&
-            await _db.Admins.AnyAsync(a => a.Email == request.Email))
-            throw new InvalidOperationException("Email is already registered");
-
+        // Partial update
         if (request.FullName != null) admin.FullName = request.FullName;
-        if (request.Email    != null) admin.Email     = request.Email;
         if (request.Phone    != null) admin.PhoneNumber = request.Phone;
 
         await _db.SaveChangesAsync();

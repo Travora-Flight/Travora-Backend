@@ -1,6 +1,6 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using StackExchange.Redis;
+using Travora.Application.Interfaces;
 using Travora.Application.DTOs.Employee.Location;
 using Travora.Application.Interfaces.Hubs;
 using Travora.Application.Interfaces.Services.Employee;
@@ -13,12 +13,12 @@ namespace Travora.Infrastructure.EmployeePanel.Services;
 public class EmployeeLocationService : IEmployeeLocationService
 {
     private readonly ApplicationDbContext _db;
-    private readonly IConnectionMultiplexer _redis;
+    private readonly IUpstashRedisService _redis;
     private readonly ILiveTrackingHubService _liveTrackingHub;
 
     public EmployeeLocationService(
         ApplicationDbContext db,
-        IConnectionMultiplexer redis,
+        IUpstashRedisService redis,
         ILiveTrackingHubService liveTrackingHub)
     {
         _db = db;
@@ -37,7 +37,6 @@ public class EmployeeLocationService : IEmployeeLocationService
         var status = request.OrderServiceId.HasValue ? "on_service" : "available";
 
         // 1) Save to Redis (TTL: 2 minutes)
-        var redisDb = _redis.GetDatabase();
         var redisValue = JsonSerializer.Serialize(new
         {
             latitude = request.Latitude,
@@ -49,7 +48,7 @@ public class EmployeeLocationService : IEmployeeLocationService
             orderServiceId = request.OrderServiceId,
             status
         });
-        await redisDb.StringSetAsync($"employee:{employeeId}:last_location", redisValue, TimeSpan.FromMinutes(3));
+        await _redis.SetAsync($"employee:{employeeId}:last_location", redisValue, TimeSpan.FromMinutes(3));
 
         // 2) Save to DB if orderServiceId exists and > 30s since last record
         var savedToDb = false;

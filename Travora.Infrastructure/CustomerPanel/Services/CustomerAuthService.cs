@@ -1,6 +1,5 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using StackExchange.Redis;
 using Travora.Application.DTOs.Customer.Auth;
 using Travora.Application.Interfaces;
 using Travora.Application.Interfaces.External.Communication;
@@ -16,7 +15,7 @@ namespace Travora.Infrastructure.CustomerPanel.Services;
 public class CustomerAuthService : ICustomerAuthService
 {
     private readonly ApplicationDbContext _db;
-    private readonly IConnectionMultiplexer _redis;
+    private readonly IUpstashRedisService _redis;
     private readonly IJwtTokenGenerator _jwt;
     private readonly JwtSettings _jwtSettings;
     private readonly IEmailService _emailService;
@@ -25,7 +24,7 @@ public class CustomerAuthService : ICustomerAuthService
 
     public CustomerAuthService(
         ApplicationDbContext db,
-        IConnectionMultiplexer redis,
+        IUpstashRedisService redis,
         IJwtTokenGenerator jwt,
         JwtSettings jwtSettings,
         IEmailService emailService,
@@ -54,7 +53,6 @@ public class CustomerAuthService : ICustomerAuthService
         if (normalizedPhone.Length < 10 || normalizedPhone.Length > 15 || !normalizedPhone.All(char.IsDigit))
             throw new ArgumentException("رقم الهاتف غير صحيح");
         var sessionId = Guid.NewGuid().ToString();
-        var redisDb = _redis.GetDatabase();
 
         var sessionData = JsonSerializer.Serialize(new
         {
@@ -66,7 +64,7 @@ public class CustomerAuthService : ICustomerAuthService
             request.Gender
         });
 
-        await redisDb.StringSetAsync(
+        await _redis.SetAsync(
             $"register:step1:{sessionId}",
             sessionData,
             TimeSpan.FromMinutes(30)
@@ -79,13 +77,12 @@ public class CustomerAuthService : ICustomerAuthService
     public async Task<RegisterResponse> RegisterStep2Async(RegisterStep2Request request)
     {
         // 1) Get Step1 data from Redis
-        var redisDb = _redis.GetDatabase();
-        var step1Json = await redisDb.StringGetAsync($"register:step1:{request.SessionId}");
+        var step1Json = await _redis.GetAsync($"register:step1:{request.SessionId}");
 
-        if (!step1Json.HasValue)
+        if (string.IsNullOrEmpty(step1Json))
             throw new InvalidOperationException("انتهت صلاحية الجلسة، ابدأ من الأول");
 
-        var step1 = JsonSerializer.Deserialize<Step1Data>(step1Json!, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+        var step1 = JsonSerializer.Deserialize<Step1Data>(step1Json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
             ?? throw new InvalidOperationException("بيانات الجلسة غير صالحة");
 
         // 2) Validate
@@ -149,8 +146,7 @@ public class CustomerAuthService : ICustomerAuthService
 
                 if (!string.IsNullOrWhiteSpace(ocrResult.Number))
                 {
-                    bool exists = await _db.Customers.AnyAsync(c => c.PassportNumber == ocrResult.Number) ||
-                                  await _db.Companions.AnyAsync(c => c.PassportNumber == ocrResult.Number);
+                    bool exists = await _db.Customers.AnyAsync(c => c.PassportNumber == ocrResult.Number);
 
                     if (exists)
                         throw new InvalidOperationException("رقم جواز السفر المستخرج مسجل بالفعل في النظام.");
@@ -265,7 +261,7 @@ public class CustomerAuthService : ICustomerAuthService
             if (accountStatus == CustomerAccountStatus.Verified)
             {
                 var otp = Random.Shared.Next(100000, 999999).ToString();
-                await redisDb.StringSetAsync($"email_verify:{step1.Email}", otp, TimeSpan.FromHours(24));
+                await _redis.SetAsync($"email_verify:{step1.Email}", otp, TimeSpan.FromHours(24));
 
                 _ = Task.Run(async () =>
                 {
@@ -281,7 +277,7 @@ public class CustomerAuthService : ICustomerAuthService
             }
 
             // 11) Delete session from Redis
-            await redisDb.KeyDeleteAsync($"register:step1:{request.SessionId}");
+            await _redis.DeleteAsync($"register:step1:{request.SessionId}");
 
             var responseMessage = accountStatus == CustomerAccountStatus.PendingVerification 
                 ? "الحساب الآن تحت المراجعة. سيتم إرسال رسالة عند تفعيل الحساب" 
@@ -381,9 +377,8 @@ public class CustomerAuthService : ICustomerAuthService
         }
 
         var otp = Random.Shared.Next(100000, 999999).ToString();
-        var redisDb = _redis.GetDatabase();
 
-        await redisDb.StringSetAsync($"otp:{email}", otp, TimeSpan.FromMinutes(10));
+        await _redis.SetAsync($"otp:{email}", otp, TimeSpan.FromMinutes(10));
 
         _ = Task.Run(async () =>
         {
@@ -403,18 +398,17 @@ public class CustomerAuthService : ICustomerAuthService
     // ===== Verify OTP =====
     public async Task<VerifyOtpResponse> VerifyOtpAsync(VerifyOtpRequest request)
     {
-        var redisDb = _redis.GetDatabase();
-        var storedOtp = await redisDb.StringGetAsync($"otp:{request.Email}");
+        var storedOtp = await _redis.GetAsync($"otp:{request.Email}");
 
-        if (!storedOtp.HasValue)
+        if (string.IsNullOrEmpty(storedOtp))
             throw new InvalidOperationException("انتهت صلاحية الكود");
 
-        if (storedOtp.ToString() != request.Otp)
+        if (storedOtp != request.Otp)
             throw new ArgumentException("كود غير صحيح");
 
         var resetToken = Guid.NewGuid().ToString();
-        await redisDb.StringSetAsync($"reset:{resetToken}", request.Email, TimeSpan.FromMinutes(15));
-        await redisDb.KeyDeleteAsync($"otp:{request.Email}");
+        await _redis.SetAsync($"reset:{resetToken}", request.Email, TimeSpan.FromMinutes(15));
+        await _redis.DeleteAsync($"otp:{request.Email}");
 
         return new VerifyOtpResponse
         {
@@ -426,10 +420,9 @@ public class CustomerAuthService : ICustomerAuthService
     // ===== Reset Password =====
     public async Task<object> ResetPasswordAsync(ResetPasswordRequest request)
     {
-        var redisDb = _redis.GetDatabase();
-        var email = await redisDb.StringGetAsync($"reset:{request.ResetToken}");
+        var email = await _redis.GetAsync($"reset:{request.ResetToken}");
 
-        if (!email.HasValue)
+        if (string.IsNullOrEmpty(email))
             throw new InvalidOperationException("انتهت صلاحية الطلب");
 
         if (request.NewPassword != request.ConfirmPassword)
@@ -437,7 +430,7 @@ public class CustomerAuthService : ICustomerAuthService
 
         ValidatePasswordStrength(request.NewPassword);
 
-        var customer = await _db.Customers.FirstOrDefaultAsync(c => c.Email == email.ToString())
+        var customer = await _db.Customers.FirstOrDefaultAsync(c => c.Email == email)
             ?? throw new KeyNotFoundException("العميل غير موجود");
 
         if (BCrypt.Net.BCrypt.Verify(request.NewPassword, customer.PasswordHash))
@@ -447,7 +440,7 @@ public class CustomerAuthService : ICustomerAuthService
         customer.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
-        await redisDb.KeyDeleteAsync($"reset:{request.ResetToken}");
+        await _redis.DeleteAsync($"reset:{request.ResetToken}");
 
         return new { success = true, message = "تم تغيير كلمة المرور بنجاح" };
     }
@@ -455,13 +448,12 @@ public class CustomerAuthService : ICustomerAuthService
     // ===== Verify Email =====
     public async Task<object> VerifyEmailAsync(VerifyEmailRequest request)
     {
-        var redisDb = _redis.GetDatabase();
-        var storedOtp = await redisDb.StringGetAsync($"email_verify:{request.Email}");
+        var storedOtp = await _redis.GetAsync($"email_verify:{request.Email}");
 
-        if (!storedOtp.HasValue)
+        if (string.IsNullOrEmpty(storedOtp))
             throw new InvalidOperationException("انتهت صلاحية الكود أو الإيميل غير صحيح");
 
-        if (storedOtp.ToString() != request.Otp)
+        if (storedOtp != request.Otp)
             throw new ArgumentException("الكود غير صحيح");
 
         var customer = await _db.Customers.FirstOrDefaultAsync(c => c.Email == request.Email)
@@ -471,7 +463,7 @@ public class CustomerAuthService : ICustomerAuthService
         customer.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
-        await redisDb.KeyDeleteAsync($"email_verify:{request.Email}");
+        await _redis.DeleteAsync($"email_verify:{request.Email}");
 
         return new { success = true, message = "تم تفعيل الإيميل بنجاح" };
     }
@@ -486,8 +478,7 @@ public class CustomerAuthService : ICustomerAuthService
             throw new InvalidOperationException("الإيميل مفعل بالفعل");
 
         var otp = Random.Shared.Next(100000, 999999).ToString();
-        var redisDb = _redis.GetDatabase();
-        await redisDb.StringSetAsync($"email_verify:{request.Email}", otp, TimeSpan.FromHours(24));
+        await _redis.SetAsync($"email_verify:{request.Email}", otp, TimeSpan.FromHours(24));
 
         _ = Task.Run(async () =>
         {

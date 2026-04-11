@@ -8,16 +8,54 @@ namespace Travora.Infrastructure.CustomerPanel.Services;
 
 public class PassportOcrService : IPassportOcrService
 {
+    private readonly string? _ocrApiUrl;
     private readonly string _pythonPath;
     private readonly string _scriptPath;
+    private readonly IHttpClientFactory _httpClientFactory;
 
-    public PassportOcrService(IConfiguration configuration)
+    public PassportOcrService(
+        IConfiguration configuration,
+        IHttpClientFactory httpClientFactory)
     {
+        _ocrApiUrl = configuration["Python:OcrApiUrl"];
         _pythonPath = configuration["Python:ExecutablePath"] ?? "python";
         _scriptPath = configuration["Python:ScriptPath"] ?? "Scripts/passport_ocr.py";
+        _httpClientFactory = httpClientFactory;
     }
 
     public async Task<PassportOcrResult> ExtractPassportDataAsync(string imagePath)
+    {
+        if (!string.IsNullOrEmpty(_ocrApiUrl))
+        {
+            Console.WriteLine($"[OCR] 🌐 Calling Remote API: {_ocrApiUrl}");
+            return await CallOcrApiAsync(imagePath);
+        }
+
+        Console.WriteLine("[OCR] 🏠 Running Local Python Script");
+        return await RunLocalScriptAsync(imagePath);
+    }
+
+    private async Task<PassportOcrResult> CallOcrApiAsync(string imagePath)
+    {
+        var client = _httpClientFactory.CreateClient();
+        await using var stream = File.OpenRead(imagePath);
+        using var form = new MultipartFormDataContent();
+        form.Add(new StreamContent(stream), "image", Path.GetFileName(imagePath));
+
+        var response = await client.PostAsync(_ocrApiUrl, form);
+        var json = await response.Content.ReadAsStringAsync();
+
+        var options = new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true,
+            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+        };
+
+        return JsonSerializer.Deserialize<PassportOcrResult>(json, options)
+            ?? new PassportOcrResult { ValidScore = 0, Error = "Failed to parse" };
+    }
+
+    private async Task<PassportOcrResult> RunLocalScriptAsync(string imagePath)
     {
         var scriptFullPath = Path.GetFullPath(_scriptPath);
 
@@ -31,8 +69,8 @@ public class PassportOcrService : IPassportOcrService
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
-                StandardOutputEncoding = System.Text.Encoding.UTF8,  
-                StandardErrorEncoding = System.Text.Encoding.UTF8    
+                StandardOutputEncoding = System.Text.Encoding.UTF8,
+                StandardErrorEncoding = System.Text.Encoding.UTF8
             }
         };
 
@@ -40,9 +78,7 @@ public class PassportOcrService : IPassportOcrService
         var output = await process.StandardOutput.ReadToEndAsync();
         var error = await process.StandardError.ReadToEndAsync();
         await process.WaitForExitAsync();
-        Console.WriteLine($"OCR OUTPUT: {output}");
-        Console.WriteLine($"OCR ERROR: {error}");
-        Console.WriteLine($"EXIT CODE: {process.ExitCode}");
+
         if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(output))
         {
             return new PassportOcrResult

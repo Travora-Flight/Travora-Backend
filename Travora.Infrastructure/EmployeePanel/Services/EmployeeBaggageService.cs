@@ -2,7 +2,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using StackExchange.Redis;
+using Travora.Application.Interfaces;
 using Travora.Shared.Settings;
 using Travora.Application.DTOs.Employee.Baggage;
 using Travora.Application.Interfaces.External.FileStorage;
@@ -19,7 +19,7 @@ public class EmployeeBaggageService : IEmployeeBaggageService
     private readonly ApplicationDbContext _db;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ICloudinaryService _cloudinary;
-    private readonly IConnectionMultiplexer _redis;
+    private readonly IUpstashRedisService _redis;
     private readonly INotificationPusher _pusher;
     private readonly AirlineApiSettings _airlineSettings;
 
@@ -27,7 +27,7 @@ public class EmployeeBaggageService : IEmployeeBaggageService
         ApplicationDbContext db,
         IHttpClientFactory httpClientFactory,
         ICloudinaryService cloudinary,
-        IConnectionMultiplexer redis,
+        IUpstashRedisService redis,
         INotificationPusher pusher,
         IOptions<AirlineApiSettings> airlineSettings)
     {
@@ -124,11 +124,10 @@ public class EmployeeBaggageService : IEmployeeBaggageService
 
         // 4) Get GPS from Redis
         decimal? gpsLat = null, gpsLng = null;
-        var redisDb = _redis.GetDatabase();
-        var locationJson = await redisDb.StringGetAsync($"employee:{employeeId}:last_location");
-        if (locationJson.HasValue)
+        var locationJson = await _redis.GetAsync($"employee:{employeeId}:last_location");
+        if (!string.IsNullOrEmpty(locationJson))
         {
-            var loc = JsonSerializer.Deserialize<RedisLocationData>(locationJson!, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            var loc = JsonSerializer.Deserialize<RedisLocationData>(locationJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             if (loc != null)
             {
                 gpsLat = loc.Latitude;
@@ -393,11 +392,10 @@ public class EmployeeBaggageService : IEmployeeBaggageService
 
         // Get GPS from Redis
         decimal? gpsLat = null, gpsLng = null;
-        var redisDb = _redis.GetDatabase();
-        var locationJson = await redisDb.StringGetAsync($"employee:{employeeId}:last_location");
-        if (locationJson.HasValue)
+        var locationJson = await _redis.GetAsync($"employee:{employeeId}:last_location");
+        if (!string.IsNullOrEmpty(locationJson))
         {
-            var loc = JsonSerializer.Deserialize<RedisLocationData>(locationJson!, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            var loc = JsonSerializer.Deserialize<RedisLocationData>(locationJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             if (loc != null)
             {
                 gpsLat = loc.Latitude;

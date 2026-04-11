@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Travora.Application.DTOs.Admin.Account;
+using Travora.Application.DTOs.Admin.Settings;
 using Travora.Application.Interfaces;
 using System.Security.Claims;
 
@@ -12,10 +13,12 @@ namespace Travora.API.Controllers;
 public class AdminAccountController : ControllerBase
 {
     private readonly IAdminAccountService _accountService;
+    private readonly IAdminSettingsService _settingsService;
 
-    public AdminAccountController(IAdminAccountService accountService)
+    public AdminAccountController(IAdminAccountService accountService, IAdminSettingsService settingsService)
     {
         _accountService = accountService;
+        _settingsService = settingsService;
     }
 
     private int GetAdminId()
@@ -44,5 +47,15 @@ public class AdminAccountController : ControllerBase
 
         var result = await _accountService.UpdateAccountAsync(adminId, request);
         return Ok(result);
+    }
+
+    [HttpPost("change-password")]
+    public async Task<IActionResult> ChangePasswordAsync([FromBody] ChangePasswordRequest request)
+    {
+        var adminId = GetAdminId();
+        if (adminId == 0) return Unauthorized();
+
+        await _settingsService.ChangePasswordAsync(adminId, request);
+        return Ok(new { success = true, message = "Password changed successfully" });
     }
 }

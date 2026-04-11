@@ -1,9 +1,9 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
-using StackExchange.Redis;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Travora.Application.DTOs.Customer.Profile;
+using Travora.Application.Interfaces;
 using Travora.Application.Interfaces.External.FileStorage;
 using Travora.Application.Interfaces.Services.Customer;
 using Travora.Domain.Entities;
@@ -15,12 +15,12 @@ namespace Travora.Infrastructure.CustomerPanel.Services;
 public class CustomerProfileService : ICustomerProfileService
 {
     private readonly ApplicationDbContext _db;
-    private readonly IConnectionMultiplexer _redis;
+    private readonly IUpstashRedisService _redis;
     private readonly ICloudinaryService _cloudinary;
 
     public CustomerProfileService(
         ApplicationDbContext db,
-        IConnectionMultiplexer redis,
+        IUpstashRedisService redis,
         ICloudinaryService cloudinary)
     {
         _db = db;
@@ -166,15 +166,14 @@ public class CustomerProfileService : ICustomerProfileService
     // ── GET Settings (Redis) ─────────────────────────────────────────────────
     public async Task<CustomerSettingsResponse> GetSettingsAsync(int customerId)
     {
-        var db    = _redis.GetDatabase();
         var key   = $"customer:{customerId}:settings";
-        var value = await db.StringGetAsync(key);
+        var value = await _redis.GetAsync(key);
 
-        if (value.HasValue)
+        if (!string.IsNullOrEmpty(value))
         {
             try
             {
-                return JsonSerializer.Deserialize<CustomerSettingsResponse>(value!)
+                return JsonSerializer.Deserialize<CustomerSettingsResponse>(value)
                        ?? new CustomerSettingsResponse();
             }
             catch { /* fall through to defaults */ }
@@ -186,11 +185,10 @@ public class CustomerProfileService : ICustomerProfileService
     // ── PUT Settings (Redis — persistent, no TTL) ────────────────────────────
     public async Task<bool> UpdateSettingsAsync(int customerId, CustomerSettingsRequest request)
     {
-        var db    = _redis.GetDatabase();
         var key   = $"customer:{customerId}:settings";
         var value = JsonSerializer.Serialize(request);
 
-        await db.StringSetAsync(key, value); // No expiry = persistent
+        await _redis.SetAsync(key, value); // No expiry = persistent
         return true;
     }
 
