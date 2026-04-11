@@ -42,20 +42,15 @@ public static class ServiceCollectionExtensions
             })
         );
 
-        // Redis
-        var redisSettings = configuration.GetSection("RedisSettings").Get<RedisSettings>();
-        if (redisSettings != null)
+        // Upstash Redis REST API
+        services.AddHttpClient("UpstashRedis", client =>
         {
-            services.AddStackExchangeRedisCache(options =>
-            {
-                options.Configuration = redisSettings.ConnectionString;
-                options.InstanceName = redisSettings.InstanceName;
-            });
-            
-            // Register IConnectionMultiplexer directly for StackExchange.Redis usage
-            services.AddSingleton<StackExchange.Redis.IConnectionMultiplexer>(sp => 
-                StackExchange.Redis.ConnectionMultiplexer.Connect(redisSettings.ConnectionString));
-        }
+            client.BaseAddress = new Uri(configuration["UpstashRedis:RestUrl"]!);
+            client.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue(
+                    "Bearer", configuration["UpstashRedis:Token"]);
+        });
+        services.AddSingleton<IUpstashRedisService, Travora.Infrastructure.ExternalServices.UpstashRedisService>();
 
         // JWT Token Generator + Auth Service
         var jwtSettings = configuration.GetSection("JwtSettings").Get<JwtSettings>()!;

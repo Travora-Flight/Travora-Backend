@@ -56,6 +56,9 @@ app.UseMiddleware<GlobalExceptionHandlerMiddleware>();
 // 2. Rate Limiting (حماية ضد الطلبات الكتيرة)
 app.UseRateLimiter();
 
+
+app.UseWebSockets();
+
 // 3. باقي الـ Middleware
 app.UseTravoraMiddleware();
 

@@ -5,15 +5,12 @@ public static class ApplicationBuilderExtensions
     public static WebApplication UseTravoraMiddleware(this WebApplication app)
     {
         // Swagger في بيئة التطوير فقط
-        if (app.Environment.IsDevelopment())
+        app.UseSwagger();
+        app.UseSwaggerUI(options =>
         {
-            app.UseSwagger();
-            app.UseSwaggerUI(options =>
-            {
-                options.SwaggerEndpoint("/swagger/v1/swagger.json", "Travora API v1");
-                options.RoutePrefix = "swagger";
-            });
-        }
+            options.SwaggerEndpoint("/swagger/v1/swagger.json", "Travora API v1");
+            options.RoutePrefix = "swagger"; 
+        });
         if (!app.Environment.IsDevelopment())
         {
             app.UseHttpsRedirection();
