@@ -88,6 +88,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<Travora.Application.Interfaces.Services.Customer.ICarServiceOrderService, Travora.Infrastructure.CustomerPanel.Services.CarServiceOrderService>();
         services.AddScoped<Travora.Application.Interfaces.Services.Customer.IBagTrackingOrderService, Travora.Infrastructure.CustomerPanel.Services.BagTrackingOrderService>();
         services.AddScoped<Travora.Application.Interfaces.Services.Customer.ICustomerOrderService, Travora.Infrastructure.CustomerPanel.Services.CustomerOrderService>();
+        services.AddScoped<Travora.Application.Interfaces.Services.Customer.ICustomerNotificationService, Travora.Infrastructure.CustomerPanel.Services.CustomerNotificationService>();
 
         // Hub Services
         services.AddScoped<Travora.Application.Interfaces.Hubs.ILiveTrackingHubService, Travora.API.Services.LiveTrackingHubService>();

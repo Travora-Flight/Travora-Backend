@@ -287,6 +287,28 @@ public class EmployeeBaggageService : IEmployeeBaggageService
 
         await _db.SaveChangesAsync();
 
+        // Customer Notification — Photos uploaded
+        var photoOrder = baggage.Order;
+        _db.Notifications.Add(new Notification
+        {
+            UserId = photoOrder.CustomerId,
+            UserType = UserType.Customer,
+            NotificationType = NotificationType.BaggageUpdated,
+            Title = "Photos uploaded for your baggage",
+            Message = $"The employee uploaded {photos.Count} photos for bag {baggage.BaggageNumber}",
+            NotificationChannel = NotificationChannel.InApp,
+            OrderId = photoOrder.OrderId,
+            BaggageId = baggageId
+        });
+        await _db.SaveChangesAsync();
+
+        await _pusher.PushToCustomerAsync(
+            photoOrder.CustomerId,
+            "Photos uploaded for your baggage",
+            $"The employee uploaded {photos.Count} photos for bag {baggage.BaggageNumber}",
+            "BaggageUpdated",
+            photoOrder.OrderId);
+
         var totalPhotos = baggage.BaggagePhotos.Count + photos.Count;
 
         return new BaggagePhotoResponse
@@ -350,12 +372,34 @@ public class EmployeeBaggageService : IEmployeeBaggageService
         _db.SecurityLocks.Add(newLock);
         await _db.SaveChangesAsync();
 
+        // Customer Notification — Lock registered
+        var lockOrder = baggage.Order;
+        _db.Notifications.Add(new Notification
+        {
+            UserId = lockOrder.CustomerId,
+            UserType = UserType.Customer,
+            NotificationType = NotificationType.BaggageUpdated,
+            Title = "Lock registered on your baggage",
+            Message = $"A security lock has been applied to bag {baggage.BaggageNumber}",
+            NotificationChannel = NotificationChannel.InApp,
+            OrderId = lockOrder.OrderId,
+            BaggageId = baggageId
+        });
+        await _db.SaveChangesAsync();
+
+        await _pusher.PushToCustomerAsync(
+            lockOrder.CustomerId,
+            "Lock registered on your baggage",
+            $"A security lock has been applied to bag {baggage.BaggageNumber}",
+            "BaggageUpdated",
+            lockOrder.OrderId);
+
         return new LockBaggageResponse
         {
             Success = true,
             BaggageId = baggage.BaggageId,
             LockCode = newLock.LockCode,
-            Message = "تم تعيين القفل بنجاح."
+            Message = "Lock assigned successfully."
         };
     }
 

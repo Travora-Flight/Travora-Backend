@@ -6,6 +6,7 @@ using Travora.Application.Interfaces.External.FileStorage;
 using Travora.Application.Interfaces.Services;
 using Travora.Application.Interfaces.Services.Customer;
 using Travora.Domain.Constants;
+using Travora.Domain.Enums;
 using Travora.Infrastructure.Data;
 
 namespace Travora.Infrastructure.CustomerPanel.Services;
@@ -17,19 +18,22 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
     private readonly ICloudinaryService _cloudinaryService;
     private readonly IDraftOrderService _draftOrderService;
     private readonly IGeocodingService _geocodingService;
+    private readonly INotificationPusher _pusher;
 
     public DoorToDoorOrderService(
         ApplicationDbContext context,
         IAirlineService airlineService,
         ICloudinaryService cloudinaryService,
         IDraftOrderService draftOrderService,
-        IGeocodingService geocodingService)
+        IGeocodingService geocodingService,
+        INotificationPusher pusher)
     {
         _context = context;
         _airlineService = airlineService;
         _cloudinaryService = cloudinaryService;
         _draftOrderService = draftOrderService;
         _geocodingService = geocodingService;
+        _pusher = pusher;
     }
 
     public async Task<ValidateFlightResponse> ValidateFlightAsync(int customerId, ValidateFlightRequest request, CancellationToken cancellationToken = default)
@@ -930,6 +934,26 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
                 await transaction.CommitAsync(cancellationToken);
                 await _draftOrderService.RemoveDraftOrderAsync(customerId.ToString(), cancellationToken);
 
+                // Customer Notification — Order Confirmed
+                _context.Notifications.Add(new Domain.Entities.Notification
+                {
+                    UserId = customerId,
+                    UserType = Domain.Enums.UserType.Customer,
+                    NotificationType = Domain.Enums.NotificationType.OrderUpdated,
+                    Title = "Your order has been confirmed",
+                    Message = $"Order #{order.OrderId} for Door To Door has been placed successfully",
+                    NotificationChannel = Domain.Enums.NotificationChannel.InApp,
+                    OrderId = order.OrderId
+                });
+                await _context.SaveChangesAsync(cancellationToken);
+
+                await _pusher.PushToCustomerAsync(
+                    customerId,
+                    "Your order has been confirmed",
+                    $"Order #{order.OrderId} for Door To Door has been placed successfully",
+                    "OrderConfirmed",
+                    order.OrderId);
+
                 return new ConfirmOrderResponse
                 {
                     Success = true,
@@ -1075,7 +1099,33 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
             }
         }
 
+        // Customer Notification — Driver assigned after payment
+        var order = await _context.Orders.FindAsync(new object[] { orderId }, cancellationToken);
+        if (order != null)
+        {
+            _context.Notifications.Add(new Domain.Entities.Notification
+            {
+                UserId = order.CustomerId,
+                UserType = Domain.Enums.UserType.Customer,
+                NotificationType = Domain.Enums.NotificationType.OrderUpdated,
+                Title = "A driver has been assigned",
+                Message = "A driver has been assigned to your order and will pick up your luggage at the scheduled time",
+                NotificationChannel = Domain.Enums.NotificationChannel.InApp,
+                OrderId = orderId
+            });
+        }
+
         await _context.SaveChangesAsync(cancellationToken);
+
+        if (order != null)
+        {
+            await _pusher.PushToCustomerAsync(
+                order.CustomerId,
+                "A driver has been assigned",
+                "A driver has been assigned to your order and will pick up your luggage at the scheduled time",
+                "DriverAssigned",
+                orderId);
+        }
     }
 
     private async Task ValidateTicketNotUsedAsync(string ticketNumber, string packageName, CancellationToken cancellationToken)

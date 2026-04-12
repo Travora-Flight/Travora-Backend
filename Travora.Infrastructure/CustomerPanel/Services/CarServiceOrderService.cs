@@ -930,6 +930,29 @@ public class CarServiceOrderService : ICarServiceOrderService
                 await transaction.CommitAsync(cancellationToken);
                 await _draftOrderService.RemoveCarServiceDraftAsync(customerId.ToString(), cancellationToken);
 
+                // Customer Notification — Order Confirmed
+                var serviceLabel = draft.ServiceType == CarServiceType.DeliveryToAirport
+                    ? "Car Service (To Airport)"
+                    : "Car Service (From Airport)";
+                _context.Notifications.Add(new Domain.Entities.Notification
+                {
+                    UserId = customerId,
+                    UserType = UserType.Customer,
+                    NotificationType = NotificationType.OrderUpdated,
+                    Title = "Your order has been confirmed",
+                    Message = $"Order #{order.OrderId} for {serviceLabel} has been placed successfully",
+                    NotificationChannel = NotificationChannel.InApp,
+                    OrderId = order.OrderId
+                });
+                await _context.SaveChangesAsync(cancellationToken);
+
+                await _pusher.PushToCustomerAsync(
+                    customerId,
+                    "Your order has been confirmed",
+                    $"Order #{order.OrderId} for {serviceLabel} has been placed successfully",
+                    "OrderConfirmed",
+                    order.OrderId);
+
                 return new ConfirmOrderResponse
                 {
                     Success = true,

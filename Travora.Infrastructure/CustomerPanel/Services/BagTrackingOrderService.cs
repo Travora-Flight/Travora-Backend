@@ -8,6 +8,7 @@ using Travora.Application.Interfaces.External.FileStorage;
 using Travora.Application.Interfaces.Services;
 using Travora.Application.Interfaces.Services.Customer;
 using Travora.Domain.Constants;
+using Travora.Domain.Entities;
 using Travora.Domain.Enums;
 using Travora.Infrastructure.Data;
 
@@ -19,17 +20,20 @@ public class BagTrackingOrderService : IBagTrackingOrderService
     private readonly IAirlineService _airlineService;
     private readonly ICloudinaryService _cloudinaryService;
     private readonly IDraftOrderService _draftOrderService;
+    private readonly INotificationPusher _pusher;
 
     public BagTrackingOrderService(
         ApplicationDbContext context,
         IAirlineService airlineService,
         ICloudinaryService cloudinaryService,
-        IDraftOrderService draftOrderService)
+        IDraftOrderService draftOrderService,
+        INotificationPusher pusher)
     {
         _context = context;
         _airlineService = airlineService;
         _cloudinaryService = cloudinaryService;
         _draftOrderService = draftOrderService;
+        _pusher = pusher;
     }
 
     // ===================================================================
@@ -740,6 +744,26 @@ public class BagTrackingOrderService : IBagTrackingOrderService
                 await _context.SaveChangesAsync(cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
                 await _draftOrderService.RemoveBagTrackingDraftAsync(customerId.ToString(), cancellationToken);
+
+                // Customer Notification — Order Confirmed
+                _context.Notifications.Add(new Notification
+                {
+                    UserId = customerId,
+                    UserType = UserType.Customer,
+                    NotificationType = NotificationType.OrderUpdated,
+                    Title = "Your order has been confirmed",
+                    Message = $"Order #{order.OrderId} for Bag Tracking has been placed successfully",
+                    NotificationChannel = NotificationChannel.InApp,
+                    OrderId = order.OrderId
+                });
+                await _context.SaveChangesAsync(cancellationToken);
+
+                await _pusher.PushToCustomerAsync(
+                    customerId,
+                    "Your order has been confirmed",
+                    $"Order #{order.OrderId} for Bag Tracking has been placed successfully",
+                    "OrderConfirmed",
+                    order.OrderId);
 
                 return new ConfirmOrderResponse
                 {

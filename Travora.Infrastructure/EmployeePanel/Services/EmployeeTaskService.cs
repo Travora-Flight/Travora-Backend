@@ -260,6 +260,25 @@ public class EmployeeTaskService : IEmployeeTaskService
                         "يرجى استلام الشنط من السواق في نقطة الـ Check-in",
                         "NewTaskAssigned",
                         order.OrderId);
+
+                    // Customer notification — bags at airport
+                    _db.Notifications.Add(new Notification
+                    {
+                        UserId = order.CustomerId,
+                        UserType = UserType.Customer,
+                        NotificationType = NotificationType.OrderUpdated,
+                        Title = "Your bags arrived at the airport",
+                        Message = "Your luggage is now at the airport and being processed",
+                        NotificationChannel = NotificationChannel.InApp,
+                        OrderId = order.OrderId
+                    });
+
+                    await _pusher.PushToCustomerAsync(
+                        order.CustomerId,
+                        "Your bags arrived at the airport",
+                        "Your luggage is now at the airport and being processed",
+                        "OrderUpdated",
+                        order.OrderId);
                 }
             }
         }
@@ -311,6 +330,25 @@ public class EmployeeTaskService : IEmployeeTaskService
                         "تم تعيينك على توصيل جديد",
                         "يرجى استلام الشنط من المطار وتوصيلها للعميل",
                         "NewTaskAssigned",
+                        order.OrderId);
+
+                    // Customer notification — delivery driver assigned
+                    _db.Notifications.Add(new Notification
+                    {
+                        UserId = order.CustomerId,
+                        UserType = UserType.Customer,
+                        NotificationType = NotificationType.OrderUpdated,
+                        Title = "Delivery driver assigned",
+                        Message = "Your bags are on the way to you",
+                        NotificationChannel = NotificationChannel.InApp,
+                        OrderId = order.OrderId
+                    });
+
+                    await _pusher.PushToCustomerAsync(
+                        order.CustomerId,
+                        "Delivery driver assigned",
+                        "Your bags are on the way to you",
+                        "OrderUpdated",
                         order.OrderId);
                 }
                 // لو مفيش driver → فاضل Pending والـ Admin يعمل assign يدوي

@@ -257,6 +257,22 @@ public class CustomerAuthService : ICustomerAuthService
 
             await _db.SaveChangesAsync();
 
+            // Welcome notification for the customer (DB only — no SignalR since not yet logged in)
+            _db.Notifications.Add(new Notification
+            {
+                UserId = customer.CustomerId,
+                UserType = UserType.Customer,
+                NotificationType = NotificationType.AccountAlert,
+                Title = accountStatus == CustomerAccountStatus.Verified
+                    ? "Welcome to Travora"
+                    : "Account under review",
+                Message = accountStatus == CustomerAccountStatus.Verified
+                    ? "Your account has been created and verified successfully. Enjoy our services!"
+                    : "Your account is under review. We'll notify you once verified.",
+                NotificationChannel = NotificationChannel.InApp
+            });
+            await _db.SaveChangesAsync();
+
             // 10) Welcome email + Verify Email OTP (Only if verified)
             if (accountStatus == CustomerAccountStatus.Verified)
             {

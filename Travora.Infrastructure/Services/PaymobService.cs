@@ -25,6 +25,7 @@ public class PaymobService : IPaymobService
     private readonly ICarServiceOrderService _carServiceOrderService;
     private readonly ICustomerOrderService _customerOrderService;
     private readonly ILogger<PaymobService> _logger;
+    private readonly INotificationPusher _pusher;
 
     public PaymobService(
         ApplicationDbContext db,
@@ -33,7 +34,8 @@ public class PaymobService : IPaymobService
         IDoorToDoorOrderService doorToDoorOrderService,
         ICarServiceOrderService carServiceOrderService,
         ICustomerOrderService customerOrderService,
-        ILogger<PaymobService> logger)
+        ILogger<PaymobService> logger,
+        INotificationPusher pusher)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
@@ -42,6 +44,7 @@ public class PaymobService : IPaymobService
         _carServiceOrderService = carServiceOrderService;
         _customerOrderService = customerOrderService;
         _logger = logger;
+        _pusher = pusher;
     }
 
     public async Task<PaymentInitiationResponse> InitiatePaymentAsync(int orderId, int customerId)
@@ -275,6 +278,50 @@ public class PaymobService : IPaymobService
         }
 
         await _db.SaveChangesAsync();
+
+        // Customer notification for payment result
+        if (success_bool)
+        {
+            _db.Notifications.Add(new Notification
+            {
+                UserId = order.CustomerId,
+                UserType = UserType.Customer,
+                NotificationType = NotificationType.OrderUpdated,
+                Title = "Payment successful",
+                Message = $"Your payment of {invoice.TotalAmount} EGP for order #{orderId} has been received",
+                NotificationChannel = NotificationChannel.InApp,
+                OrderId = orderId
+            });
+            await _db.SaveChangesAsync();
+
+            await _pusher.PushToCustomerAsync(
+                order.CustomerId,
+                "Payment successful",
+                $"Your payment of {invoice.TotalAmount} EGP for order #{orderId} has been received",
+                "PaymentSuccess",
+                orderId);
+        }
+        else
+        {
+            _db.Notifications.Add(new Notification
+            {
+                UserId = order.CustomerId,
+                UserType = UserType.Customer,
+                NotificationType = NotificationType.OrderUpdated,
+                Title = "Payment failed",
+                Message = $"Your payment for order #{orderId} was not successful. Please try again.",
+                NotificationChannel = NotificationChannel.InApp,
+                OrderId = orderId
+            });
+            await _db.SaveChangesAsync();
+
+            await _pusher.PushToCustomerAsync(
+                order.CustomerId,
+                "Payment failed",
+                $"Your payment for order #{orderId} was not successful. Please try again.",
+                "PaymentFailed",
+                orderId);
+        }
 
         // 4. استكمال الخدمات وتعيين الموظفين بعد الدفع
         if (success_bool)
