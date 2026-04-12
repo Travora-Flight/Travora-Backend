@@ -18,6 +18,7 @@ public class AdminVehicleController : ControllerBase
     }
 
     [HttpGet]
+    [ProducesResponseType(typeof(IEnumerable<VehicleResponse>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAllVehiclesAsync()
     {
         var result = await _vehicleService.GetAllVehiclesAsync();
@@ -25,6 +26,7 @@ public class AdminVehicleController : ControllerBase
     }
 
     [HttpGet("{id}")]
+    [ProducesResponseType(typeof(VehicleResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetVehicleByIdAsync(int id)
     {
         try
@@ -39,6 +41,7 @@ public class AdminVehicleController : ControllerBase
     }
 
     [HttpPost]
+    [ProducesResponseType(typeof(VehicleResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> CreateVehicleAsync([FromBody] CreateVehicleRequest request)
     {
         if (!ModelState.IsValid)
@@ -56,6 +59,7 @@ public class AdminVehicleController : ControllerBase
     }
 
     [HttpPut("{id}")]
+    [ProducesResponseType(typeof(VehicleResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> UpdateVehicleAsync(int id, [FromBody] UpdateVehicleRequest request)
     {
         try

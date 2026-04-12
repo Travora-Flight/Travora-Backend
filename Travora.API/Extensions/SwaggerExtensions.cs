@@ -1,4 +1,5 @@
 using Microsoft.OpenApi.Models;
+using Swashbuckle.AspNetCore.Filters;
 
 namespace Travora.API.Extensions;
 
@@ -8,6 +9,8 @@ public static class SwaggerExtensions
     {
         services.AddSwaggerGen(options =>
         {
+            options.ExampleFilters(); // <--- Added for Swashbuckle Examples
+
             options.SwaggerDoc("v1", new OpenApiInfo
             {
                 Title = "Travora API",
@@ -43,7 +46,7 @@ public static class SwaggerExtensions
                 Scheme = "bearer",
                 BearerFormat = "JWT",
                 In = ParameterLocation.Header,
-                Description = "أدخل التوكن بالشكل التالي: {your_token}"
+                Description = "{your_token}"
             });
 
             options.AddSecurityRequirement(new OpenApiSecurityRequirement
@@ -61,6 +64,9 @@ public static class SwaggerExtensions
                 }
             });
         });
+
+        // Register the swagger example providers from the same assembly as this extension
+        services.AddSwaggerExamplesFromAssemblyOf<Program>();
 
         return services;
     }

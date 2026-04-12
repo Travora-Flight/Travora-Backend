@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Travora.Application.DTOs.Admin.Dashboard;
 using Travora.Application.Interfaces;
 
 namespace Travora.API.Controllers;
@@ -17,6 +18,7 @@ public class AdminDashboardController : ControllerBase
     }
 
     [HttpGet("dashboard/stats")]
+    [ProducesResponseType(typeof(DashboardStatsResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetStatsAsync()
     {
         var result = await _dashboardService.GetDashboardStatsAsync();
@@ -24,6 +26,7 @@ public class AdminDashboardController : ControllerBase
     }
 
     [HttpGet("employees/online")]
+    [ProducesResponseType(typeof(OnlineEmployeesResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetOnlineEmployeesAsync()
     {
         var result = await _dashboardService.GetOnlineEmployeesAsync();
@@ -31,6 +34,7 @@ public class AdminDashboardController : ControllerBase
     }
 
     [HttpGet("orders/recent")]
+    [ProducesResponseType(typeof(RecentOrdersResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetRecentOrdersAsync([FromQuery] int take = 10)
     {
         var result = await _dashboardService.GetRecentOrdersAsync(take);
@@ -38,6 +42,7 @@ public class AdminDashboardController : ControllerBase
     }
 
     [HttpGet("employees/live-locations")]
+    [ProducesResponseType(typeof(LiveLocationsResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetLiveLocationsAsync()
     {
         var result = await _dashboardService.GetLiveLocationsAsync();

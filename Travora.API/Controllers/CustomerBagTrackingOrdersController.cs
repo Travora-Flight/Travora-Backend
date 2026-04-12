@@ -27,6 +27,7 @@ public class CustomerBagTrackingOrdersController : ControllerBase
     }
 
     [HttpPost("validate-flight")]
+    [ProducesResponseType(typeof(ValidateFlightResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> ValidateFlight([FromBody] BagTrackingValidateFlightRequest request, CancellationToken cancellationToken)
     {
         try
@@ -42,6 +43,7 @@ public class CustomerBagTrackingOrdersController : ControllerBase
     }
 
     [HttpPost("validate-companion")]
+    [ProducesResponseType(typeof(ValidateCompanionResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> ValidateCompanion([FromForm] ValidateCompanionRequest request, CancellationToken cancellationToken)
     {
         try
@@ -57,6 +59,7 @@ public class CustomerBagTrackingOrdersController : ControllerBase
     }
 
     [HttpPost("validate-baggage")]
+    [ProducesResponseType(typeof(ValidateBaggageResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> ValidateBaggage(CancellationToken cancellationToken)
     {
         try
@@ -72,6 +75,7 @@ public class CustomerBagTrackingOrdersController : ControllerBase
     }
 
     [HttpPost("scan-bag")]
+    [ProducesResponseType(typeof(ScanBagResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> ScanBag([FromBody] ScanBagRequest request, CancellationToken cancellationToken)
     {
         try
@@ -87,6 +91,7 @@ public class CustomerBagTrackingOrdersController : ControllerBase
     }
 
     [HttpPost("bags/{tagNumber}/photos")]
+    [ProducesResponseType(typeof(UploadBagPhotosResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> UploadBagPhotos(string tagNumber, [FromForm] List<IFormFile> photos, CancellationToken cancellationToken)
     {
         try
@@ -102,6 +107,7 @@ public class CustomerBagTrackingOrdersController : ControllerBase
     }
 
     [HttpGet("invoice")]
+    [ProducesResponseType(typeof(InvoiceResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetInvoice(CancellationToken cancellationToken)
     {
         try
@@ -117,6 +123,7 @@ public class CustomerBagTrackingOrdersController : ControllerBase
     }
 
     [HttpPost("confirm")]
+    [ProducesResponseType(typeof(ConfirmOrderResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> ConfirmOrder(CancellationToken cancellationToken)
     {
         try

@@ -19,6 +19,7 @@ public class EmployeeBaggageController : ControllerBase
     }
 
     [HttpPost("scan")]
+    [ProducesResponseType(typeof(BaggageScanResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> ScanBaggage([FromBody] BaggageScanRequest request)
     {
         var employeeId = int.Parse(User.FindFirstValue("employeeId")!);
@@ -27,6 +28,7 @@ public class EmployeeBaggageController : ControllerBase
     }
 
     [HttpPost("{baggageId}/lock")]
+    [ProducesResponseType(typeof(LockBaggageResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> LockBaggage(int baggageId, [FromBody] LockBaggageRequest request)
     {
         var employeeId = int.Parse(User.FindFirstValue("employeeId")!);
@@ -35,6 +37,7 @@ public class EmployeeBaggageController : ControllerBase
     }
 
     [HttpPost("{baggageId}/photos")]
+    [ProducesResponseType(typeof(BaggagePhotoResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> UploadPhotos(int baggageId, [FromForm] List<IFormFile> photos)
     {
         var employeeId = int.Parse(User.FindFirstValue("employeeId")!);
@@ -43,6 +46,7 @@ public class EmployeeBaggageController : ControllerBase
     }
 
     [HttpPost("checkpoint-update")]
+    [ProducesResponseType(typeof(CheckpointUpdateResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> CheckpointUpdate([FromBody] CheckpointUpdateRequest request)
     {
         var employeeId = int.Parse(User.FindFirstValue("employeeId")!);

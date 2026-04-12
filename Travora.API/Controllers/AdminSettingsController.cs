@@ -27,6 +27,7 @@ public class AdminSettingsController : ControllerBase
     }
 
     [HttpGet]
+    [ProducesResponseType(typeof(AppSettingsResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetSettingsAsync()
     {
         var result = await _settingsService.GetSettingsAsync();
@@ -34,6 +35,7 @@ public class AdminSettingsController : ControllerBase
     }
 
     [HttpPut("general")]
+    [ProducesResponseType(typeof(AppSettingsResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> UpdateGeneralSettingsAsync([FromBody] UpdateGeneralSettingsRequest request)
     {
         var result = await _settingsService.UpdateGeneralSettingsAsync(request);
@@ -41,6 +43,7 @@ public class AdminSettingsController : ControllerBase
     }
 
     [HttpPut("tracking")]
+    [ProducesResponseType(typeof(AppSettingsResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> UpdateTrackingSettingsAsync([FromBody] UpdateTrackingSettingsRequest request)
     {
         var result = await _settingsService.UpdateTrackingSettingsAsync(request);

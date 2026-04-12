@@ -19,6 +19,7 @@ public class EmployeeLocationController : ControllerBase
     }
 
     [HttpPost("location")]
+    [ProducesResponseType(typeof(Travora.Application.DTOs.Employee.Location.DriverLocationResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> UpdateLocation([FromBody] DriverLocationRequest request)
     {
         var employeeId = int.Parse(User.FindFirstValue("employeeId")!);

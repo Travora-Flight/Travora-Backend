@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Travora.Application.DTOs.Orders;
+using Travora.Application.DTOs.Orders.DoorToDoor;
 using Travora.Application.Interfaces.Services.Customer;
 
 namespace Travora.API.Controllers;
@@ -25,8 +26,30 @@ public class CustomerOrdersController : ControllerBase
         return customerId;
     }
 
+    // GET /api/v1/orders
+    [HttpGet]
+    [ProducesResponseType(typeof(List<OrderListDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetOrders(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var customerId = GetCustomerId();
+            var response = await _orderService.GetCustomerOrdersAsync(customerId, cancellationToken);
+            return Ok(response);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { errorMessage = ex.Message });
+        }
+    }
+
     // GET /api/v1/orders/{orderId}
     [HttpGet("{orderId}")]
+    [ProducesResponseType(typeof(OrderDetailsResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetOrderDetails(int orderId, CancellationToken cancellationToken)
     {
         try
@@ -51,6 +74,7 @@ public class CustomerOrdersController : ControllerBase
 
     // PATCH /api/v1/orders/{orderId}/cancel
     [HttpPatch("{orderId}/cancel")]
+    [ProducesResponseType(typeof(CancelOrderResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> CancelOrder(int orderId, [FromBody] CancelOrderRequest request, CancellationToken cancellationToken)
     {
         try
@@ -67,6 +91,7 @@ public class CustomerOrdersController : ControllerBase
 
     // GET /api/v1/orders/{orderId}/available-slots?type=pickup&date=2025-12-29
     [HttpGet("{orderId}/available-slots")]
+    [ProducesResponseType(typeof(AvailableSlotsResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAvailableSlots(
         int orderId, [FromQuery] string type, [FromQuery] DateTime date, CancellationToken cancellationToken)
     {
@@ -88,6 +113,7 @@ public class CustomerOrdersController : ControllerBase
 
     // PATCH /api/v1/orders/{orderId}/reschedule
     [HttpPatch("{orderId}/reschedule")]
+    [ProducesResponseType(typeof(RescheduleResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> RescheduleOrder(int orderId, [FromBody] RescheduleRequest request, CancellationToken cancellationToken)
     {
         try
@@ -104,6 +130,7 @@ public class CustomerOrdersController : ControllerBase
 
     // GET /api/v1/orders/{orderId}/boarding-pass
     [HttpGet("{orderId}/boarding-pass")]
+    [ProducesResponseType(typeof(BoardingPassResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetBoardingPass(int orderId, CancellationToken cancellationToken)
     {
         try
@@ -132,6 +159,7 @@ public class CustomerOrdersController : ControllerBase
 
     // GET /api/v1/orders/{orderId}/boarding-pass/download
     [HttpGet("{orderId}/boarding-pass/download")]
+    [ProducesResponseType(typeof(FileContentResult), StatusCodes.Status200OK)]
     public async Task<IActionResult> DownloadBoardingPass(int orderId, CancellationToken cancellationToken)
     {
         try

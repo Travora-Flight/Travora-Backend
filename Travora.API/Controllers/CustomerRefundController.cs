@@ -19,6 +19,7 @@ public class CustomerRefundController : ControllerBase
     }
 
     [HttpPost("{orderId}/refund")]
+    [ProducesResponseType(typeof(RefundResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> RequestRefund(int orderId, [FromBody] RefundRequest request)
     {
         var customerId = int.Parse(User.FindFirstValue("customerId")!);
@@ -27,12 +28,19 @@ public class CustomerRefundController : ControllerBase
     }
 
     [HttpGet("{orderId}/refund")]
+    [ProducesResponseType(typeof(RefundStatusResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(CustomerRefundGenericResponse), StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetRefundStatus(int orderId)
     {
         var customerId = int.Parse(User.FindFirstValue("customerId")!);
         var response = await _refundService.GetRefundStatusAsync(customerId, orderId);
         if (response == null)
-            return NotFound(new { message = "لا يوجد طلب استرداد لهذا الأوردر" });
+            return NotFound(new CustomerRefundGenericResponse { Message = "No refund request found for this order" });
         return Ok(response);
     }
+}
+
+public class CustomerRefundGenericResponse
+{
+    public string Message { get; set; } = string.Empty;
 }

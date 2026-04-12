@@ -20,6 +20,7 @@ public class AdminPackagesController : ControllerBase
     }
 
     [HttpGet]
+    [ProducesResponseType(typeof(List<PackageDetailResponse>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetPackagesAsync([FromQuery] ActivationFilterStatus status = ActivationFilterStatus.All)
     {
         var result = await _pricingService.GetPackagesAsync(status);

@@ -18,6 +18,7 @@ public class EmployeeDashboardController : ControllerBase
     }
 
     [HttpGet("dashboard")]
+    [ProducesResponseType(typeof(Travora.Application.DTOs.Employee.Dashboard.EmployeeDashboardResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetDashboard()
     {
         var employeeId = int.Parse(User.FindFirstValue("employeeId")!);

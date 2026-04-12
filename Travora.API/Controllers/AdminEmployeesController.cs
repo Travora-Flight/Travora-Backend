@@ -27,6 +27,7 @@ public class AdminEmployeesController : ControllerBase
     }
 
     [HttpGet]
+    [ProducesResponseType(typeof(EmployeePagedResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetEmployeesAsync([FromQuery] string? search, [FromQuery] Travora.Domain.Enums.EmployeeFilterStatus status = Travora.Domain.Enums.EmployeeFilterStatus.Active, [FromQuery] int page = 1, [FromQuery] int pageSize = 10)
     {
         var result = await _employeeService.GetEmployeesAsync(search, status.ToString(), page, pageSize);
@@ -34,6 +35,7 @@ public class AdminEmployeesController : ControllerBase
     }
 
     [HttpGet("{id}")]
+    [ProducesResponseType(typeof(EmployeeProfileResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetEmployeeProfileAsync(int id)
     {
         var result = await _employeeService.GetEmployeeProfileAsync(id);
@@ -41,6 +43,7 @@ public class AdminEmployeesController : ControllerBase
     }
 
     [HttpGet("form-data")]
+    [ProducesResponseType(typeof(EmployeeFormDataResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetFormDataAsync()
     {
         var result = await _employeeService.GetFormDataAsync();
@@ -48,6 +51,7 @@ public class AdminEmployeesController : ControllerBase
     }
 
     [HttpPost]
+    [ProducesResponseType(typeof(CreateEmployeeResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> CreateEmployeeAsync([FromForm] CreateEmployeeRequest request)
     {
         var adminId = GetAdminId();
@@ -58,6 +62,7 @@ public class AdminEmployeesController : ControllerBase
     }
 
     [HttpPut("{id}")]
+    [ProducesResponseType(typeof(EmployeeProfileResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> UpdateEmployeeAsync(int id, [FromForm] UpdateEmployeeRequest request)
     {
         var result = await _employeeService.UpdateEmployeeAsync(id, request);

@@ -18,6 +18,7 @@ public class AdminCheckpointController : ControllerBase
     }
 
     [HttpGet]
+    [ProducesResponseType(typeof(IEnumerable<CheckpointResponse>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAllCheckpointsAsync()
     {
         var result = await _checkpointService.GetAllCheckpointsAsync();
@@ -25,6 +26,7 @@ public class AdminCheckpointController : ControllerBase
     }
 
     [HttpGet("{id}")]
+    [ProducesResponseType(typeof(CheckpointResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetCheckpointByIdAsync(int id)
     {
         try
@@ -39,6 +41,7 @@ public class AdminCheckpointController : ControllerBase
     }
 
     [HttpPost]
+    [ProducesResponseType(typeof(CheckpointResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> CreateCheckpointAsync([FromBody] CreateCheckpointRequest request)
     {
         if (!ModelState.IsValid)
@@ -56,6 +59,7 @@ public class AdminCheckpointController : ControllerBase
     }
 
     [HttpPut("{id}")]
+    [ProducesResponseType(typeof(CheckpointResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> UpdateCheckpointAsync(int id, [FromBody] UpdateCheckpointRequest request)
     {
         try

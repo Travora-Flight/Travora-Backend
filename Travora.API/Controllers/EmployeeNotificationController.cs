@@ -18,6 +18,7 @@ public class EmployeeNotificationController : ControllerBase
     }
 
     [HttpGet]
+    [ProducesResponseType(typeof(Travora.Application.DTOs.Employee.Notifications.EmployeeNotificationsResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetNotifications([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
         var employeeId = int.Parse(User.FindFirstValue("employeeId")!);
@@ -26,18 +27,25 @@ public class EmployeeNotificationController : ControllerBase
     }
 
     [HttpPatch("{notificationId}/read")]
+    [ProducesResponseType(typeof(EmployeeNotificationGenericResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> MarkAsRead(int notificationId)
     {
         var employeeId = int.Parse(User.FindFirstValue("employeeId")!);
         await _notificationService.MarkAsReadAsync(employeeId, notificationId);
-        return Ok(new { success = true });
+        return Ok(new EmployeeNotificationGenericResponse { Success = true });
     }
 
     [HttpPatch("read-all")]
+    [ProducesResponseType(typeof(EmployeeNotificationGenericResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> MarkAllAsRead()
     {
         var employeeId = int.Parse(User.FindFirstValue("employeeId")!);
         await _notificationService.MarkAllAsReadAsync(employeeId);
-        return Ok(new { success = true });
+        return Ok(new EmployeeNotificationGenericResponse { Success = true });
     }
+}
+
+public class EmployeeNotificationGenericResponse
+{
+    public bool Success { get; set; }
 }

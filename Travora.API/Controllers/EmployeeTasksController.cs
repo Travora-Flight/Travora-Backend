@@ -18,6 +18,7 @@ public class EmployeeTasksController : ControllerBase
     }
 
     [HttpGet("{orderServiceId}")]
+    [ProducesResponseType(typeof(Travora.Application.DTOs.Employee.Tasks.TaskDetailResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetTaskDetail(int orderServiceId)
     {
         var employeeId = int.Parse(User.FindFirstValue("employeeId")!);
@@ -26,6 +27,7 @@ public class EmployeeTasksController : ControllerBase
     }
 
     [HttpPatch("{orderServiceId}/start")]
+    [ProducesResponseType(typeof(Travora.Application.DTOs.Employee.Tasks.TaskActionResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> StartTask(int orderServiceId)
     {
         var employeeId = int.Parse(User.FindFirstValue("employeeId")!);
@@ -34,6 +36,7 @@ public class EmployeeTasksController : ControllerBase
     }
 
     [HttpPatch("{orderServiceId}/complete")]
+    [ProducesResponseType(typeof(Travora.Application.DTOs.Employee.Tasks.TaskActionResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> CompleteTask(int orderServiceId)
     {
         var employeeId = int.Parse(User.FindFirstValue("employeeId")!);

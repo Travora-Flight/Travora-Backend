@@ -19,6 +19,7 @@ public class EmployeeAccountController : ControllerBase
     }
 
     [HttpGet]
+    [ProducesResponseType(typeof(EmployeeProfileResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetProfile()
     {
         var employeeId = int.Parse(User.FindFirstValue("employeeId")!);
@@ -27,6 +28,7 @@ public class EmployeeAccountController : ControllerBase
     }
 
     [HttpPut]
+    [ProducesResponseType(typeof(UpdateProfileResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> UpdateProfile([FromForm] UpdateProfileRequest request)
     {
         var employeeId = int.Parse(User.FindFirstValue("employeeId")!);
@@ -35,10 +37,17 @@ public class EmployeeAccountController : ControllerBase
     }
 
     [HttpPost("change-password")]
+    [ProducesResponseType(typeof(EmployeeChangePasswordResponseWrapper), StatusCodes.Status200OK)]
     public async Task<IActionResult> ChangePassword([FromBody] EmployeeChangePasswordRequest request)
     {
         var employeeId = int.Parse(User.FindFirstValue("employeeId")!);
         await _accountService.ChangePasswordAsync(employeeId, request.CurrentPassword, request.NewPassword, request.ConfirmPassword);
-        return Ok(new { success = true, message = "Password changed successfully" });
+        return Ok(new EmployeeChangePasswordResponseWrapper { Success = true, Message = "Password changed successfully" });
     }
+}
+
+public class EmployeeChangePasswordResponseWrapper
+{
+    public bool Success { get; set; }
+    public string Message { get; set; } = string.Empty;
 }

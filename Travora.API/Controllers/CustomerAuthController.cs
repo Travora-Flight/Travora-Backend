@@ -16,6 +16,7 @@ public class CustomerAuthController : ControllerBase
     }
 
     [HttpPost("register/step1")]
+    [ProducesResponseType(typeof(CustomerAuthMessageResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> RegisterStep1([FromBody] RegisterStep1Request request)
     {
         var result = await _authService.RegisterStep1Async(request);
@@ -24,6 +25,7 @@ public class CustomerAuthController : ControllerBase
 
     [HttpPost("register/step2")]
     [Consumes("multipart/form-data")]
+    [ProducesResponseType(typeof(RegisterResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> RegisterStep2([FromForm] RegisterStep2Request request)
     {
         var result = await _authService.RegisterStep2Async(request);
@@ -31,6 +33,7 @@ public class CustomerAuthController : ControllerBase
     }
 
     [HttpPost("forgot-password")]
+    [ProducesResponseType(typeof(CustomerAuthMessageResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest request)
     {
         var result = await _authService.ForgotPasswordAsync(request.Email);
@@ -38,6 +41,7 @@ public class CustomerAuthController : ControllerBase
     }
 
     [HttpPost("verify-otp")]
+    [ProducesResponseType(typeof(VerifyOtpResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> VerifyOtp([FromBody] VerifyOtpRequest request)
     {
         var result = await _authService.VerifyOtpAsync(request);
@@ -45,6 +49,7 @@ public class CustomerAuthController : ControllerBase
     }
 
     [HttpPost("reset-password")]
+    [ProducesResponseType(typeof(CustomerAuthMessageResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordRequest request)
     {
         var result = await _authService.ResetPasswordAsync(request);
@@ -52,6 +57,7 @@ public class CustomerAuthController : ControllerBase
     }
 
     [HttpPost("verify-email")]
+    [ProducesResponseType(typeof(CustomerAuthMessageResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> VerifyEmail([FromBody] VerifyEmailRequest request)
     {
         var result = await _authService.VerifyEmailAsync(request);
@@ -59,9 +65,15 @@ public class CustomerAuthController : ControllerBase
     }
 
     [HttpPost("resend-verification-email")]
+    [ProducesResponseType(typeof(CustomerAuthMessageResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> ResendVerificationEmail([FromBody] ResendVerifyEmailRequest request)
     {
         var result = await _authService.ResendVerificationEmailAsync(request);
         return Ok(result);
     }
+}
+
+public class CustomerAuthMessageResponse
+{
+    public string Message { get; set; } = string.Empty;
 }

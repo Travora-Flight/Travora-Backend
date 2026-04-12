@@ -104,6 +104,58 @@ public class CustomerOrderService : ICustomerOrderService
     };
 
     // ===================================================================
+    // ENDPOINT 0 — List Orders
+    // ===================================================================
+    public async Task<IEnumerable<OrderListDto>> GetCustomerOrdersAsync(int customerId, CancellationToken cancellationToken = default)
+    {
+        var orders = await _context.Orders
+            .Include(o => o.Package)
+            .Include(o => o.Flight)
+            .Include(o => o.PickupLocation)
+            .Include(o => o.DeliveryLocation)
+            .Where(o => o.CustomerId == customerId)
+            .OrderByDescending(o => o.CreatedAt)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        var result = new List<OrderListDto>();
+        foreach (var order in orders)
+        {
+            var packageName = order.Package?.PackageName ?? string.Empty;
+            string? from = null, to = null;
+
+            switch (packageName)
+            {
+                case PackageNames.DoorToDoor:
+                    from = order.PickupLocation?.City;
+                    to = order.DeliveryLocation?.City;
+                    break;
+                case PackageNames.CarServiceToAirport:
+                    from = order.PickupLocation?.City;
+                    to = order.Flight?.ArrivalIataCode;
+                    break;
+                case PackageNames.CarServiceFromAirport:
+                    from = order.Flight?.DepartureIataCode;
+                    to = order.DeliveryLocation?.City;
+                    break;
+            }
+
+            result.Add(new OrderListDto
+            {
+                OrderId = order.OrderId,
+                PackageName = packageName,
+                OrderStatus = order.OrderStatus.ToString(),
+                CreatedAt = order.CreatedAt,
+                TotalAmount = order.TotalAmount,
+                From = from,
+                To = to
+            });
+        }
+
+        return result;
+    }
+
+    // ===================================================================
     // ENDPOINT 1 — Order Details
     // ===================================================================
     public async Task<OrderDetailsResponse> GetOrderDetailsAsync(int customerId, int orderId, CancellationToken cancellationToken = default)

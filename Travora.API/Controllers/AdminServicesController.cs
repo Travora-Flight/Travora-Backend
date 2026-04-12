@@ -20,6 +20,7 @@ public class AdminServicesController : ControllerBase
     }
 
     [HttpGet]
+    [ProducesResponseType(typeof(List<ServiceDetailResponse>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetServicesAsync([FromQuery] ActivationFilterStatus status = ActivationFilterStatus.All)
     {
         var result = await _pricingService.GetServicesAsync(status);

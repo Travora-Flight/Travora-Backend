@@ -56,6 +56,7 @@ public class AviationWeatherApiService : IAviationWeatherService
                 FlightCategory = latest.FltCat ?? string.Empty,
                 MetarType = latest.MetarType ?? string.Empty,
                 RawObservation = latest.RawOb ?? string.Empty,
+                Elevation = latest.Elev ?? 0,
                 ReportTime = latest.ReportTime ?? DateTime.UtcNow,
                 CloudLayers = latest.Clouds?.Select(c => new CloudLayerDto
                 {

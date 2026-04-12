@@ -20,6 +20,7 @@ public class AdminReportsController : ControllerBase
     }
 
     [HttpGet("dashboard/reports")]
+    [ProducesResponseType(typeof(ReportDashboardDataResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetDashboardReportsAsync()
     {
         var result = await _reportService.GetDashboardStatsAsync();
@@ -27,13 +28,15 @@ public class AdminReportsController : ControllerBase
     }
 
     [HttpGet("reports")]
+    [ProducesResponseType(typeof(ReportListResponseWrapper), StatusCodes.Status200OK)] 
     public async Task<IActionResult> GetReportsListAsync()
     {
         var result = await _reportService.GetReportsAsync();
-        return Ok(new { reports = result });
+        return Ok(new ReportListResponseWrapper { Reports = result });
     }
 
     [HttpPost("reports")]
+    [ProducesResponseType(typeof(CreateReportResponseWrapper), StatusCodes.Status200OK)]
     public async Task<IActionResult> CreateReportAsync([FromForm] CreateReportRequest request)
     {
         // Try getting admin ID from NameIdentifier or sub claims since different JWT generators use different claims
@@ -52,26 +55,28 @@ public class AdminReportsController : ControllerBase
     }
 
     [HttpGet("reports/{reportId}")]
+    [ProducesResponseType(typeof(ReportDetailResponseWrapper), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetReportByIdAsync(int reportId)
     {
         var report = await _reportService.GetReportByIdAsync(reportId);
         if (report == null) return NotFound(new { message = "Report not found" });
 
-        return Ok(new
+        return Ok(new ReportDetailResponseWrapper
         {
-            reportId = report.ReportId,
-            name = report.ReportName,
-            type = report.ReportType.ToString(),
-            periodStart = report.PeriodStartDate,
-            periodEnd = report.PeriodEndDate,
-            generatedAt = report.GeneratedAt,
-            status = string.IsNullOrEmpty(report.ReportFilePath) ? "inProgress" : "completed",
-            fileUrl = report.ReportFilePath,
-            adminId = report.GeneratedByAdminId
+            ReportId = report.ReportId,
+            Name = report.ReportName,
+            Type = report.ReportType.ToString(),
+            PeriodStart = report.PeriodStartDate,
+            PeriodEnd = report.PeriodEndDate,
+            GeneratedAt = report.GeneratedAt,
+            Status = string.IsNullOrEmpty(report.ReportFilePath) ? "inProgress" : "completed",
+            FileUrl = report.ReportFilePath,
+            AdminId = report.GeneratedByAdminId
         });
     }
 
     [HttpGet("reports/{reportId}/export")]
+    [ProducesResponseType(typeof(ReportExportResponseWrapper), StatusCodes.Status200OK)]
     public async Task<IActionResult> ExportReportPdfAsync(int reportId)
     {
         try
@@ -80,7 +85,7 @@ public class AdminReportsController : ControllerBase
             
             // Redirecting user to Cloudinary URL or return URL for frontend to open
             // Returning the URL since downloading directly might have CORS/Stream issues with API Gateway
-            return Ok(new { url = pdfUrl });
+            return Ok(new ReportExportResponseWrapper { Url = pdfUrl });
         }
         catch (ApplicationException ex)
         {
@@ -91,4 +96,33 @@ public class AdminReportsController : ControllerBase
             return NotFound(new { message = ex.Message });
         }
     }
+}
+
+public class ReportListResponseWrapper
+{
+    public List<ReportListItemResponse> Reports { get; set; } = new();
+}
+
+public class ReportDetailResponseWrapper
+{
+    public int ReportId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Type { get; set; } = string.Empty;
+    public DateTime PeriodStart { get; set; }
+    public DateTime PeriodEnd { get; set; }
+    public DateTime GeneratedAt { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public string? FileUrl { get; set; }
+    public int? AdminId { get; set; }
+}
+
+public class ReportExportResponseWrapper
+{
+    public string Url { get; set; } = string.Empty;
+}
+
+public class CreateReportResponseWrapper
+{
+    public int ReportId { get; set; }
+    public string Message { get; set; } = string.Empty;
 }

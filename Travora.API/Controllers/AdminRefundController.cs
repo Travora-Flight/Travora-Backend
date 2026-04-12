@@ -25,6 +25,7 @@ public class AdminRefundController : ControllerBase
     }
 
     [HttpGet]
+    [ProducesResponseType(typeof(List<AdminRefundListItem>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAllRefunds()
     {
         var result = await _refundService.GetAllRefundsAsync();
@@ -32,6 +33,7 @@ public class AdminRefundController : ControllerBase
     }
 
     [HttpGet("{refundId}")]
+    [ProducesResponseType(typeof(AdminRefundDetail), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetRefundDetail(int refundId)
     {
         var result = await _refundService.GetRefundDetailAsync(refundId);
@@ -39,6 +41,7 @@ public class AdminRefundController : ControllerBase
     }
 
     [HttpPost("{refundId}/approve")]
+    [ProducesResponseType(typeof(RefundResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> ApproveRefund(int refundId)
     {
         var adminId = GetAdminId();
@@ -48,6 +51,7 @@ public class AdminRefundController : ControllerBase
     }
 
     [HttpPost("{refundId}/reject")]
+    [ProducesResponseType(typeof(RefundResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> RejectRefund(int refundId, [FromBody] AdminProcessRefundRequest request)
     {
         var adminId = GetAdminId();

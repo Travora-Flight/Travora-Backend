@@ -12,6 +12,7 @@ public class WeatherDto
     public string FlightCategory { get; set; } = string.Empty;
     public string MetarType { get; set; } = string.Empty;
     public string RawObservation { get; set; } = string.Empty;
+    public int Elevation { get; set; }
     public DateTime ReportTime { get; set; }
     public List<CloudLayerDto> CloudLayers { get; set; } = new();
 }

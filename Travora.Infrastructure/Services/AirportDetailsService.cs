@@ -98,7 +98,7 @@ public class AirportDetailsService : IAirportDetailsService
             Altimeter = weather.Altimeter,
             MetarType = weather.MetarType,
             RawObservation = weather.RawObservation,
-            Elevation = 0,
+            Elevation = weather.Elevation,
             CloudCover = weather.CloudCover,
             FlightCategory = ParseFlightCategory(weather.FlightCategory),
             ReportTime = weather.ReportTime,

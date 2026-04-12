@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Travora.Application.DTOs.Admin.LiveTracker;
 using Travora.Application.Interfaces;
 
 namespace Travora.API.Controllers;
@@ -17,6 +18,7 @@ public class AdminLiveTrackerController : ControllerBase
     }
 
     [HttpGet]
+    [ProducesResponseType(typeof(LiveEmployeeResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetLastLocationsAsync([FromQuery] string? filter, [FromQuery] string? search)
     {
         var result = await _liveTrackerService.GetLastLocationsAsync(filter, search);
@@ -24,6 +26,7 @@ public class AdminLiveTrackerController : ControllerBase
     }
 
     [HttpGet("~/api/v1/admin/employees/{employeeId}/location-details")]
+    [ProducesResponseType(typeof(EmployeeLocationDetailResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetEmployeeLocationDetailsAsync(int employeeId)
     {
         var result = await _liveTrackerService.GetEmployeeLocationDetailsAsync(employeeId);

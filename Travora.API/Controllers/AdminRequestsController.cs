@@ -18,6 +18,7 @@ public class AdminRequestsController : ControllerBase
     }
 
     [HttpGet]
+    [ProducesResponseType(typeof(RequestPagedResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetRequestsAsync([FromQuery] string? search, [FromQuery] string? filter, [FromQuery] string? status, [FromQuery] int page = 1, [FromQuery] int pageSize = 10)
     {
         var result = await _requestService.GetRequestsAsync(search, filter, status, page, pageSize);
@@ -25,6 +26,7 @@ public class AdminRequestsController : ControllerBase
     }
 
     [HttpGet("{orderId}")]
+    [ProducesResponseType(typeof(RequestDetailResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetRequestDetailsAsync(int orderId)
     {
         var result = await _requestService.GetRequestDetailsAsync(orderId);

@@ -18,9 +18,15 @@ public class AdminPricingController : ControllerBase
     }
 
     [HttpGet("Pricing")]
+    [ProducesResponseType(typeof(PricingDashboardResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetDashboardPricingStatsAsync()
     {
         var overview = await _pricingService.GetPricingOverviewAsync();
-        return Ok(new { stats = overview.Stats });
+        return Ok(new PricingDashboardResponse { Stats = overview.Stats });
     }
+}
+
+public class PricingDashboardResponse
+{
+    public Travora.Application.DTOs.Admin.Pricing.PricingStatsResponse Stats { get; set; } = new();
 }

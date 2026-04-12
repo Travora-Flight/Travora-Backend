@@ -22,6 +22,7 @@ public class CustomerPaymentMethodController : ControllerBase
     }
 
     [HttpGet]
+    [ProducesResponseType(typeof(Travora.Application.DTOs.Payments.PaymentMethodsResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetPaymentMethods()
     {
         var customerId = int.Parse(User.FindFirstValue("customerId")!);
@@ -30,6 +31,7 @@ public class CustomerPaymentMethodController : ControllerBase
     }
 
     [HttpPost]
+    [ProducesResponseType(typeof(AddPaymentMethodResponseWrapper), StatusCodes.Status200OK)]
     public async Task<IActionResult> AddPaymentMethod([FromBody] Travora.Application.DTOs.Customer.Profile.AddPaymentMethodRequest request)
     {
         var customerId = int.Parse(User.FindFirstValue("customerId")!);
@@ -38,26 +40,41 @@ public class CustomerPaymentMethodController : ControllerBase
         if (!success)
             return BadRequest(new { success, message });
 
-        return Ok(new { success, message, data });
+        return Ok(new AddPaymentMethodResponseWrapper { Success = success, Message = message, Data = data });
     }
 
     [HttpPost("{id}/set-default")]
+    [ProducesResponseType(typeof(PaymentMethodGenericResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> SetDefault(int id)
     {
         var customerId = int.Parse(User.FindFirstValue("customerId")!);
         var success = await _paymentMethodService.SetDefaultPaymentMethodAsync(customerId, id);
         if (!success)
-            return NotFound(new { message = "الكارت مش موجود" });
-        return Ok(new { success = true, message = "تم تعيين الكارت كافتراضي" });
+            return NotFound(new PaymentMethodGenericResponse { Success = false, Message = "Card not found" });
+        return Ok(new PaymentMethodGenericResponse { Success = true, Message = "Card set as default successfully" });
     }
 
     [HttpDelete("{id}")]
+    [ProducesResponseType(typeof(PaymentMethodGenericResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> Delete(int id)
     {
         var customerId = int.Parse(User.FindFirstValue("customerId")!);
         var (success, message) = await _paymentMethodService.DeletePaymentMethodAsync(customerId, id);
         if (!success)
-            return BadRequest(new { success = false, message });
-        return Ok(new { success = true, message });
+            return BadRequest(new PaymentMethodGenericResponse { Success = false, Message = message });
+        return Ok(new PaymentMethodGenericResponse { Success = true, Message = message });
     }
+}
+
+public class AddPaymentMethodResponseWrapper
+{
+    public bool Success { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public object? Data { get; set; } // Could be explicitly typed if we know the DTO
+}
+
+public class PaymentMethodGenericResponse
+{
+    public bool Success { get; set; }
+    public string Message { get; set; } = string.Empty;
 }

@@ -32,6 +32,7 @@ public class CustomerDoorToDoorOrdersController : ControllerBase
     }
 
     [HttpPost("validate-flight")]
+    [ProducesResponseType(typeof(ValidateFlightResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> ValidateFlight([FromBody] ValidateFlightRequest request, CancellationToken cancellationToken)
     {
         try
@@ -53,6 +54,7 @@ public class CustomerDoorToDoorOrdersController : ControllerBase
     }
 
     [HttpPost("validate-companion")]
+    [ProducesResponseType(typeof(ValidateCompanionResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> ValidateCompanion([FromForm] ValidateCompanionRequest request, CancellationToken cancellationToken)
     {
         try
@@ -74,6 +76,7 @@ public class CustomerDoorToDoorOrdersController : ControllerBase
     }
 
     [HttpPost("validate-baggage")]
+    [ProducesResponseType(typeof(ValidateBaggageResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> ValidateBaggage(CancellationToken cancellationToken)
     {
         try
@@ -95,6 +98,7 @@ public class CustomerDoorToDoorOrdersController : ControllerBase
     }
 
     [HttpPost("resolve-location")]
+    [ProducesResponseType(typeof(ResolveLocationResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> ResolveLocation([FromBody] ResolveLocationRequest request, CancellationToken cancellationToken)
     {
         try
@@ -108,7 +112,9 @@ public class CustomerDoorToDoorOrdersController : ControllerBase
             return StatusCode(500, new { ErrorMessage = ex.Message });
         }
     }
+    
     [HttpGet("available-slots")]
+    [ProducesResponseType(typeof(AvailableSlotsResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAvailableSlots(
         [FromQuery] DateTime date,
         CancellationToken cancellationToken)
@@ -126,6 +132,7 @@ public class CustomerDoorToDoorOrdersController : ControllerBase
     }
 
     [HttpPost("select-slot")]
+    [ProducesResponseType(typeof(SelectSlotResponseWrapper), StatusCodes.Status200OK)]
     public async Task<IActionResult> SelectSlot([FromBody] SelectSlotRequest request, CancellationToken cancellationToken)
     {
         try
@@ -151,7 +158,7 @@ public class CustomerDoorToDoorOrdersController : ControllerBase
             draft.SelectedSlotDate = request.Date;
             await _draftOrderService.SaveDraftOrderAsync(draft, TimeSpan.FromMinutes(30), cancellationToken);
 
-            return Ok(new { success = true, selectedSlot = request.Slot, date = request.Date });
+            return Ok(new SelectSlotResponseWrapper { Success = true, SelectedSlot = request.Slot, Date = request.Date });
         }
         catch (Exception ex)
         {
@@ -160,6 +167,7 @@ public class CustomerDoorToDoorOrdersController : ControllerBase
     }
 
     [HttpGet("available-delivery-slots")]
+    [ProducesResponseType(typeof(AvailableSlotsResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAvailableDeliverySlots(
         [FromQuery] DateTime date,
         CancellationToken cancellationToken)
@@ -177,6 +185,7 @@ public class CustomerDoorToDoorOrdersController : ControllerBase
     }
 
     [HttpPost("select-delivery-slot")]
+    [ProducesResponseType(typeof(SelectDeliverySlotResponseWrapper), StatusCodes.Status200OK)]
     public async Task<IActionResult> SelectDeliverySlot([FromBody] SelectSlotRequest request, CancellationToken cancellationToken)
     {
         try
@@ -202,7 +211,7 @@ public class CustomerDoorToDoorOrdersController : ControllerBase
             draft.SelectedDeliverySlotDate = request.Date;
             await _draftOrderService.SaveDraftOrderAsync(draft, TimeSpan.FromMinutes(30), cancellationToken);
 
-            return Ok(new { success = true, selectedDeliverySlot = request.Slot, date = request.Date });
+            return Ok(new SelectDeliverySlotResponseWrapper { Success = true, SelectedDeliverySlot = request.Slot, Date = request.Date });
         }
         catch (Exception ex)
         {
@@ -211,6 +220,7 @@ public class CustomerDoorToDoorOrdersController : ControllerBase
     }
 
     [HttpPost("customs")]
+    [ProducesResponseType(typeof(SetCustomsTypeResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> SetCustomsType([FromBody] SetCustomsTypeRequest request, CancellationToken cancellationToken)
     {
         try
@@ -226,6 +236,7 @@ public class CustomerDoorToDoorOrdersController : ControllerBase
     }
 
     [HttpPost("customs/items")]
+    [ProducesResponseType(typeof(AddCustomsItemResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> AddCustomsItem([FromForm] AddCustomsItemRequest request, CancellationToken cancellationToken)
     {
         try
@@ -241,6 +252,7 @@ public class CustomerDoorToDoorOrdersController : ControllerBase
     }
 
     [HttpGet("invoice")]
+    [ProducesResponseType(typeof(InvoiceResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetInvoice(CancellationToken cancellationToken)
     {
         try
@@ -256,6 +268,7 @@ public class CustomerDoorToDoorOrdersController : ControllerBase
     }
 
     [HttpPost("confirm")]
+    [ProducesResponseType(typeof(ConfirmOrderResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> ConfirmOrder(CancellationToken cancellationToken)
     {
         try
@@ -269,4 +282,18 @@ public class CustomerDoorToDoorOrdersController : ControllerBase
             return StatusCode(500, new { ErrorMessage = ex.Message });
         }
     }
+}
+
+public class SelectSlotResponseWrapper
+{
+    public bool Success { get; set; }
+    public string SelectedSlot { get; set; } = string.Empty;
+    public DateTime Date { get; set; }
+}
+
+public class SelectDeliverySlotResponseWrapper
+{
+    public bool Success { get; set; }
+    public string SelectedDeliverySlot { get; set; } = string.Empty;
+    public DateTime Date { get; set; }
 }

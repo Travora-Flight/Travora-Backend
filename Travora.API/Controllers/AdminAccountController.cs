@@ -30,6 +30,7 @@ public class AdminAccountController : ControllerBase
     }
 
     [HttpGet]
+    [ProducesResponseType(typeof(AdminAccountResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAccountAsync()
     {
         var adminId = GetAdminId();
@@ -40,6 +41,7 @@ public class AdminAccountController : ControllerBase
     }
 
     [HttpPut]
+    [ProducesResponseType(typeof(AdminAccountResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> UpdateAccountAsync([FromBody] UpdateAdminAccountRequest request)
     {
         var adminId = GetAdminId();

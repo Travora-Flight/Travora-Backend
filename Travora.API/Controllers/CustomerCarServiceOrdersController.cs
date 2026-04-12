@@ -32,6 +32,7 @@ public class CustomerCarServiceOrdersController : ControllerBase
 
     // ===== STEP 1 — Validate Flight =====
     [HttpPost("validate-flight")]
+    [ProducesResponseType(typeof(CarServiceValidateFlightResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> ValidateFlight([FromBody] CarServiceValidateFlightRequest request, CancellationToken cancellationToken)
     {
         try
@@ -48,6 +49,7 @@ public class CustomerCarServiceOrdersController : ControllerBase
 
     // ===== STEP 2 — Validate Companion =====
     [HttpPost("validate-companion")]
+    [ProducesResponseType(typeof(ValidateCompanionResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> ValidateCompanion([FromForm] ValidateCompanionRequest request, CancellationToken cancellationToken)
     {
         try
@@ -64,6 +66,7 @@ public class CustomerCarServiceOrdersController : ControllerBase
 
     // ===== STEP 2.5 — Validate Baggage =====
     [HttpPost("validate-baggage")]
+    [ProducesResponseType(typeof(ValidateBaggageResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> ValidateBaggage(CancellationToken cancellationToken)
     {
         try
@@ -80,6 +83,7 @@ public class CustomerCarServiceOrdersController : ControllerBase
 
     // ===== STEP 3 — Resolve Location =====
     [HttpPost("resolve-location")]
+    [ProducesResponseType(typeof(ResolveLocationResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> ResolveLocation([FromBody] CarServiceResolveLocationRequest request, CancellationToken cancellationToken)
     {
         try
@@ -96,6 +100,7 @@ public class CustomerCarServiceOrdersController : ControllerBase
 
     // ===== STEP 4 — Available Slots =====
     [HttpGet("available-slots")]
+    [ProducesResponseType(typeof(AvailableSlotsResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAvailableSlots([FromQuery] DateTime date, CancellationToken cancellationToken)
     {
         try
@@ -112,6 +117,7 @@ public class CustomerCarServiceOrdersController : ControllerBase
 
     // ===== STEP 4.5 — Select Slot =====
     [HttpPost("select-slot")]
+    [ProducesResponseType(typeof(SelectSlotResponseWrapper), StatusCodes.Status200OK)]
     public async Task<IActionResult> SelectSlot([FromBody] SelectSlotRequest request, CancellationToken cancellationToken)
     {
         try
@@ -132,7 +138,7 @@ public class CustomerCarServiceOrdersController : ControllerBase
             draft.SelectedSlotDate = request.Date;
             await _draftOrderService.SaveCarServiceDraftAsync(draft, TimeSpan.FromMinutes(30), cancellationToken);
 
-            return Ok(new { success = true, selectedSlot = request.Slot, date = request.Date });
+            return Ok(new SelectSlotResponseWrapper { Success = true, SelectedSlot = request.Slot, Date = request.Date });
         }
         catch (Exception ex)
         {
@@ -142,6 +148,7 @@ public class CustomerCarServiceOrdersController : ControllerBase
 
     // ===== STEP 5 — My Bags (delivery_from_airport only) =====
     [HttpGet("my-bags")]
+    [ProducesResponseType(typeof(MyBagsResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetMyBags(CancellationToken cancellationToken)
     {
         try
@@ -160,13 +167,14 @@ public class CustomerCarServiceOrdersController : ControllerBase
 
     // ===== STEP 5.5 — Select Bags =====
     [HttpPost("select-bags")]
+    [ProducesResponseType(typeof(SelectBagsResponseWrapper), StatusCodes.Status200OK)]
     public async Task<IActionResult> SelectBags([FromBody] SelectBagsRequest request, CancellationToken cancellationToken)
     {
         try
         {
             int customerId = GetCustomerId();
             await _orderService.SelectBagsAsync(customerId, request, cancellationToken);
-            return Ok(new { success = true, selectedCount = request.SelectedTagNumbers.Count });
+            return Ok(new SelectBagsResponseWrapper { Success = true, SelectedCount = request.SelectedTagNumbers.Count });
         }
         catch (Exception ex)
         {
@@ -176,6 +184,7 @@ public class CustomerCarServiceOrdersController : ControllerBase
 
     // ===== STEP 6 — Invoice =====
     [HttpGet("invoice")]
+    [ProducesResponseType(typeof(InvoiceResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetInvoice(CancellationToken cancellationToken)
     {
         try
@@ -192,6 +201,7 @@ public class CustomerCarServiceOrdersController : ControllerBase
 
     // ===== STEP 7 — Confirm =====
     [HttpPost("confirm")]
+    [ProducesResponseType(typeof(ConfirmOrderResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> ConfirmOrder(CancellationToken cancellationToken)
     {
         try
@@ -205,4 +215,10 @@ public class CustomerCarServiceOrdersController : ControllerBase
             return StatusCode(500, new { ErrorMessage = ex.Message });
         }
     }
+}
+
+public class SelectBagsResponseWrapper
+{
+    public bool Success { get; set; }
+    public int SelectedCount { get; set; }
 }

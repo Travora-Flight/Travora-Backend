@@ -27,6 +27,7 @@ public class AdminPassportController : ControllerBase
     }
 
     [HttpGet]
+    [ProducesResponseType(typeof(PassportVerificationListResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetPassportVerificationsAsync([FromQuery] string? status)
     {
         var result = await _passportService.GetPassportVerificationsAsync(status);
