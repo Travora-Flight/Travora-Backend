@@ -8,4 +8,5 @@ public class AirportFlightDto
     public string Gate { get; set; } = string.Empty;
     public string Type { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
+    public string? Delay { get; set; }
 }

@@ -195,6 +195,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<Travora.Application.Interfaces.External.Weather.IAviationWeatherService, Travora.Infrastructure.ExternalServices.Weather.AviationWeatherApiService>();
         services.AddScoped<Travora.Application.Interfaces.External.Weather.IWeatherCache, Travora.Infrastructure.Caching.WeatherCacheService>();
         services.AddScoped<IAirportDetailsService, Travora.Infrastructure.Services.AirportDetailsService>();
+        services.AddScoped<IFlightTrackerService, Travora.Infrastructure.Services.FlightTrackerService>();
         
         // Register Draft Order Service (Redis)
         services.AddScoped<Travora.Application.Interfaces.Services.IDraftOrderService, Travora.Infrastructure.Services.DraftOrderService>();

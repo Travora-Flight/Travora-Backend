@@ -68,26 +68,20 @@ public class FlightTrackerService : IFlightTrackerService
             if (lat.HasValue && lng.HasValue && distance.HasValue)
                 url += $"&lat={lat}&lng={lng}&distance={distance}";
 
-            Console.WriteLine($"[FlightTracker] 🌐 GET {url}");
             var response = await client.GetAsync(url);
 
-            Console.WriteLine($"[FlightTracker] 📡 Status: {(int)response.StatusCode} {response.StatusCode}");
 
             if (!response.IsSuccessStatusCode)
             {
                 var errBody = await response.Content.ReadAsStringAsync();
-                Console.WriteLine($"[FlightTracker] ❌ Error body: {errBody[..Math.Min(errBody.Length, 500)]}");
                 return new LiveFlightsResponse();
             }
 
             var json = await response.Content.ReadAsStringAsync();
-            Console.WriteLine($"[FlightTracker] 📦 Response length: {json.Length} chars");
-            Console.WriteLine($"[FlightTracker] 📦 First 300 chars: {json[..Math.Min(json.Length, 300)]}");
 
             // Check if response is an error object instead of array
             if (json.TrimStart().StartsWith("{"))
             {
-                Console.WriteLine($"[FlightTracker] ⚠️ API returned error object: {json[..Math.Min(json.Length, 200)]}");
                 return new LiveFlightsResponse();
             }
 
@@ -95,11 +89,8 @@ public class FlightTrackerService : IFlightTrackerService
 
             if (rawFlights == null || rawFlights.Count == 0)
             {
-                Console.WriteLine($"[FlightTracker] ⚠️ Deserialized to null or empty list");
                 return new LiveFlightsResponse();
             }
-
-            Console.WriteLine($"[FlightTracker] ✅ Parsed {rawFlights.Count} raw flights");
 
             // 3) Map — Bulk API uses "geography" + "speed" at top level (NOT flightPositions)
             //    Also uses "iataCode" for airports (not "iataNumber")
@@ -142,12 +133,10 @@ public class FlightTrackerService : IFlightTrackerService
             // 4) Cache in Redis
             await SafeCacheSet(cacheKey, JsonSerializer.Serialize(flights), LiveFlightsTtl);
 
-            Console.WriteLine($"[FlightTracker] ✅ Cached {flights.Count} flights");
             return new LiveFlightsResponse { Count = flights.Count, Flights = flights };
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[FlightTracker] ❌ Live flights error: {ex.Message}");
             return new LiveFlightsResponse();
         }
     }
@@ -165,7 +154,6 @@ public class FlightTrackerService : IFlightTrackerService
             var client = _httpClientFactory.CreateClient("AviationEdge");
             var url = $"{_baseUrl}/autocomplete?key={_apiKey}&city={Uri.EscapeDataString(q)}";
 
-            Console.WriteLine($"[FlightTracker] 🔍 Autocomplete: {q}");
             var response = await client.GetAsync(url);
 
             if (response.IsSuccessStatusCode)
@@ -268,12 +256,10 @@ public class FlightTrackerService : IFlightTrackerService
                 if (q.Length == 2 && q.All(char.IsLetter))
                 {
                     url = $"{_baseUrl}/flights?key={_apiKey}&airlineIata={q.ToUpper()}&limit=10";
-                    Console.WriteLine($"[FlightTracker] 🔍 Searching by airlineIata: {q.ToUpper()}");
                 }
                 else
                 {
                     url = $"{_baseUrl}/flights?key={_apiKey}&flightIata={q.ToUpper()}";
-                    Console.WriteLine($"[FlightTracker] 🔍 Searching by flightIata: {q.ToUpper()}");
                 }
 
                 var response = await client.GetAsync(url);
@@ -289,8 +275,6 @@ public class FlightTrackerService : IFlightTrackerService
 
                         if (flights != null && flights.Count > 0)
                         {
-                            Console.WriteLine($"[FlightTracker] ✅ API returned {flights.Count} flight(s) for search");
-
                             // Single flight API → uses flightPositions[] and departure.iataNumber
                             result.Flights = flights.Take(5).Select(f =>
                             {
@@ -361,15 +345,11 @@ public class FlightTrackerService : IFlightTrackerService
             var client = _httpClientFactory.CreateClient("AviationEdge");
             var url = $"{_baseUrl}/flights?key={_apiKey}&flightIata={Uri.EscapeDataString(flightIata)}";
 
-            Console.WriteLine($"[FlightTracker] ✈️ GET {url}");
             var response = await client.GetAsync(url);
-            Console.WriteLine($"[FlightTracker] 📡 Status: {(int)response.StatusCode} {response.StatusCode}");
 
             if (response.IsSuccessStatusCode)
             {
                 var json = await response.Content.ReadAsStringAsync();
-                Console.WriteLine($"[FlightTracker] 📦 Response length: {json.Length} chars");
-                Console.WriteLine($"[FlightTracker] 📦 First 500 chars: {json[..Math.Min(json.Length, 500)]}");
 
                 // API returns {"error":"..."} when flight not found (object, not array)
                 if (json.TrimStart().StartsWith("{"))

@@ -16,12 +16,12 @@ public class AirportController : ControllerBase
         _airportDetailsService = airportDetailsService;
     }
 
-    [HttpGet("{icaoCode}/details")]
-    public async Task<IActionResult> GetDetails(string icaoCode)
+    [HttpGet("{code}/details")]
+    public async Task<IActionResult> GetDetails(string code)
     {
         try
         {
-            var result = await _airportDetailsService.GetAirportDetailsAsync(icaoCode.ToUpper());
+            var result = await _airportDetailsService.GetAirportDetailsAsync(code.ToUpper());
             return Ok(result);
         }
         catch (KeyNotFoundException ex)

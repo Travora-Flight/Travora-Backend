@@ -4,5 +4,5 @@ namespace Travora.Application.Interfaces.Services;
 
 public interface IAirportDetailsService
 {
-    Task<AirportDetailsResponse> GetAirportDetailsAsync(string icaoCode);
+    Task<AirportDetailsResponse> GetAirportDetailsAsync(string code);
 }

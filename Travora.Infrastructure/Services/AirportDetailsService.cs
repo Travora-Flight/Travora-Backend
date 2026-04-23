@@ -1,6 +1,8 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Travora.Application.DTOs.Airports;
+using Travora.Application.Interfaces;
 using Travora.Application.Interfaces.External.Weather;
 using Travora.Application.Interfaces.Services;
 using Travora.Domain.Entities;
@@ -14,34 +16,50 @@ public class AirportDetailsService : IAirportDetailsService
     private readonly ApplicationDbContext _db;
     private readonly IAviationWeatherService _weatherApi;
     private readonly IWeatherCache _weatherCache;
+    private readonly IUpstashRedisService _redis;
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly string _baseUrl;
+    private readonly string _apiKey;
     private readonly int _cacheTtlMinutes;
+
+    private static readonly TimeSpan TimetableTtl = TimeSpan.FromMinutes(5);
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
 
     public AirportDetailsService(
         ApplicationDbContext db,
         IAviationWeatherService weatherApi,
         IWeatherCache weatherCache,
+        IUpstashRedisService redis,
+        IHttpClientFactory httpClientFactory,
         IConfiguration configuration)
     {
         _db = db;
         _weatherApi = weatherApi;
         _weatherCache = weatherCache;
+        _redis = redis;
+        _httpClientFactory = httpClientFactory;
+        _baseUrl = configuration["AviationEdge:BaseUrl"] ?? "https://aviation-edge.com/v2/public";
+        _apiKey = configuration["AviationEdge:ApiKey"] ?? "";
         _cacheTtlMinutes = configuration.GetValue<int>("AviationWeather:CacheTtlMinutes", 30);
     }
 
-    public async Task<AirportDetailsResponse> GetAirportDetailsAsync(string icaoCode)
+    public async Task<AirportDetailsResponse> GetAirportDetailsAsync(string code)
     {
-        // 1) Find airport
+        // 1) Find airport by ICAO or IATA code
         var airport = await _db.Airports
             .Include(a => a.City)
-            .FirstOrDefaultAsync(a => a.CodeIcaoAirport == icaoCode);
+            .FirstOrDefaultAsync(a => a.CodeIcaoAirport == code || a.CodeIataAirport == code);
 
         if (airport == null)
             throw new KeyNotFoundException("المطار غير موجود");
 
-        // 2) Get weather
-        var weather = await GetWeatherAsync(icaoCode, airport);
+        // 2) Get weather (Aviation Weather API requires ICAO code)
+        var weather = await GetWeatherAsync(airport.CodeIcaoAirport, airport);
 
-        // 3) Get flights
+        // 3) Get flights from Aviation Edge timetable (requires IATA code)
         var (flights, totalFlights) = await GetTodayFlightsAsync(airport);
 
         // 4) Build response
@@ -124,50 +142,160 @@ public class AirportDetailsService : IAirportDetailsService
         }
     }
 
+    // ========================================================
+    // Aviation Edge /timetable — departure + arrival
+    // ========================================================
     private async Task<(List<AirportFlightDto> Flights, int Total)> GetTodayFlightsAsync(Airport airport)
     {
-        var today = DateTime.UtcNow.Date;
+        var iataCode = airport.CodeIataAirport;
+        var cacheKey = $"timetable:airport:{iataCode}";
 
-        var departures = await _db.Flights
-            .Where(f => f.DepartureAirportId == airport.AirportId
-                && f.ScheduledDepartureTime.Date == today
-                && f.FlightStatus != FlightStatus.Cancelled)
-            .OrderBy(f => f.ScheduledDepartureTime)
-            .Take(20)
-            .Select(f => new AirportFlightDto
+        // 1) Check Redis cache
+        try
+        {
+            var cached = await _redis.GetAsync(cacheKey);
+            if (!string.IsNullOrEmpty(cached))
             {
-                Destination = f.ArrivalAirport != null ? f.ArrivalAirport.NameAirport : f.ArrivalIataCode,
-                FlightNumber = f.FlightIataNumber,
-                ScheduledTime = f.ScheduledDepartureTime.ToString("HH:mm"),
-                Gate = f.DepartureGate ?? "—",
-                Type = "Departure",
-                Status = MapFlightStatus(f.FlightStatus)
-            })
-            .ToListAsync();
+                var cachedFlights = JsonSerializer.Deserialize<List<AirportFlightDto>>(cached, JsonOptions);
+                if (cachedFlights != null)
+                    return (cachedFlights, cachedFlights.Count);
+            }
+        }
+        catch { /* Redis down — continue */ }
 
-        var arrivals = await _db.Flights
-            .Where(f => f.ArrivalAirportId == airport.AirportId
-                && f.ScheduledArrivalTime.Date == today
-                && f.FlightStatus != FlightStatus.Cancelled)
-            .OrderBy(f => f.ScheduledArrivalTime)
-            .Take(20)
-            .Select(f => new AirportFlightDto
+        var flights = new List<AirportFlightDto>();
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient("AviationEdge");
+
+            // Fetch departures
+            var depUrl = $"{_baseUrl}/timetable?key={_apiKey}&iataCode={Uri.EscapeDataString(iataCode)}&type=departure";
+            var depResponse = await client.GetAsync(depUrl);
+
+            if (depResponse.IsSuccessStatusCode)
             {
-                Destination = f.DepartureAirport != null ? f.DepartureAirport.NameAirport : f.DepartureIataCode,
-                FlightNumber = f.FlightNumber,
-                ScheduledTime = f.ScheduledArrivalTime.ToString("HH:mm"),
-                Gate = f.DepartureGate ?? "—",
-                Type = "Arrival",
-                Status = MapFlightStatus(f.FlightStatus)
-            })
-            .ToListAsync();
+                var depJson = await depResponse.Content.ReadAsStringAsync();
+                if (!depJson.TrimStart().StartsWith("{"))
+                {
+                    var depFlights = JsonSerializer.Deserialize<List<JsonElement>>(depJson, JsonOptions);
+                    if (depFlights != null)
+                    {
+                        foreach (var f in depFlights.Take(20))
+                        {
+                            try
+                            {
+                                flights.Add(new AirportFlightDto
+                                {
+                                    Destination = GetNestedString(f, "arrival", "iataCode"),
+                                    FlightNumber = GetNestedString(f, "flight", "iataNumber"),
+                                    ScheduledTime = ParseTime(GetNestedString(f, "departure", "scheduledTime")),
+                                    Gate = GetNestedStringOrNull(f, "departure", "gate")
+                                        ?? (GetNestedStringOrNull(f, "departure", "terminal") is string depTerm ? $"T{depTerm}" : "—"),
+                                    Type = "Departure",
+                                    Status = MapStatus(GetString(f, "status")),
+                                    Delay = FormatDelay(GetNestedStringOrNull(f, "departure", "delay"))
+                                });
+                            }
+                            catch { /* Skip malformed */ }
+                        }
+                    }
+                }
+            }
 
-        var combined = departures
-            .Concat(arrivals)
-            .OrderBy(f => f.ScheduledTime)
-            .ToList();
+            // Fetch arrivals
+            var arrUrl = $"{_baseUrl}/timetable?key={_apiKey}&iataCode={Uri.EscapeDataString(iataCode)}&type=arrival";
+            var arrResponse = await client.GetAsync(arrUrl);
 
-        return (combined, combined.Count);
+            if (arrResponse.IsSuccessStatusCode)
+            {
+                var arrJson = await arrResponse.Content.ReadAsStringAsync();
+                if (!arrJson.TrimStart().StartsWith("{"))
+                {
+                    var arrFlights = JsonSerializer.Deserialize<List<JsonElement>>(arrJson, JsonOptions);
+                    if (arrFlights != null)
+                    {
+                        foreach (var f in arrFlights.Take(20))
+                        {
+                            try
+                            {
+                                flights.Add(new AirportFlightDto
+                                {
+                                    Destination = GetNestedString(f, "departure", "iataCode"),
+                                    FlightNumber = GetNestedString(f, "flight", "iataNumber"),
+                                    ScheduledTime = ParseTime(GetNestedString(f, "arrival", "scheduledTime")),
+                                    Gate = GetNestedStringOrNull(f, "arrival", "gate")
+                                        ?? (GetNestedStringOrNull(f, "arrival", "terminal") is string arrTerm ? $"T{arrTerm}" : "—"),
+                                    Type = "Arrival",
+                                    Status = MapStatus(GetString(f, "status")),
+                                    Delay = FormatDelay(GetNestedStringOrNull(f, "arrival", "delay"))
+                                });
+                            }
+                            catch { /* Skip malformed */ }
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[AirportDetails] ❌ Timetable API error: {ex.Message}");
+        }
+
+        // Sort by scheduled time
+        flights = flights.OrderBy(f => f.ScheduledTime).ToList();
+
+        // Cache in Redis (5 min TTL)
+        try
+        {
+            var json = JsonSerializer.Serialize(flights, JsonOptions);
+            await _redis.SetAsync(cacheKey, json, TimetableTtl);
+        }
+        catch { /* Redis down — continue */ }
+
+        return (flights, flights.Count);
+    }
+
+    // ========================================================
+    // Helpers
+    // ========================================================
+    private static string ParseTime(string? scheduledTime)
+    {
+        if (string.IsNullOrWhiteSpace(scheduledTime)) return "";
+
+        // Format: "2025-10-21T17:35:00.000" → "17:35"
+        if (DateTime.TryParse(scheduledTime, out var dt))
+            return dt.ToString("HH:mm");
+
+        // Already in "HH:mm" format
+        if (scheduledTime.Contains(':') && scheduledTime.Length <= 8)
+            return scheduledTime;
+
+        return scheduledTime;
+    }
+
+    private static string MapStatus(string status)
+    {
+        return status?.ToLower() switch
+        {
+            "landed" => "Landed",
+            "scheduled" => "Scheduled",
+            "cancelled" => "Cancelled",
+            "active" => "Active",
+            "incident" => "Incident",
+            "diverted" => "Diverted",
+            "redirected" => "Redirected",
+            "unknown" => "Unknown",
+            _ => string.IsNullOrWhiteSpace(status) ? "Unknown" : status
+        };
+    }
+
+    private static string? FormatDelay(string? delay)
+    {
+        if (string.IsNullOrWhiteSpace(delay)) return null;
+        if (int.TryParse(delay, out var minutes) && minutes > 0)
+            return $"{minutes} min";
+        return null;
     }
 
     private static string FormatGmt(string gmt)
@@ -195,18 +323,40 @@ public class AirportDetailsService : IAirportDetailsService
         };
     }
 
-    private static string MapFlightStatus(FlightStatus status)
+    // ── JSON Navigation Helpers ──
+
+    private static string GetNestedString(JsonElement element, string obj, string prop)
     {
-        return status switch
+        if (element.TryGetProperty(obj, out var nested) &&
+            nested.TryGetProperty(prop, out var value))
         {
-            FlightStatus.Scheduled => "On Time",
-            FlightStatus.Delayed => "Delayed",
-            FlightStatus.Boarding => "Boarding",
-            FlightStatus.Departed => "Departed",
-            FlightStatus.InAir => "In Air",
-            FlightStatus.Landed => "Landed",
-            FlightStatus.Cancelled => "Cancelled",
-            _ => "Unknown"
-        };
+            return value.ValueKind == JsonValueKind.String
+                ? value.GetString() ?? ""
+                : value.ToString();
+        }
+        return "";
+    }
+
+    private static string? GetNestedStringOrNull(JsonElement element, string obj, string prop)
+    {
+        if (element.TryGetProperty(obj, out var nested) &&
+            nested.TryGetProperty(prop, out var value) &&
+            value.ValueKind == JsonValueKind.String)
+        {
+            var str = value.GetString();
+            return string.IsNullOrWhiteSpace(str) ? null : str;
+        }
+        return null;
+    }
+
+    private static string GetString(JsonElement element, string prop)
+    {
+        if (element.TryGetProperty(prop, out var value))
+        {
+            return value.ValueKind == JsonValueKind.String
+                ? value.GetString() ?? ""
+                : value.ToString();
+        }
+        return "";
     }
 }
