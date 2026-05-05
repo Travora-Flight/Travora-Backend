@@ -8,12 +8,12 @@ public class ApplicationDbContext : DbContext
 {
     public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : base(options) { }
 
-    // ===== المستخدمين =====
+    // ===== Users =====
     public DbSet<Admin> Admins => Set<Admin>();
     public DbSet<Customer> Customers => Set<Customer>();
     public DbSet<Employee> Employees => Set<Employee>();
 
-    // ===== الطيران =====
+    // ===== Aviation =====
     public DbSet<Aircraft> Aircrafts => Set<Aircraft>();
     public DbSet<Airline> Airlines => Set<Airline>();
     public DbSet<Airport> Airports => Set<Airport>();
@@ -24,12 +24,12 @@ public class ApplicationDbContext : DbContext
     public DbSet<SavedFlight> SavedFlights => Set<SavedFlight>();
     public DbSet<BoardingPass> BoardingPasses => Set<BoardingPass>();
 
-    // ===== الجغرافيا =====
+    // ===== Geography =====
     public DbSet<Country> Countries => Set<Country>();
     public DbSet<City> Cities => Set<City>();
     public DbSet<Location> Locations => Set<Location>();
 
-    // ===== الطلبات والخدمات =====
+    // ===== Orders and Services =====
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderCompanion> OrderCompanions => Set<OrderCompanion>();
     public DbSet<OrderService> OrderServices => Set<OrderService>();
@@ -37,39 +37,39 @@ public class ApplicationDbContext : DbContext
     public DbSet<PackageService> PackageServices => Set<PackageService>();
     public DbSet<Service> Services => Set<Service>();
 
-    // ===== الشنط =====
+    // ===== Baggage =====
     public DbSet<Baggage> Baggages => Set<Baggage>();
     public DbSet<BaggagePhoto> BaggagePhotos => Set<BaggagePhoto>();
     public DbSet<BaggageTracking> BaggageTrackings => Set<BaggageTracking>();
     public DbSet<SecurityLock> SecurityLocks => Set<SecurityLock>();
     public DbSet<QrScan> QrScans => Set<QrScan>();
 
-    // ===== المرافقين =====
+    // ===== Companions =====
     public DbSet<Companion> Companions => Set<Companion>();
 
-    // ===== الجمارك =====
+    // ===== Customs =====
     public DbSet<CustomsDeclaration> CustomsDeclarations => Set<CustomsDeclaration>();
     public DbSet<CustomsItem> CustomsItems => Set<CustomsItem>();
 
-    // ===== المستندات =====
+    // ===== Documents =====
     public DbSet<Document> Documents => Set<Document>();
     public DbSet<PassportValidation> PassportValidations => Set<PassportValidation>();
 
-    // ===== المالية =====
+    // ===== Finance =====
     public DbSet<Invoice> Invoices => Set<Invoice>();
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<PaymentMethod> PaymentMethods => Set<PaymentMethod>();
     public DbSet<Refund> Refunds => Set<Refund>();
 
-    // ===== التتبع =====
+    // ===== Tracking =====
     public DbSet<DriverTracking> DriverTrackings => Set<DriverTracking>();
     public DbSet<Checkpoint> Checkpoints => Set<Checkpoint>();
 
-    // ===== الطقس =====
+    // ===== Weather =====
     public DbSet<WeatherSnapshot> WeatherSnapshots => Set<WeatherSnapshot>();
     public DbSet<CloudLayer> CloudLayers => Set<CloudLayer>();
 
-    // ===== أخرى =====
+    // ===== Others =====
     public DbSet<Feedback> Feedbacks => Set<Feedback>();
     public DbSet<LoginLog> LoginLogs => Set<LoginLog>();
     public DbSet<Notification> Notifications => Set<Notification>();
@@ -82,7 +82,7 @@ public class ApplicationDbContext : DbContext
     {
         base.OnModelCreating(modelBuilder);
 
-        // تطبيق كل الـ Configurations من الـ Assembly
+        // Apply all Configurations from Assembly
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(ApplicationDbContext).Assembly);
 
         // ===== Decimal Precision =====
@@ -90,7 +90,7 @@ public class ApplicationDbContext : DbContext
             .Property(b => b.TotalWeight)
             .HasPrecision(18, 2);
 
-        // فلتر Soft Delete العام لكل Entity بتطبق ISoftDelete
+        // Global Soft Delete filter for every Entity that implements ISoftDelete
         foreach (var entityType in modelBuilder.Model.GetEntityTypes())
         {
             if (typeof(ISoftDelete).IsAssignableFrom(entityType.ClrType))

@@ -139,7 +139,7 @@ public class CustomerDoorToDoorOrdersController : ControllerBase
         {
             int customerId = GetCustomerId();
             
-            // تحقق إن الـ slot متاح فعلاً
+            // Check if the slot is actually available
             var slotsResponse = await _orderService.GetAvailableSlotsAsync(
                 customerId, request.Date, cancellationToken);
             
@@ -147,9 +147,9 @@ public class CustomerDoorToDoorOrdersController : ControllerBase
                 .FirstOrDefault(s => s.Slot == request.Slot);
             
             if (chosenSlot == null || !chosenSlot.Available)
-                return BadRequest(new { success = false, errorMessage = "هذا الموعد غير متاح" });
+                return BadRequest(new { success = false, errorMessage = "This time slot is not available" });
 
-            // احفظ في Draft
+            // Save to Draft
             var draft = await _draftOrderService.GetDraftOrderAsync(customerId.ToString(), cancellationToken);
             if (draft == null)
                 return BadRequest(new { success = false, errorMessage = "Draft not found" });
@@ -192,7 +192,7 @@ public class CustomerDoorToDoorOrdersController : ControllerBase
         {
             int customerId = GetCustomerId();
             
-            // تحقق إن الـ slot متاح فعلاً
+            // Check if the slot is actually available
             var slotsResponse = await _orderService.GetAvailableDeliverySlotsAsync(
                 customerId, request.Date, cancellationToken);
             
@@ -200,9 +200,9 @@ public class CustomerDoorToDoorOrdersController : ControllerBase
                 .FirstOrDefault(s => s.Slot == request.Slot);
             
             if (chosenSlot == null || !chosenSlot.Available)
-                return BadRequest(new { success = false, errorMessage = "هذا الموعد غير متاح" });
+                return BadRequest(new { success = false, errorMessage = "This time slot is not available" });
 
-            // احفظ في Draft
+            // Save to Draft
             var draft = await _draftOrderService.GetDraftOrderAsync(customerId.ToString(), cancellationToken);
             if (draft == null)
                 return BadRequest(new { success = false, errorMessage = "Draft not found" });

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Travora.Application.DTOs.Customer.Auth;
 using Travora.Application.Interfaces;
 using Travora.Application.Interfaces.External.Communication;
@@ -21,6 +22,7 @@ public class CustomerAuthService : ICustomerAuthService
     private readonly IEmailService _emailService;
     private readonly ICloudinaryService _cloudinary;
     private readonly IPassportOcrService _ocrService;
+    private readonly string? _fixedOtp;
 
     public CustomerAuthService(
         ApplicationDbContext db,
@@ -29,7 +31,8 @@ public class CustomerAuthService : ICustomerAuthService
         JwtSettings jwtSettings,
         IEmailService emailService,
         ICloudinaryService cloudinary,
-        IPassportOcrService ocrService)
+        IPassportOcrService ocrService,
+        IConfiguration configuration)
     {
         _db = db;
         _redis = redis;
@@ -38,6 +41,7 @@ public class CustomerAuthService : ICustomerAuthService
         _emailService = emailService;
         _cloudinary = cloudinary;
         _ocrService = ocrService;
+        _fixedOtp = configuration["Testing:FixedOtp"];
     }
 
     // ===== Step 1: Basic Info → Redis =====
@@ -46,12 +50,12 @@ public class CustomerAuthService : ICustomerAuthService
         // Check email uniqueness
         var emailExists = await _db.Customers.AnyAsync(c => c.Email == request.Email);
         if (emailExists)
-            throw new InvalidOperationException("الإيميل مسجل مسبقاً");
+            throw new InvalidOperationException("Email already registered");
 
         var normalizedPhone = request.PhoneNumber.Replace("+", "").Replace(" ", "").Replace("-", "");
 
         if (normalizedPhone.Length < 10 || normalizedPhone.Length > 15 || !normalizedPhone.All(char.IsDigit))
-            throw new ArgumentException("رقم الهاتف غير صحيح");
+            throw new ArgumentException("Invalid phone number");
         var sessionId = Guid.NewGuid().ToString();
 
         var sessionData = JsonSerializer.Serialize(new
@@ -80,31 +84,31 @@ public class CustomerAuthService : ICustomerAuthService
         var step1Json = await _redis.GetAsync($"register:step1:{request.SessionId}");
 
         if (string.IsNullOrEmpty(step1Json))
-            throw new InvalidOperationException("انتهت صلاحية الجلسة، ابدأ من الأول");
+            throw new InvalidOperationException("Session expired, please start over");
 
         var step1 = JsonSerializer.Deserialize<Step1Data>(step1Json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
-            ?? throw new InvalidOperationException("بيانات الجلسة غير صالحة");
+            ?? throw new InvalidOperationException("Invalid session data");
 
         // 2) Validate
         if (request.Password != request.ConfirmPassword)
-            throw new ArgumentException("كلمات المرور غير متطابقة");
+            throw new ArgumentException("Passwords do not match");
 
         ValidatePasswordStrength(request.Password);
 
         if (!DateTime.TryParse(request.DateOfBirth, out var dateOfBirth) || dateOfBirth > DateTime.UtcNow)
-            throw new ArgumentException("تاريخ ميلاد غير صحيح");
+            throw new ArgumentException("Invalid date of birth");
 
         if (!DateTime.TryParse(request.PassportExpiryDate, out var passportExpiry) || passportExpiry <= DateTime.UtcNow)
-            throw new ArgumentException("جواز السفر منتهي الصلاحية");
+            throw new ArgumentException("Passport is expired");
 
         var usernameExists = await _db.Customers.AnyAsync(c => c.Username == request.Username);
         if (usernameExists)
-            throw new InvalidOperationException("اسم المستخدم مستخدم مسبقاً");
+            throw new InvalidOperationException("Username is already taken");
 
         // Double-check email (race condition protection)
         var emailExists = await _db.Customers.AnyAsync(c => c.Email == step1.Email);
         if (emailExists)
-            throw new InvalidOperationException("الإيميل مسجل مسبقاً");
+            throw new InvalidOperationException("Email already registered");
 
         // 3) Save temp file for OCR + Cloudinary upload
         var tempDir = Path.Combine(Path.GetTempPath(), "travora_ocr");
@@ -132,7 +136,7 @@ public class CustomerAuthService : ICustomerAuthService
 
             // 5) Determine verification status
             if (ocrResult.ValidScore < 65)
-                throw new InvalidOperationException("صورة جواز السفر غير واضحة الملامح أو غير صالحة. يرجى رفع صورة أكثر وضوحاً.");
+                throw new InvalidOperationException("Passport image is unclear or invalid. Please upload a clearer image.");
 
             bool passportVerified = ocrResult.Error == null && ocrResult.ValidScore >= 85;
 
@@ -142,14 +146,14 @@ public class CustomerAuthService : ICustomerAuthService
             if (passportVerified)
             {
                 if (extractedExpiry <= DateTime.UtcNow)
-                    throw new InvalidOperationException("بيانات جواز السفر المرفوع منتهية الصلاحية");
+                    throw new InvalidOperationException("The uploaded passport data is expired");
 
                 if (!string.IsNullOrWhiteSpace(ocrResult.Number))
                 {
                     bool exists = await _db.Customers.AnyAsync(c => c.PassportNumber == ocrResult.Number);
 
                     if (exists)
-                        throw new InvalidOperationException("رقم جواز السفر المستخرج مسجل بالفعل في النظام.");
+                        throw new InvalidOperationException("The extracted passport number is already registered in the system.");
                 }
             }
 
@@ -248,8 +252,8 @@ public class CustomerAuthService : ICustomerAuthService
                         UserId = admin.AdminId,
                         UserType = UserType.Admin,
                         NotificationType = NotificationType.SystemAlert,
-                        Title = "مراجعة جواز يدوية مطلوبة",
-                        Message = $"العميل {step1.FirstName} {step1.LastName} يحتاج مراجعة جواز يدوية",
+                        Title = "Manual Passport Review Required",
+                        Message = $"Customer {step1.FirstName} {step1.LastName} needs a manual passport review",
                         NotificationChannel = NotificationChannel.InApp
                     });
                 }
@@ -276,7 +280,9 @@ public class CustomerAuthService : ICustomerAuthService
             // 10) Welcome email + Verify Email OTP (Only if verified)
             if (accountStatus == CustomerAccountStatus.Verified)
             {
-                var otp = Random.Shared.Next(100000, 999999).ToString();
+                // When you stop the Fixed OTP, uncomment this line and delete the one below it
+                // var otp = Random.Shared.Next(100000, 999999).ToString();
+                var otp = !string.IsNullOrEmpty(_fixedOtp) ? _fixedOtp : Random.Shared.Next(100000, 999999).ToString();
                 await _redis.SetAsync($"email_verify:{step1.Email}", otp, TimeSpan.FromHours(24));
 
                 _ = Task.Run(async () =>
@@ -285,8 +291,8 @@ public class CustomerAuthService : ICustomerAuthService
                     {
                         await _emailService.SendEmailAsync(
                             step1.Email,
-                            "مرحباً بك في Travora - تفعيل الحساب",
-                            $"<h2>أهلاً {step1.FirstName} 👋</h2><p>تم إنشاء حسابك بنجاح.</p><p>كود تفعيل الإيميل هو: <b style='font-size:24px;letter-spacing:4px;'>{otp}</b></p>");
+                            "Welcome to Travora - Account Activation",
+                            $"<h2>Hello {step1.FirstName} 👋</h2><p>Your account has been created successfully.</p><p>Email activation code is: <b style='font-size:24px;letter-spacing:4px;'>{otp}</b></p>");
                     }
                     catch { /* Email failure should not block registration */ }
                 });
@@ -296,8 +302,8 @@ public class CustomerAuthService : ICustomerAuthService
             await _redis.DeleteAsync($"register:step1:{request.SessionId}");
 
             var responseMessage = accountStatus == CustomerAccountStatus.PendingVerification 
-                ? "الحساب الآن تحت المراجعة. سيتم إرسال رسالة عند تفعيل الحساب" 
-                : "تم إنشاء الحساب بنجاح! يرجى مراجعة بريدك الإلكتروني لتفعيل الحساب.";
+                ? "Account is now under review. A message will be sent once the account is activated" 
+                : "Account created successfully! Please check your email to activate the account.";
 
             return new RegisterResponse
             {
@@ -325,14 +331,14 @@ public class CustomerAuthService : ICustomerAuthService
 
         if (customer == null || !BCrypt.Net.BCrypt.Verify(request.Password, customer.PasswordHash))
         {
-            await LogLogin(customer?.CustomerId, UserType.Customer, LoginStatus.Failed, "بيانات غير صحيحة", ipAddress, userAgent);
-            throw new UnauthorizedAccessException("بيانات غير صحيحة");
+            await LogLogin(customer?.CustomerId, UserType.Customer, LoginStatus.Failed, "Incorrect data", ipAddress, userAgent);
+            throw new UnauthorizedAccessException("Incorrect data");
         }
 
         if (!customer.IsActive)
         {
-            await LogLogin(customer.CustomerId, UserType.Customer, LoginStatus.Failed, "الحساب موقوف", ipAddress, userAgent);
-            throw new UnauthorizedAccessException("الحساب موقوف");
+            await LogLogin(customer.CustomerId, UserType.Customer, LoginStatus.Failed, "Account suspended", ipAddress, userAgent);
+            throw new UnauthorizedAccessException("Account suspended");
         }
 
         await LogLogin(customer.CustomerId, UserType.Customer, LoginStatus.Success, null, ipAddress, userAgent);
@@ -389,10 +395,12 @@ public class CustomerAuthService : ICustomerAuthService
 
         if (customer == null)
         {
-            throw new KeyNotFoundException("الإيميل غير مسجل في النظام");
+            throw new KeyNotFoundException("Email is not registered in the system");
         }
 
-        var otp = Random.Shared.Next(100000, 999999).ToString();
+        // TODO: When you stop the Fixed OTP, uncomment this line and delete the one below it
+        // var otp = Random.Shared.Next(100000, 999999).ToString();
+        var otp = !string.IsNullOrEmpty(_fixedOtp) ? _fixedOtp : Random.Shared.Next(100000, 999999).ToString();
 
         await _redis.SetAsync($"otp:{email}", otp, TimeSpan.FromMinutes(10));
 
@@ -402,13 +410,13 @@ public class CustomerAuthService : ICustomerAuthService
             {
                 await _emailService.SendEmailAsync(
                     email,
-                    "كود التحقق - Travora",
-                    $"<h2>كود التحقق الخاص بك</h2><p style='font-size:24px;font-weight:bold;letter-spacing:8px'>{otp}</p><p>الكود صالح لمدة 10 دقائق</p>");
+                    "Verification Code - Travora",
+                    $"<h2>Your Verification Code</h2><p style='font-size:24px;font-weight:bold;letter-spacing:8px'>{otp}</p><p>Code is valid for 10 minutes</p>");
             }
             catch { }
         });
 
-        return new { success = true, message = "تم إرسال كود التحقق على إيميلك" };
+        return new { success = true, message = "Verification code has been sent to your email" };
     }
 
     // ===== Verify OTP =====
@@ -417,10 +425,10 @@ public class CustomerAuthService : ICustomerAuthService
         var storedOtp = await _redis.GetAsync($"otp:{request.Email}");
 
         if (string.IsNullOrEmpty(storedOtp))
-            throw new InvalidOperationException("انتهت صلاحية الكود");
+            throw new InvalidOperationException("Code has expired");
 
         if (storedOtp != request.Otp)
-            throw new ArgumentException("كود غير صحيح");
+            throw new ArgumentException("Incorrect code");
 
         var resetToken = Guid.NewGuid().ToString();
         await _redis.SetAsync($"reset:{resetToken}", request.Email, TimeSpan.FromMinutes(15));
@@ -439,18 +447,18 @@ public class CustomerAuthService : ICustomerAuthService
         var email = await _redis.GetAsync($"reset:{request.ResetToken}");
 
         if (string.IsNullOrEmpty(email))
-            throw new InvalidOperationException("انتهت صلاحية الطلب");
+            throw new InvalidOperationException("Request has expired");
 
         if (request.NewPassword != request.ConfirmPassword)
-            throw new ArgumentException("كلمات المرور غير متطابقة");
+            throw new ArgumentException("Passwords do not match");
 
         ValidatePasswordStrength(request.NewPassword);
 
         var customer = await _db.Customers.FirstOrDefaultAsync(c => c.Email == email)
-            ?? throw new KeyNotFoundException("العميل غير موجود");
+            ?? throw new KeyNotFoundException("Customer not found");
 
         if (BCrypt.Net.BCrypt.Verify(request.NewPassword, customer.PasswordHash))
-            throw new ArgumentException("كلمة المرور الجديدة لا يمكن أن تكون نفس كلمة المرور الحالية");
+            throw new ArgumentException("New password cannot be the same as the current password");
 
         customer.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
         customer.UpdatedAt = DateTime.UtcNow;
@@ -458,7 +466,7 @@ public class CustomerAuthService : ICustomerAuthService
 
         await _redis.DeleteAsync($"reset:{request.ResetToken}");
 
-        return new { success = true, message = "تم تغيير كلمة المرور بنجاح" };
+        return new { success = true, message = "Password changed successfully" };
     }
 
     // ===== Verify Email =====
@@ -467,13 +475,13 @@ public class CustomerAuthService : ICustomerAuthService
         var storedOtp = await _redis.GetAsync($"email_verify:{request.Email}");
 
         if (string.IsNullOrEmpty(storedOtp))
-            throw new InvalidOperationException("انتهت صلاحية الكود أو الإيميل غير صحيح");
+            throw new InvalidOperationException("Code has expired or email is incorrect");
 
         if (storedOtp != request.Otp)
-            throw new ArgumentException("الكود غير صحيح");
+            throw new ArgumentException("Incorrect code");
 
         var customer = await _db.Customers.FirstOrDefaultAsync(c => c.Email == request.Email)
-            ?? throw new KeyNotFoundException("العميل غير موجود");
+            ?? throw new KeyNotFoundException("Customer not found");
 
         customer.EmailVerified = true;
         customer.UpdatedAt = DateTime.UtcNow;
@@ -481,19 +489,21 @@ public class CustomerAuthService : ICustomerAuthService
 
         await _redis.DeleteAsync($"email_verify:{request.Email}");
 
-        return new { success = true, message = "تم تفعيل الإيميل بنجاح" };
+        return new { success = true, message = "Email activated successfully" };
     }
 
     // ===== Resend Verify Email =====
     public async Task<object> ResendVerificationEmailAsync(ResendVerifyEmailRequest request)
     {
         var customer = await _db.Customers.FirstOrDefaultAsync(c => c.Email == request.Email)
-            ?? throw new KeyNotFoundException("العميل غير موجود");
+            ?? throw new KeyNotFoundException("Customer not found");
 
         if (customer.EmailVerified)
-            throw new InvalidOperationException("الإيميل مفعل بالفعل");
+            throw new InvalidOperationException("Email already activated");
 
-        var otp = Random.Shared.Next(100000, 999999).ToString();
+        // TODO: When you stop the Fixed OTP, uncomment this line and delete the one below it
+        // var otp = Random.Shared.Next(100000, 999999).ToString();
+        var otp = !string.IsNullOrEmpty(_fixedOtp) ? _fixedOtp : Random.Shared.Next(100000, 999999).ToString();
         await _redis.SetAsync($"email_verify:{request.Email}", otp, TimeSpan.FromHours(24));
 
         _ = Task.Run(async () =>
@@ -502,13 +512,13 @@ public class CustomerAuthService : ICustomerAuthService
             {
                 await _emailService.SendEmailAsync(
                     request.Email,
-                    "كود تفعيل الإيميل - Travora",
-                    $"<h2>أهلاً {customer.Firstname} 👋</h2><p>كود تفعيل الإيميل هو: <b style='font-size:24px;letter-spacing:4px;'>{otp}</b></p>");
+                    "Email Activation Code - Travora",
+                    $"<h2>Hello {customer.Firstname} 👋</h2><p>Email activation code is: <b style='font-size:24px;letter-spacing:4px;'>{otp}</b></p>");
             }
             catch { }
         });
 
-        return new { success = true, message = "تم إرسال كود جديد على إيميلك" };
+        return new { success = true, message = "A new code has been sent to your email" };
     }
 
     // ===== Private Helpers =====
@@ -516,15 +526,15 @@ public class CustomerAuthService : ICustomerAuthService
     private static void ValidatePasswordStrength(string password)
     {
         if (password.Length < 8)
-            throw new ArgumentException("كلمة المرور 8 أحرف على الأقل");
+            throw new ArgumentException("Password must be at least 8 characters");
         if (!password.Any(char.IsUpper))
-            throw new ArgumentException("كلمة المرور لازم تحتوي على حرف كبير");
+            throw new ArgumentException("Password must contain an uppercase letter");
         if (!password.Any(char.IsLower))
-            throw new ArgumentException("كلمة المرور لازم تحتوي على حرف صغير");
+            throw new ArgumentException("Password must contain a lowercase letter");
         if (!password.Any(char.IsDigit))
-            throw new ArgumentException("كلمة المرور لازم تحتوي على رقم");
+            throw new ArgumentException("Password must contain a number");
         if (!password.Any(c => !char.IsLetterOrDigit(c)))
-            throw new ArgumentException("كلمة المرور لازم تحتوي على رمز (!@#$%^&*)");
+            throw new ArgumentException("Password must contain a symbol (!@#$%^&*)");
     }
 
     private async Task<string> CreateRefreshToken(int userId, UserType userType)

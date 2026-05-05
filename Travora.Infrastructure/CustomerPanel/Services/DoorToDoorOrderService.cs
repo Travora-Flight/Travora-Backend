@@ -99,7 +99,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         var diff = departure - DateTime.UtcNow;
         if (diff.TotalHours < 12)
         {
-            return new ValidateFlightResponse { IsValid = false, ErrorMessage = "لا يمكن الحجز قبل أقل من 12 ساعة من الإقلاع" };
+            return new ValidateFlightResponse { IsValid = false, ErrorMessage = "Booking must be made at least 12 hours before departure" };
         }
 
         var bookingDeadlineUtc = departure.AddHours(-12);
@@ -137,7 +137,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         }
 
         if (request.PassportNumber == draft.PassengerInfo?.PassportNumber)
-            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "لا يمكنك إضافة نفسك كمرافق" };
+            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "You cannot add yourself as a companion" };
 
         // 2. Validate companion ticket with airline API
         var airlineReq = new AirlineValidateTicketRequest
@@ -164,7 +164,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         //    but double checking if the simulation ignores it)
         if (flightData.FlightNumber != draft.FlightInfo.FlightNumber)
         {
-            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "المرافق ليس على نفس الرحلة" };
+            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "The companion is not on the same flight" };
         }
 
         // 4. Upload passport image
@@ -229,10 +229,10 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
 
         var tasks = new List<(string TicketNumber, Task<AirlineBaggageCheckResponse> Task)>();
 
-        // العميل الأساسي
+        // Primary customer
         tasks.Add((draft.TicketNumber, _airlineService.GetBaggageCountAsync(draft.TicketNumber, cancellationToken)));
 
-        // المرافقين
+        // Companions
         foreach (var comp in draft.Companions)
         {
             tasks.Add((comp.TicketNumber, _airlineService.GetBaggageCountAsync(comp.TicketNumber, cancellationToken)));
@@ -254,7 +254,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
             {
                 IsValid = false,
                 ErrorCode = "BaggageCountMismatch",
-                ErrorMessage = "عدد الشنط المدخل لا يطابق السجل لدى شركة الطيران",
+                ErrorMessage = "The entered number of bags does not match the airline records",
                 Expected = totalFromAirline,
                 Actual = draft.BaggageCount,
                 TotalBaggageCount = totalFromAirline,
@@ -265,7 +265,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         draft.TotalBaggageCount = totalFromAirline;
         draft.BaggageValidated = true;
 
-        // توزيع الشنط على المرافقين
+        // Distributing bags to companions
         foreach (var comp in draft.Companions)
         {
             var companionBags = breakdown.FirstOrDefault(b => b.TicketNumber == comp.TicketNumber);
@@ -286,17 +286,17 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
     {
         var draft = await _draftOrderService.GetDraftOrderAsync(customerId.ToString(), cancellationToken);
         if (draft == null || draft.FlightInfo == null)
-            return new ResolveLocationResponse { IsValid = false, ErrorMessage = "الجلسة غير موجودة" };
+            return new ResolveLocationResponse { IsValid = false, ErrorMessage = "Session not found" };
 
         if (string.Equals(request.LocationType, "delivery", StringComparison.OrdinalIgnoreCase))
         {
             if (string.IsNullOrEmpty(draft.PickupFormattedAddress))
-                return new ResolveLocationResponse { IsValid = false, ErrorMessage = "يجب إكمال خطوة تحديد موقع الاستلام أولاً" };
+                return new ResolveLocationResponse { IsValid = false, ErrorMessage = "Pickup location must be specified first" };
         }
         else // pickup
         {
             if (!draft.BaggageValidated)
-                return new ResolveLocationResponse { IsValid = false, ErrorMessage = "يجب إكمال خطوة التحقق من الشنط أولاً" };
+                return new ResolveLocationResponse { IsValid = false, ErrorMessage = "Baggage validation must be completed first" };
         }
 
         var result = await _geocodingService.ReverseGeocodeAsync(request.Latitude, request.Longitude, cancellationToken);
@@ -348,21 +348,21 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
             return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Draft order not found. Please start from Step 1." };
 
         if (string.IsNullOrEmpty(draft.PickupFormattedAddress))
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "يجب إكمال خطوة تحديد موقع الاستلام أولاً" };
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Pickup location must be specified first" };
 
         if (string.IsNullOrEmpty(draft.DeliveryFormattedAddress))
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "يجب إكمال خطوة تحديد موقع التسليم أولاً" };
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Delivery location must be specified first" };
 
         var flightDate = draft.FlightInfo.DepartureTimeUtc.Date;
         var today = DateTime.UtcNow.Date;
         if (date.Date == null)
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "يرجى اختيار يوم" };
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Please select a date" };
 
         if (date.Date < today)
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "لا يمكن اختيار يوم في الماضي" };
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Cannot select a date in the past" };
 
         if (date.Date > flightDate)
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "لا يمكن الحجز بعد يوم الرحلة" };
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Booking cannot be made after the flight date" };
 
         var response = new AvailableSlotsResponse();
         TimeSpan? cutoffTimeSpan = null;
@@ -372,7 +372,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
             var cutoffUtc = draft.FlightInfo.DepartureTimeUtc.AddHours(-12);
             cutoffTimeSpan = cutoffUtc.TimeOfDay;
             response.CutoffTime = cutoffTimeSpan.Value.ToString(@"hh\:mm");
-            response.Note = $"آخر slot متاح يجب أن ينتهي قبل {response.CutoffTime}";
+            response.Note = $"The last available slot must end before {response.CutoffTime}";
         }
 
         var allDrivers = await _context.Employees
@@ -457,7 +457,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
             return new SetCustomsTypeResponse { Success = false, ErrorMessage = "No active draft order found." };
 
         if (string.IsNullOrEmpty(draft.SelectedDeliverySlot))
-            return new SetCustomsTypeResponse { Success = false, ErrorMessage = "يجب إكمال خطوة اختيار موعد التسليم أولاً" };
+            return new SetCustomsTypeResponse { Success = false, ErrorMessage = "Delivery slot must be selected first" };
 
         string normalizedType = request.CustomsType?.Trim().ToLower().Replace("_", "").Replace(" ", "") ?? "";
         
@@ -469,7 +469,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
             { 
                 Success = true, 
                 CustomsType = "GreenField", 
-                Message = "تم اختيار الخط الأخضر، لا توجد رسوم جمركية" 
+                Message = "Green line selected, no customs fees apply" 
             };
         }
         else if (normalizedType == "redfield")
@@ -480,12 +480,12 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
             { 
                 Success = true, 
                 CustomsType = "RedField", 
-                Message = "تم اختيار الخط الأحمر، يرجى إضافة المنتجات الجمركية" 
+                Message = "Red line selected, please add customs items" 
             };
         }
         else
         {
-            return new SetCustomsTypeResponse { Success = false, ErrorMessage = "نوع الجمارك غير صحيح" };
+            return new SetCustomsTypeResponse { Success = false, ErrorMessage = "Invalid customs type" };
         }
     }
 
@@ -493,7 +493,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
     {
         var result = await _airlineService.LookupCustomsProductAsync(productName, cancellationToken);
         if (!result.Found || result.Product == null)
-            return new CustomsLookupResponse { Found = false, Message = "المنتج غير موجود، يرجى إدخال البيانات يدوياً" };
+            return new CustomsLookupResponse { Found = false, Message = "Product not found, please enter details manually" };
 
         return new CustomsLookupResponse
         {
@@ -511,12 +511,12 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
             return new AddCustomsItemResponse { Success = false, ErrorMessage = "No active draft order found." };
 
         if (string.IsNullOrEmpty(draft.CustomsType))
-            return new AddCustomsItemResponse { Success = false, ErrorMessage = "يجب إكمال خطوة تحديد نوع الجمارك أولاً" };
+            return new AddCustomsItemResponse { Success = false, ErrorMessage = "Customs type must be specified first" };
 
         if (draft.CustomsType != "RedField")
-            return new AddCustomsItemResponse { Success = false, ErrorMessage = "لا يمكن إضافة منتجات في الخط الأخضر" };
+            return new AddCustomsItemResponse { Success = false, ErrorMessage = "Cannot add items to the Green line" };
 
-        // جيب الـ rate تلقائياً من الـ API
+        // Get the rate automatically from the API
         var lookupResult = await _airlineService.LookupCustomsProductAsync(request.ItemDescription, cancellationToken);
         decimal customsRate = lookupResult.Found && lookupResult.Product != null
             ? lookupResult.Product.CustomsRate
@@ -560,7 +560,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
             return new InvoiceResponse { IsValid = false, ErrorMessage = "Draft order not found." };
 
         if (string.IsNullOrEmpty(draft.SelectedDeliverySlot))
-            return new InvoiceResponse { IsValid = false, ErrorMessage = "يجب إكمال خطوة اختيار موعد التسليم أولاً" };
+            return new InvoiceResponse { IsValid = false, ErrorMessage = "Delivery slot must be selected first" };
 
         var pkg = await _context.Packages.FirstOrDefaultAsync(p => p.PackageName == PackageNames.DoorToDoor, cancellationToken);
         
@@ -625,15 +625,15 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
             return new ConfirmOrderResponse { Success = false, ErrorMessage = "Draft order not found" };
 
         if (!draft.BaggageValidated)
-            return new ConfirmOrderResponse { Success = false, ErrorMessage = "يجب إكمال خطوة التحقق من الشنط أولاً" };
+            return new ConfirmOrderResponse { Success = false, ErrorMessage = "Baggage validation must be completed first" };
         if (string.IsNullOrEmpty(draft.PickupFormattedAddress))
-            return new ConfirmOrderResponse { Success = false, ErrorMessage = "يجب إكمال خطوة تحديد موقع الاستلام أولاً" };
+            return new ConfirmOrderResponse { Success = false, ErrorMessage = "Pickup location must be specified first" };
         if (string.IsNullOrEmpty(draft.SelectedSlot))
-            return new ConfirmOrderResponse { Success = false, ErrorMessage = "يجب إكمال خطوة اختيار موعد الاستلام أولاً" };
+            return new ConfirmOrderResponse { Success = false, ErrorMessage = "Pickup slot must be selected first" };
         if (string.IsNullOrEmpty(draft.DeliveryFormattedAddress))
-            return new ConfirmOrderResponse { Success = false, ErrorMessage = "يجب إكمال خطوة تحديد موقع التسليم أولاً" };
+            return new ConfirmOrderResponse { Success = false, ErrorMessage = "Delivery location must be specified first" };
         if (string.IsNullOrEmpty(draft.SelectedDeliverySlot))
-            return new ConfirmOrderResponse { Success = false, ErrorMessage = "يجب إكمال خطوة اختيار موعد التسليم أولاً" };
+            return new ConfirmOrderResponse { Success = false, ErrorMessage = "Delivery slot must be selected first" };
 
         var strategy = _context.Database.CreateExecutionStrategy();
         
@@ -648,7 +648,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
 
                 string flightNo = draft.FlightInfo.FlightNumber;
 
-                // 1) استخرج IATA codes من draft
+                // 1) Extract IATA codes from draft
                 var depIata = (draft.FlightInfo.DepartureIataCode
                     ?? draft.FlightInfo.DepartureAirport
                     ?? "").Trim();
@@ -656,11 +656,11 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
                     ?? draft.FlightInfo.ArrivalAirport
                     ?? "").Trim();
 
-                // 2) ابحث عن الرحلة بالـ FlightNumber
+                // 2) Find flight by FlightNumber
                 var flight = await _context.Flights
                     .FirstOrDefaultAsync(f => f.FlightNumber == flightNo, cancellationToken);
 
-                // 3) لو جديدة → أنشئها
+                // 3) If new → create it
                 if (flight == null)
                 {
                     flight = new Domain.Entities.Flight
@@ -680,7 +680,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
                     };
                     _context.Flights.Add(flight);
                 }
-                // 4) لو موجودة → حدّث البيانات
+                // 4) If exists → update data
                 else
                 {
                     flight.DepartureIataCode = depIata;
@@ -693,7 +693,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
                     flight.UpdatedAt = DateTime.UtcNow;
                 }
 
-                // 5) اربط بالـ Airport من جدول Airports
+                // 5) Link to Airport from Airports table
                 var departureAirport = await _context.Airports
                     .FirstOrDefaultAsync(a => a.CodeIataAirport == depIata, cancellationToken);
                 if (departureAirport != null)
@@ -704,7 +704,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
                 if (arrivalAirport != null)
                     flight.ArrivalAirportId = arrivalAirport.AirportId;
 
-                // 6) احفظ
+                // 6) Save
                 await _context.SaveChangesAsync(cancellationToken);
 
                 var pickupLocation = new Domain.Entities.Location
@@ -903,10 +903,10 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
                     }
                     else if (packageService.ExecutionPhase == Domain.Enums.ExecutionPhase.AirportCheckin)
                     {
-                        // وقت تقريبي — هيتحدد فعلياً لما Driver يعمل Complete على Pickup
+                        // Approximate time — will be actually determined when the Driver completes Pickup
                         scheduledStart = draft.FlightInfo.DepartureTimeUtc.AddHours(-3);
                         scheduledEnd = draft.FlightInfo.DepartureTimeUtc.AddHours(-1);
-                        // مش بيتعمله assign — بيفضل Pending
+                        // No assignment made — remains Pending
                     }
                     else // Delivery
                     {
@@ -915,7 +915,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
                         var slotEnd = slotParts[1] == "24:00" ? TimeSpan.FromHours(23).Add(TimeSpan.FromMinutes(59)) : TimeSpan.Parse(slotParts[1]);
                         scheduledStart = draft.SelectedDeliverySlotDate!.Value.Date + slotStart;
                         scheduledEnd = draft.SelectedDeliverySlotDate!.Value.Date + slotEnd;
-                        // هيتعمله assign أوتوماتيك لما BaggageHandler يكمل AirportCheckin
+                        // Will be automatically assigned when BaggageHandler completes AirportCheckin
                     }
 
                     _context.OrderServices.Add(new Domain.Entities.OrderService
@@ -980,7 +980,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
             throw new Exception("Draft order not found. Please start from Step 1.");
 
         if (string.IsNullOrEmpty(draft.SelectedSlot))
-            throw new Exception("يجب إكمال خطوة اختيار موعد الاستلام أولاً");
+            throw new Exception("Pickup slot must be selected first");
 
         var arrivalTimeUtc = draft.FlightInfo.ArrivalTimeUtc ?? draft.FlightInfo.DepartureTimeUtc.AddHours(4);
         var arrivalDate = arrivalTimeUtc.Date;
@@ -988,10 +988,10 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         var earliestDelivery = arrivalTimeUtc.AddHours(1);
 
         if (date.Date < arrivalDate)
-            throw new Exception("لا يمكن اختيار يوم قبل يوم الوصول");
+            throw new Exception("Cannot select a date before the arrival date");
 
         if (date.Date > maxDeliveryDate)
-            throw new Exception("لا يمكن الحجز بعد يومين من تاريخ الوصول");
+            throw new Exception("Cannot book more than two days after arrival");
 
         var response = new AvailableSlotsResponse();
         TimeSpan? earliestTimeSpan = null;
@@ -999,7 +999,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         if (date.Date == arrivalDate)
         {
             earliestTimeSpan = earliestDelivery.TimeOfDay;
-            response.Note = $"أقرب موعد تسليم متاح بعد {earliestTimeSpan.Value.ToString(@"hh\:mm")}";
+            response.Note = $"Nearest available delivery after {earliestTimeSpan.Value.ToString(@"hh\:mm")}";
         }
 
         var allDrivers = await _context.Employees
@@ -1022,7 +1022,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
 
             bool isAvailable = true;
 
-            // لو نفس يوم الوصول — السلوت لازم يبدأ بعد الوصول بساعة
+            // If same day as arrival — slot must start one hour after arrival
             if (earliestTimeSpan.HasValue && start < earliestTimeSpan.Value)
             {
                 isAvailable = false;
@@ -1091,8 +1091,8 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
                     UserId = driver.EmployeeId,
                     UserType = Domain.Enums.UserType.Employee,
                     NotificationType = Domain.Enums.NotificationType.OrderUpdated,
-                    Title = "تم تعيينك على طلب جديد (مؤكد الدفع)",
-                    Message = $"طلب استلام شنط - الموعد: {service.ScheduledStartTime:dd/MM hh:mm tt}",
+                    Title = "You have been assigned to a new order (Payment Confirmed)",
+                    Message = $"Luggage Pickup Order - Time: {service.ScheduledStartTime:dd/MM hh:mm tt}",
                     NotificationChannel = Domain.Enums.NotificationChannel.InApp,
                     OrderId = orderId
                 });
@@ -1132,7 +1132,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
     {
         var package = await _context.Packages
             .FirstOrDefaultAsync(p => p.PackageName == packageName, cancellationToken)
-            ?? throw new InvalidOperationException($"باكيج {packageName} مش موجود في الـ DB");
+            ?? throw new InvalidOperationException($"Package {packageName} not found in DB");
 
         var isTicketUsed = await _context.Orders
             .AnyAsync(o => o.TicketNumber == ticketNumber 
@@ -1140,6 +1140,6 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
                         && o.OrderStatus != Domain.Enums.OrderStatus.Cancelled, cancellationToken);
 
         if (isTicketUsed)
-            throw new InvalidOperationException($"هذه التذكرة مستخدمة بالفعل في خدمة {packageName}.");
+            throw new InvalidOperationException($"This ticket is already used in {packageName} service.");
     }
 }

@@ -18,7 +18,7 @@ public class FlightTrackerService : IFlightTrackerService
 
     private const string LiveFlightsCacheKey = "flights:live:all";
     private const string TimetableCachePrefix = "timetable:";
-    private static readonly TimeSpan LiveFlightsTtl = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan GlobalCacheTtl = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan TimetableTtl = TimeSpan.FromMinutes(3);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -42,103 +42,172 @@ public class FlightTrackerService : IFlightTrackerService
     // ========================================================
     // 1) GET /api/v1/flights/live
     // ========================================================
-    public async Task<LiveFlightsResponse> GetLiveFlightsAsync(decimal? lat = null, decimal? lng = null, int? distance = null)
+    public async Task<ViewportFlightsResponse> GetViewportFlightsAsync(
+        decimal minLat, decimal maxLat, decimal minLng, decimal maxLng,
+        bool isZoomedIn = false, decimal? centerLat = null, decimal? centerLng = null, int? distance = null)
     {
-        // Build a unique cache key based on viewport params
-        var cacheKey = (lat.HasValue && lng.HasValue && distance.HasValue)
-            ? $"flights:live:{lat}:{lng}:{distance}"
-            : LiveFlightsCacheKey;
+        var flightsDict = new Dictionary<string, CachedFlight>(StringComparer.OrdinalIgnoreCase);
 
-        // 1) Try Redis cache
-        var cached = await SafeCacheGet(cacheKey);
+        var cached = await SafeCacheGet(LiveFlightsCacheKey);
         if (!string.IsNullOrEmpty(cached))
         {
-            var cachedFlights = JsonSerializer.Deserialize<List<LiveFlightDto>>(cached, JsonOptions);
+            var cachedFlights = JsonSerializer.Deserialize<List<CachedFlight>>(cached, JsonOptions);
             if (cachedFlights != null)
-                return new LiveFlightsResponse { Count = cachedFlights.Count, Flights = cachedFlights };
+            {
+                foreach(var f in cachedFlights)
+                {
+                    flightsDict[f.FlightIata] = f;
+                }
+            }
         }
 
-        // 2) Call Aviation Edge /flights
-        try
+        string url;
+
+        if (isZoomedIn && centerLat.HasValue && centerLng.HasValue && distance.HasValue)
         {
-            var client = _httpClientFactory.CreateClient("AviationEdge");
-            var url = $"{_baseUrl}/flights?key={_apiKey}&limit=300";
-
-            // Add viewport filter params if provided
-            if (lat.HasValue && lng.HasValue && distance.HasValue)
-                url += $"&lat={lat}&lng={lng}&distance={distance}";
-
-            var response = await client.GetAsync(url);
-
-
-            if (!response.IsSuccessStatusCode)
+            // Zoomed-in: fetch only flights near this area, do NOT overwrite global cache
+            url = $"{_baseUrl}/flights?key={_apiKey}&lat={centerLat}&lng={centerLng}&distance={distance}&limit=200";
+            try
             {
-                var errBody = await response.Content.ReadAsStringAsync();
-                return new LiveFlightsResponse();
-            }
-
-            var json = await response.Content.ReadAsStringAsync();
-
-            // Check if response is an error object instead of array
-            if (json.TrimStart().StartsWith("{"))
-            {
-                return new LiveFlightsResponse();
-            }
-
-            var rawFlights = JsonSerializer.Deserialize<List<JsonElement>>(json, JsonOptions);
-
-            if (rawFlights == null || rawFlights.Count == 0)
-            {
-                return new LiveFlightsResponse();
-            }
-
-            // 3) Map — Bulk API uses "geography" + "speed" at top level (NOT flightPositions)
-            //    Also uses "iataCode" for airports (not "iataNumber")
-            var flights = new List<LiveFlightDto>();
-            foreach (var f in rawFlights)
-            {
-                try
+                var client = _httpClientFactory.CreateClient("AviationEdge");
+                var response = await client.GetAsync(url);
+                if (response.IsSuccessStatusCode)
                 {
-                    var dto = new LiveFlightDto
+                    var json = await response.Content.ReadAsStringAsync();
+                    if (!json.TrimStart().StartsWith("{"))
                     {
-                        FlightIata = GetNestedString(f, "flight", "iataNumber"),
-                        Latitude = GetNestedDecimal(f, "geography", "latitude"),
-                        Longitude = GetNestedDecimal(f, "geography", "longitude"),
-                        Altitude = GetNestedDecimal(f, "geography", "altitude"),
-                        Heading = GetNestedDecimal(f, "geography", "direction"),
-                        Speed = GetNestedDecimal(f, "speed", "horizontal"),
-                        IsOnGround = GetNestedInt(f, "speed", "isGround") == 1,
-                        Status = GetString(f, "status"),
-                        AirlineIata = GetNestedString(f, "airline", "iataCode"),
-                        Registration = GetNestedString(f, "aircraft", "regNumber"),
-                        DepartureIata = GetNestedString(f, "departure", "iataCode"),
-                        ArrivalIata = GetNestedString(f, "arrival", "iataCode"),
-                        ScheduledDeparture = GetNestedString(f, "departure", "scheduledTime"),
-                        ScheduledArrival = GetNestedString(f, "arrival", "scheduledTime")
-                    };
+                        var rawFlights = JsonSerializer.Deserialize<List<JsonElement>>(json, JsonOptions);
+                        if (rawFlights != null)
+                        {
+                            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                            foreach (var f in rawFlights)
+                            {
+                                try
+                                {
+                                    var flightIata = GetNestedString(f, "flight", "iataNumber");
+                                    var airlineIata = GetNestedString(f, "airline", "iataCode");
+                                    var lat = GetNestedDecimal(f, "geography", "latitude");
+                                    var lng = GetNestedDecimal(f, "geography", "longitude");
 
-                    if (!string.IsNullOrEmpty(dto.FlightIata)
-                        && dto.FlightIata != "XXD"
-                        && !string.IsNullOrEmpty(dto.AirlineIata)
-                        && dto.AirlineIata != "XXB"
-                        && dto.Latitude != 0
-                        && dto.Longitude != 0)
-                    {
-                        flights.Add(dto);
+                                    if (!string.IsNullOrEmpty(flightIata) && flightIata != "XXD" &&
+                                        !string.IsNullOrEmpty(airlineIata) && airlineIata != "XXB" &&
+                                        lat != 0 && lng != 0)
+                                    {
+                                        // Merge into dict — do NOT persist to global cache
+                                        flightsDict[flightIata] = new CachedFlight
+                                        {
+                                            FlightIata = flightIata,
+                                            Lat = lat,
+                                            Lng = lng,
+                                            Alt = GetNestedDecimal(f, "geography", "altitude"),
+                                            Hdg = GetNestedDecimal(f, "geography", "direction"),
+                                            Spd = GetNestedDecimal(f, "speed", "horizontal"),
+                                            Gnd = GetNestedInt(f, "speed", "isGround") == 1,
+                                            Sts = GetString(f, "status"),
+                                            Airline = airlineIata,
+                                            Reg = GetNestedString(f, "aircraft", "regNumber"),
+                                            Dep = GetNestedString(f, "departure", "iataCode"),
+                                            Arr = GetNestedString(f, "arrival", "iataCode"),
+                                            LastSeen = now
+                                        };
+                                    }
+                                }
+                                catch { }
+                            }
+                        }
                     }
                 }
-                catch { /* Skip malformed entries */ }
             }
-
-            // 4) Cache in Redis
-            await SafeCacheSet(cacheKey, JsonSerializer.Serialize(flights), LiveFlightsTtl);
-
-            return new LiveFlightsResponse { Count = flights.Count, Flights = flights };
+            catch { }
         }
-        catch (Exception ex)
+        else if (flightsDict.Count == 0)
         {
-            return new LiveFlightsResponse();
+            // Cache miss — fetch global flights and persist to cache
+            url = $"{_baseUrl}/flights?key={_apiKey}&limit=300";
+            try
+            {
+                var client = _httpClientFactory.CreateClient("AviationEdge");
+                var response = await client.GetAsync(url);
+                if (response.IsSuccessStatusCode)
+                {
+                    var json = await response.Content.ReadAsStringAsync();
+                    if (!json.TrimStart().StartsWith("{"))
+                    {
+                        var rawFlights = JsonSerializer.Deserialize<List<JsonElement>>(json, JsonOptions);
+                        if (rawFlights != null && rawFlights.Count > 0)
+                        {
+                            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                            foreach (var f in rawFlights)
+                            {
+                                try
+                                {
+                                    var flightIata = GetNestedString(f, "flight", "iataNumber");
+                                    var airlineIata = GetNestedString(f, "airline", "iataCode");
+                                    var lat = GetNestedDecimal(f, "geography", "latitude");
+                                    var lng = GetNestedDecimal(f, "geography", "longitude");
+
+                                    if (!string.IsNullOrEmpty(flightIata) && flightIata != "XXD" &&
+                                        !string.IsNullOrEmpty(airlineIata) && airlineIata != "XXB" &&
+                                        lat != 0 && lng != 0)
+                                    {
+                                        flightsDict[flightIata] = new CachedFlight
+                                        {
+                                            FlightIata = flightIata,
+                                            Lat = lat,
+                                            Lng = lng,
+                                            Alt = GetNestedDecimal(f, "geography", "altitude"),
+                                            Hdg = GetNestedDecimal(f, "geography", "direction"),
+                                            Spd = GetNestedDecimal(f, "speed", "horizontal"),
+                                            Gnd = GetNestedInt(f, "speed", "isGround") == 1,
+                                            Sts = GetString(f, "status"),
+                                            Airline = airlineIata,
+                                            Reg = GetNestedString(f, "aircraft", "regNumber"),
+                                            Dep = GetNestedString(f, "departure", "iataCode"),
+                                            Arr = GetNestedString(f, "arrival", "iataCode"),
+                                            LastSeen = now
+                                        };
+                                    }
+                                }
+                                catch { }
+                            }
+
+                            // Evict stale flights (older than 5 minutes) and persist global cache
+                            var fiveMinsAgo = now - 300;
+                            var activeFlights = flightsDict.Values.Where(f => f.LastSeen >= fiveMinsAgo).ToList();
+                            await SafeCacheSet(LiveFlightsCacheKey, JsonSerializer.Serialize(activeFlights), GlobalCacheTtl);
+                            flightsDict = activeFlights.ToDictionary(f => f.FlightIata, StringComparer.OrdinalIgnoreCase);
+                        }
+                    }
+                }
+            }
+            catch { }
         }
+
+        var resultFlights = flightsDict.Values
+            .Where(f => f.Lat >= minLat && f.Lat <= maxLat && f.Lng >= minLng && f.Lng <= maxLng)
+            .Select(f => new ViewportFlightDto
+            {
+                Id = f.FlightIata,
+                Lat = f.Lat,
+                Lng = f.Lng,
+                Alt = f.Alt,
+                Hdg = f.Hdg,
+                Spd = f.Spd,
+                Gnd = f.Gnd,
+                Sts = f.Sts,
+                Airline = f.Airline,
+                Reg = f.Reg,
+                Dep = f.Dep,
+                Arr = f.Arr
+            })
+            .ToList();
+
+        return new ViewportFlightsResponse
+        {
+            Count = resultFlights.Count,
+            LastUpdated = DateTime.UtcNow,
+            Flights = resultFlights
+        };
     }
 
     // ========================================================
@@ -148,14 +217,12 @@ public class FlightTrackerService : IFlightTrackerService
     {
         var result = new FlightSearchResponse();
 
-        // 1) Aviation Edge /autocomplete for airports
         try
         {
             var client = _httpClientFactory.CreateClient("AviationEdge");
             var url = $"{_baseUrl}/autocomplete?key={_apiKey}&city={Uri.EscapeDataString(q)}";
 
             var response = await client.GetAsync(url);
-
             if (response.IsSuccessStatusCode)
             {
                 var json = await response.Content.ReadAsStringAsync();
@@ -173,110 +240,104 @@ public class FlightTrackerService : IFlightTrackerService
                                 IataCode = GetString(airport, "codeIataAirport"),
                                 IcaoCode = GetString(airport, "codeIcaoAirport"),
                                 Name = GetString(airport, "nameAirport"),
-                                City = GetString(airport, "nameCountry"),
+                                City = GetString(airport, "nameCity"),   // ✅ nameCity not nameCountry
                                 Latitude = GetDecimal(airport, "latitudeAirport"),
                                 Longitude = GetDecimal(airport, "longitudeAirport")
                             });
                         }
-                        catch { /* Skip malformed */ }
+                        catch { }
                     }
                 }
             }
         }
-        catch { /* Autocomplete failed */ }
+        catch { }
 
-        // 2) If airports found from autocomplete → search flights departing/arriving from them
         if (result.Airports.Any())
         {
             var iataCodes = result.Airports.Select(a => a.IataCode).ToList();
-
-            var cachedForAirports = await SafeCacheGet(LiveFlightsCacheKey);
-            if (!string.IsNullOrEmpty(cachedForAirports))
+            try
             {
-                var liveFlights = JsonSerializer.Deserialize<List<LiveFlightDto>>(cachedForAirports, JsonOptions);
-                if (liveFlights != null)
+                var cached = await SafeCacheGet(LiveFlightsCacheKey);
+                if (!string.IsNullOrEmpty(cached))
                 {
-                    result.Flights = liveFlights
-                        .Where(f =>
-                            iataCodes.Contains(f.DepartureIata, StringComparer.OrdinalIgnoreCase) ||
-                            iataCodes.Contains(f.ArrivalIata, StringComparer.OrdinalIgnoreCase))
-                        .Take(5)
-                        .Select(f => new FlightSearchItem
-                        {
-                            FlightIata = f.FlightIata,
-                            AirlineIata = f.AirlineIata,
-                            Registration = f.Registration,
-                            Status = f.Status,
-                            Altitude = f.Altitude,
-                            DepartureIata = f.DepartureIata,
-                            ArrivalIata = f.ArrivalIata
-                        })
-                        .ToList();
+                    var liveFlights = JsonSerializer.Deserialize<List<CachedFlight>>(cached, JsonOptions);
+                    if (liveFlights != null)
+                    {
+                        result.Flights = liveFlights
+                            .Where(f =>
+                                iataCodes.Contains(f.Dep, StringComparer.OrdinalIgnoreCase) ||
+                                iataCodes.Contains(f.Arr, StringComparer.OrdinalIgnoreCase))
+                            .Take(5)
+                            .Select(f => new FlightSearchItem
+                            {
+                                FlightIata = f.FlightIata,
+                                AirlineIata = f.Airline,
+                                Registration = f.Reg,
+                                Status = f.Sts,
+                                Altitude = f.Alt,
+                                DepartureIata = f.Dep,
+                                ArrivalIata = f.Arr
+                            })
+                            .ToList();
+                    }
                 }
             }
+            catch { }
         }
 
-        // 3) Search in Redis cached live flights by flight number
         try
         {
             var cached = await SafeCacheGet(LiveFlightsCacheKey);
             if (!string.IsNullOrEmpty(cached))
             {
-                var liveFlights = JsonSerializer.Deserialize<List<LiveFlightDto>>(cached, JsonOptions);
+                var liveFlights = JsonSerializer.Deserialize<List<CachedFlight>>(cached, JsonOptions);
                 if (liveFlights != null)
                 {
-                    result.Flights = liveFlights
+                    var matched = liveFlights
                         .Where(f => f.FlightIata.Contains(q, StringComparison.OrdinalIgnoreCase))
                         .Take(5)
                         .Select(f => new FlightSearchItem
                         {
                             FlightIata = f.FlightIata,
-                            AirlineIata = f.AirlineIata,
-                            Registration = f.Registration,
-                            Status = f.Status,
-                            Altitude = f.Altitude,
-                            DepartureIata = f.DepartureIata,
-                            ArrivalIata = f.ArrivalIata
-                        })
-                        .ToList();
+                            AirlineIata = f.Airline,
+                            Registration = f.Reg,
+                            Status = f.Sts,
+                            Altitude = f.Alt,
+                            DepartureIata = f.Dep,
+                            ArrivalIata = f.Arr
+                        });
+
+                    foreach(var m in matched)
+                    {
+                        if (!result.Flights.Any(f => f.FlightIata == m.FlightIata))
+                        {
+                            result.Flights.Add(m);
+                        }
+                    }
                 }
             }
         }
-        catch { /* Cache miss */ }
+        catch { }
 
-        // 3) If no flights found in cache, call Aviation Edge API directly
         if (result.Flights.Count == 0)
         {
             try
             {
                 var client = _httpClientFactory.CreateClient("AviationEdge");
-                string url;
-
-                // 2 letters only → could be airline code (TK, LH, FR)
-                if (q.Length == 2 && q.All(char.IsLetter))
-                {
-                    url = $"{_baseUrl}/flights?key={_apiKey}&airlineIata={q.ToUpper()}&limit=10";
-                }
-                else
-                {
-                    url = $"{_baseUrl}/flights?key={_apiKey}&flightIata={q.ToUpper()}";
-                }
+                string url = q.Length == 2 && q.All(char.IsLetter)
+                    ? $"{_baseUrl}/flights?key={_apiKey}&airlineIata={q.ToUpper()}&limit=10"
+                    : $"{_baseUrl}/flights?key={_apiKey}&flightIata={q.ToUpper()}";
 
                 var response = await client.GetAsync(url);
-
                 if (response.IsSuccessStatusCode)
                 {
                     var json = await response.Content.ReadAsStringAsync();
-
-                    // Skip if API returned error object
                     if (!json.TrimStart().StartsWith("{"))
                     {
                         var flights = JsonSerializer.Deserialize<List<JsonElement>>(json, JsonOptions);
-
                         if (flights != null && flights.Count > 0)
                         {
-                            // Single flight API → uses flightPositions[] and departure.iataNumber
-                            result.Flights = flights.Take(5).Select(f =>
+                            result.Flights.AddRange(flights.Take(5).Select(f =>
                             {
                                 var lastPos = GetLastPosition(f);
                                 return new FlightSearchItem
@@ -296,16 +357,12 @@ public class FlightTrackerService : IFlightTrackerService
                                         : GetNestedString(f, "arrival", "iataCode")
                                 };
                             })
-                            .Where(f => !string.IsNullOrEmpty(f.FlightIata))
-                            .ToList();
+                            .Where(f => !string.IsNullOrEmpty(f.FlightIata)));
                         }
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[FlightTracker] ❌ Flight search API error: {ex.Message}");
-            }
+            catch { }
         }
 
         return result;
@@ -316,182 +373,185 @@ public class FlightTrackerService : IFlightTrackerService
     // ========================================================
     public async Task<FlightDetailsResponse?> GetFlightDetailsAsync(string flightIata)
     {
-        // Reject unknown/invalid flight numbers
-        if (string.IsNullOrEmpty(flightIata)
-            || flightIata.Equals("XXD", StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrEmpty(flightIata) || flightIata.Equals("XXD", StringComparison.OrdinalIgnoreCase))
             return null;
 
-        // ── Step 1: Aviation Edge /flights?flightIata=XX ──
         JsonElement? rawFlight = null;
-        LiveFlightDto? liveData = null;
+        CachedFlight? liveData = null;
         List<FlightTrailPoint> trail = new();
 
-        // Try Redis cache first
         try
         {
             var cached = await SafeCacheGet(LiveFlightsCacheKey);
             if (!string.IsNullOrEmpty(cached))
             {
-                var liveFlights = JsonSerializer.Deserialize<List<LiveFlightDto>>(cached, JsonOptions);
-                liveData = liveFlights?.FirstOrDefault(
-                    f => f.FlightIata.Equals(flightIata, StringComparison.OrdinalIgnoreCase));
+                var cachedFlights = JsonSerializer.Deserialize<List<CachedFlight>>(cached, JsonOptions);
+                liveData = cachedFlights?.FirstOrDefault(f => f.FlightIata.Equals(flightIata, StringComparison.OrdinalIgnoreCase));
             }
         }
-        catch { /* Cache miss */ }
+        catch { }
 
-        // Always call API for full data (we need flightPositions for the trail)
         try
         {
             var client = _httpClientFactory.CreateClient("AviationEdge");
             var url = $"{_baseUrl}/flights?key={_apiKey}&flightIata={Uri.EscapeDataString(flightIata)}";
 
             var response = await client.GetAsync(url);
-
             if (response.IsSuccessStatusCode)
             {
                 var json = await response.Content.ReadAsStringAsync();
-
-                // API returns {"error":"..."} when flight not found (object, not array)
-                if (json.TrimStart().StartsWith("{"))
-                {
-                    Console.WriteLine($"[FlightTracker] ⚠️ API returned error/object: {json[..Math.Min(json.Length, 200)]}");
-                }
-                else
+                if (!json.TrimStart().StartsWith("{"))
                 {
                     var flights = JsonSerializer.Deserialize<List<JsonElement>>(json, JsonOptions);
-
                     if (flights != null && flights.Count > 0)
                     {
-                        Console.WriteLine($"[FlightTracker] ✅ Found {flights.Count} flight(s)");
                         rawFlight = flights[0];
                         var f = rawFlight.Value;
                         var lastPos = GetLastPosition(f);
 
                         if (lastPos != null)
                         {
-                            // Single flight API → uses flightPositions[] for position
-                            liveData = new LiveFlightDto
+                            liveData = new CachedFlight
                             {
                                 FlightIata = GetNestedString(f, "flight", "iataNumber"),
-                                Latitude = GetDecimalFromElement(lastPos.Value, "latitude"),
-                                Longitude = GetDecimalFromElement(lastPos.Value, "longitude"),
-                                Altitude = GetDecimalFromElement(lastPos.Value, "altitude"),
-                                Heading = GetDecimalFromElement(lastPos.Value, "direction"),
-                                Speed = GetDecimalFromElement(lastPos.Value, "horizontal_speed"),
-                                IsOnGround = GetIntFromElement(lastPos.Value, "isGround") == 1,
-                                Status = GetString(f, "status"),
-                                AirlineIata = GetNestedString(f, "airline", "iataCode"),
-                                Registration = GetNestedString(f, "aircraft", "regNumber"),
-                                DepartureIata = GetNestedString(f, "departure", "iataNumber"),
-                                ArrivalIata = GetNestedString(f, "arrival", "iataNumber"),
-                                ScheduledDeparture = GetNestedString(f, "departure", "scheduledTime"),
-                                ScheduledArrival = GetNestedString(f, "arrival", "scheduledTime")
+                                Lat = GetDecimalFromElement(lastPos.Value, "latitude"),
+                                Lng = GetDecimalFromElement(lastPos.Value, "longitude"),
+                                Alt = GetDecimalFromElement(lastPos.Value, "altitude"),
+                                Hdg = GetDecimalFromElement(lastPos.Value, "direction"),
+                                Spd = GetDecimalFromElement(lastPos.Value, "horizontal_speed"),
+                                Gnd = GetIntFromElement(lastPos.Value, "isGround") == 1,
+                                Sts = GetString(f, "status"),
+                                Airline = GetNestedString(f, "airline", "iataCode"),
+                                Reg = GetNestedString(f, "aircraft", "regNumber"),
+                                Dep = GetNestedString(f, "departure", "iataNumber"),
+                                Arr = GetNestedString(f, "arrival", "iataNumber")
                             };
                         }
 
-                        // Extract flight trail from flightPositions
                         trail = ExtractFlightTrail(f);
                     }
                 }
             }
-            else
-            {
-                var errBody = await response.Content.ReadAsStringAsync();
-                Console.WriteLine($"[FlightTracker] ❌ Details API error: {(int)response.StatusCode} - {errBody[..Math.Min(errBody.Length, 300)]}");
-            }
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[FlightTracker] ❌ Flight API error: {ex.Message}");
-        }
+        catch { }
 
-        if (liveData == null)
-            return null;
+        if (liveData == null) return null;
 
-        // ── Step 2: Timetable for schedule details (delay, gate, actual times) ──
         TimetableData? timetable = null;
-        if (!string.IsNullOrEmpty(liveData.DepartureIata))
+        if (!string.IsNullOrEmpty(liveData.Dep))
         {
-            timetable = await GetTimetableDataAsync(liveData.DepartureIata, flightIata);
+            timetable = await GetTimetableDataAsync(liveData.Dep, flightIata);
         }
 
-        // ── Step 3: Local DB enrichment (seeded tables) ──
-        // Airport → city name + GMT
-        var depAirport = await _db.Airports
-            .Include(a => a.City)
-            .FirstOrDefaultAsync(a => a.CodeIataAirport == liveData.DepartureIata);
-
-        var arrAirport = await _db.Airports
-            .Include(a => a.City)
-            .FirstOrDefaultAsync(a => a.CodeIataAirport == liveData.ArrivalIata);
-
-        // Airline → name + logo
-        var airline = await _db.Airlines
-            .FirstOrDefaultAsync(a => a.CodeIataAirline == liveData.AirlineIata);
-
-        // Aircraft → model text (by registration number)
-        var aircraft = !string.IsNullOrEmpty(liveData.Registration)
-            ? await _db.Aircrafts.FirstOrDefaultAsync(a => a.NumberRegistration == liveData.Registration)
+        var depAirport = await _db.Airports.Include(a => a.City).FirstOrDefaultAsync(a => a.CodeIataAirport == liveData.Dep);
+        var arrAirport = await _db.Airports.Include(a => a.City).FirstOrDefaultAsync(a => a.CodeIataAirport == liveData.Arr);
+        var airline = await _db.Airlines.FirstOrDefaultAsync(a => a.CodeIataAirline == liveData.Airline);
+        var aircraft = !string.IsNullOrEmpty(liveData.Reg)
+            ? await _db.Aircrafts.FirstOrDefaultAsync(a => a.NumberRegistration == liveData.Reg)
             : null;
 
-        // ── Step 4: Build response ──
-        var scheduledDep = ParseTimeFromScheduled(liveData.ScheduledDeparture);
-        var scheduledArr = ParseTimeFromScheduled(liveData.ScheduledArrival);
+        var rawScheduledDep = rawFlight.HasValue ? GetNestedString(rawFlight.Value, "departure", "scheduledTime") : null;
+        var rawScheduledArr = rawFlight.HasValue ? GetNestedString(rawFlight.Value, "arrival", "scheduledTime") : null;
+
+        var scheduledDep = ParseTimeFromScheduled(rawScheduledDep);
+        var scheduledArr = ParseTimeFromScheduled(rawScheduledArr);
 
         var result = new FlightDetailsResponse
         {
             FlightIata = liveData.FlightIata,
-            AirlineName = airline?.NameAirline ?? timetable?.AirlineName ?? liveData.AirlineIata,
-            AirlineLogoUrl = airline?.LogoUrl,
-            From = liveData.DepartureIata,
-            FromCity = depAirport?.City?.NameCity ?? depAirport?.NameAirport ?? "",
-            To = liveData.ArrivalIata,
-            ToCity = arrAirport?.City?.NameCity ?? arrAirport?.NameAirport ?? "",
-            UtcFrom = FormatUtc(depAirport?.GMT),
-            UtcTo = FormatUtc(arrAirport?.GMT),
+            Status = liveData.Sts,
+            DelayMessage = BuildDelayMessage(timetable?.DepartureDelay),
+            Airline = new FlightDetailAirlineDto
+            {
+                Name = airline?.NameAirline ?? timetable?.AirlineName ?? liveData.Airline,
+                Iata = liveData.Airline,
+                Logo = airline?.LogoUrl
+            },
             Aircraft = new AircraftInfo
             {
-                Registration = liveData.Registration,
-                ModelText = aircraft?.ProductionLine ?? aircraft?.PlaneModel ?? GetAircraftModelFromApi(rawFlight),
-                ImageUrl = null
+                Registration = liveData.Reg,
+                Model = aircraft?.ProductionLine ?? aircraft?.PlaneModel ?? GetAircraftModelFromApi(rawFlight)
             },
-            Speed = liveData.Speed,
-            Altitude = liveData.Altitude,
-            DepartureGate = timetable?.DepartureGate,
-            DepartureTerminal = timetable?.DepartureTerminal,
-            ArrivalGate = timetable?.ArrivalGate,
-            ArrivalTerminal = timetable?.ArrivalTerminal,
-            ScheduledDeparture = scheduledDep,
-            ActualDeparture = timetable?.ActualDeparture ?? "",
-            ScheduledArrival = scheduledArr,
-            EstimatedArrival = timetable?.EstimatedArrival ?? scheduledArr,
-            DelayMessage = BuildDelayMessage(timetable?.DepartureDelay),
-            Status = liveData.Status,
-            CurrentPosition = new FlightPosition
+            Departure = new FlightDetailAirportDto
             {
-                Latitude = liveData.Latitude,
-                Longitude = liveData.Longitude,
-                Heading = liveData.Heading,
-                Speed = liveData.Speed,
-                Altitude = liveData.Altitude,
-                IsOnGround = liveData.IsOnGround
+                Iata = liveData.Dep,
+                Name = depAirport?.NameAirport ?? "",
+                City = depAirport?.City?.NameCity ?? "",
+                Utc = FormatUtc(depAirport?.GMT),
+                Gate = timetable?.DepartureGate,
+                Terminal = timetable?.DepartureTerminal,
+                ScheduledTime = scheduledDep,
+                ActualTime = timetable?.ActualDeparture ?? "",
+                Delay = timetable?.DepartureDelay
             },
-            FlightTrail = trail
+            Arrival = new FlightDetailAirportDto
+            {
+                Iata = liveData.Arr,
+                Name = arrAirport?.NameAirport ?? "",
+                City = arrAirport?.City?.NameCity ?? "",
+                Utc = FormatUtc(arrAirport?.GMT),
+                Gate = timetable?.ArrivalGate,
+                Terminal = timetable?.ArrivalTerminal,
+                ScheduledTime = scheduledArr,
+                EstimatedTime = timetable?.EstimatedArrival ?? scheduledArr
+            },
+            Position = new FlightPosition
+            {
+                Latitude = liveData.Lat,
+                Longitude = liveData.Lng,
+                Heading = liveData.Hdg,
+                Speed = liveData.Spd,
+                Altitude = liveData.Alt,
+                IsOnGround = liveData.Gnd
+            },
+            Trail = trail
         };
 
         return result;
     }
 
-    // ========================================================
-    // Timetable Helper (cached 3 min)
-    // ========================================================
-    private async Task<TimetableData?> GetTimetableDataAsync(string depIata, string flightIata)
+    public async Task<AirportViewportResponse> GetAirportsInViewportAsync(
+        decimal minLat, decimal maxLat, decimal minLng, decimal maxLng)
     {
-        var cacheKey = $"{TimetableCachePrefix}{depIata}";
+        var airports = await _db.Airports
+            .Include(a => a.City)
+            .Include(a => a.Country)
+            .Where(a => a.LatitudeAirport >= minLat && a.LatitudeAirport <= maxLat &&
+                        a.LongitudeAirport >= minLng && a.LongitudeAirport <= maxLng)
+            .Take(100)
+            .Select(a => new AirportViewportDto
+            {
+                Iata = a.CodeIataAirport,
+                Icao = a.CodeIcaoAirport,
+                Name = a.NameAirport,
+                City = a.City != null ? a.City.NameCity : "",
+                Country = a.Country != null ? a.Country.CountryName : "",
+                Lat = a.LatitudeAirport,
+                Lng = a.LongitudeAirport
+            })
+            .ToListAsync();
+
+        return new AirportViewportResponse
+        {
+            Count = airports.Count,
+            Airports = airports
+        };
+    }
+
+    public async Task<TimetableResponse> GetAirportTimetableAsync(string airportCode, string type = "departure")
+    {
+        var cacheKey = $"{TimetableCachePrefix}{airportCode}:{type}";
+        var result = new TimetableResponse
+        {
+            AirportIata = airportCode,
+            Type = type
+        };
+
+        var airport = await _db.Airports.FirstOrDefaultAsync(a => a.CodeIataAirport == airportCode);
+        if (airport != null) result.AirportName = airport.NameAirport;
 
         try
         {
-            // Check cache
             var cached = await SafeCacheGet(cacheKey);
             List<JsonElement>? timetableFlights = null;
 
@@ -501,37 +561,115 @@ public class FlightTrackerService : IFlightTrackerService
             }
             else
             {
-                // Call Aviation Edge /timetable
+                var client = _httpClientFactory.CreateClient("AviationEdge");
+                var url = $"{_baseUrl}/timetable?key={_apiKey}&iataCode={Uri.EscapeDataString(airportCode)}&type={type}";
+                var response = await client.GetAsync(url);
+                if (response.IsSuccessStatusCode)
+                {
+                    var json = await response.Content.ReadAsStringAsync();
+                    if (!json.TrimStart().StartsWith("{"))
+                    {
+                        timetableFlights = JsonSerializer.Deserialize<List<JsonElement>>(json, JsonOptions);
+                        if (timetableFlights != null)
+                        {
+                            await SafeCacheSet(cacheKey, json, TimetableTtl);
+                        }
+                    }
+                }
+            }
+
+            if (timetableFlights != null)
+            {
+                var dtoList = new List<TimetableFlightDto>();
+                foreach (var f in timetableFlights.Take(50))
+                {
+                    var dto = new TimetableFlightDto
+                    {
+                        FlightIata = GetNestedString(f, "flight", "iataNumber"),
+                        AirlineName = GetNestedString(f, "airline", "name"),
+                        AirlineIata = GetNestedString(f, "airline", "iataCode"),
+                        DepartureIata = GetNestedString(f, "departure", "iataCode"),
+                        DepartureGate = GetNestedStringOrNull(f, "departure", "gate"),
+                        DepartureTerminal = GetNestedStringOrNull(f, "departure", "terminal"),
+                        DepartureScheduledTime = ParseTimeFromScheduled(GetNestedString(f, "departure", "scheduledTime")),
+                        DepartureEstimatedTime = ParseTimeFromScheduled(GetNestedString(f, "departure", "estimatedTime")),
+                        DepartureActualTime = ParseTimeFromScheduled(GetNestedString(f, "departure", "actualTime")),
+                        DepartureDelay = GetNestedNullableInt(f, "departure", "delay"),
+                        ArrivalIata = GetNestedString(f, "arrival", "iataCode"),
+                        ArrivalGate = GetNestedStringOrNull(f, "arrival", "gate"),
+                        ArrivalTerminal = GetNestedStringOrNull(f, "arrival", "terminal"),
+                        ArrivalScheduledTime = ParseTimeFromScheduled(GetNestedString(f, "arrival", "scheduledTime")),
+                        ArrivalEstimatedTime = ParseTimeFromScheduled(GetNestedString(f, "arrival", "estimatedTime")),
+                        Status = GetString(f, "status")
+                    };
+
+                    if (!string.IsNullOrEmpty(dto.FlightIata))
+                        dtoList.Add(dto);
+                }
+                result.Flights = dtoList;
+                result.Count = dtoList.Count;
+            }
+        }
+        catch { }
+
+        if (result.Flights.Any())
+        {
+            var airlineIatas = result.Flights.Select(f => f.AirlineIata).Distinct().ToList();
+            var airlines = await _db.Airlines.Where(a => airlineIatas.Contains(a.CodeIataAirline)).ToDictionaryAsync(a => a.CodeIataAirline);
+            foreach (var f in result.Flights)
+            {
+                if (airlines.TryGetValue(f.AirlineIata, out var matchedAirline))
+                {
+                    f.AirlineLogoUrl = matchedAirline.LogoUrl;
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private async Task<TimetableData?> GetTimetableDataAsync(string depIata, string flightIata)
+    {
+        var cacheKey = $"{TimetableCachePrefix}{depIata}:departure";
+
+        try
+        {
+            var cached = await SafeCacheGet(cacheKey);
+            List<JsonElement>? timetableFlights = null;
+
+            if (!string.IsNullOrEmpty(cached))
+            {
+                timetableFlights = JsonSerializer.Deserialize<List<JsonElement>>(cached, JsonOptions);
+            }
+            else
+            {
                 var client = _httpClientFactory.CreateClient("AviationEdge");
                 var url = $"{_baseUrl}/timetable?key={_apiKey}&iataCode={Uri.EscapeDataString(depIata)}&type=departure";
 
-                Console.WriteLine($"[FlightTracker] 📋 Timetable: {depIata}");
                 var response = await client.GetAsync(url);
-
-                if (!response.IsSuccessStatusCode)
-                    return null;
-
-                var json = await response.Content.ReadAsStringAsync();
-                timetableFlights = JsonSerializer.Deserialize<List<JsonElement>>(json, JsonOptions);
-
-                // Cache for 3 minutes
-                if (timetableFlights != null)
+                if (response.IsSuccessStatusCode)
                 {
-                    await SafeCacheSet(cacheKey, json, TimetableTtl);
+                    var json = await response.Content.ReadAsStringAsync();
+                    if (!json.TrimStart().StartsWith("{"))
+                    {
+                        timetableFlights = JsonSerializer.Deserialize<List<JsonElement>>(json, JsonOptions);
+                        if (timetableFlights != null)
+                        {
+                            await SafeCacheSet(cacheKey, json, TimetableTtl);
+                        }
+                    }
                 }
             }
 
             if (timetableFlights == null) return null;
 
-            // Find our flight in the timetable
             var match = timetableFlights.FirstOrDefault(f =>
             {
                 var iata = GetNestedString(f, "flight", "iataNumber");
                 return iata.Equals(flightIata, StringComparison.OrdinalIgnoreCase);
             });
 
-            if (match.ValueKind == JsonValueKind.Undefined)
-                return null;
+            if (match.ValueKind == JsonValueKind.Undefined) return null;
 
             return new TimetableData
             {
@@ -545,16 +683,12 @@ public class FlightTrackerService : IFlightTrackerService
                 EstimatedArrival = ParseTimeFromScheduled(GetNestedString(match, "arrival", "estimatedTime")),
             };
         }
-        catch (Exception ex)
+        catch
         {
-            Console.WriteLine($"[FlightTracker] ❌ Timetable error: {ex.Message}");
             return null;
         }
     }
 
-    // ========================================================
-    // Internal model for timetable extracted data
-    // ========================================================
     private class TimetableData
     {
         public string? AirlineName { get; set; }
@@ -567,9 +701,6 @@ public class FlightTrackerService : IFlightTrackerService
         public string? EstimatedArrival { get; set; }
     }
 
-    // ========================================================
-    // Flight Trail Extraction
-    // ========================================================
     private static List<FlightTrailPoint> ExtractFlightTrail(JsonElement flight)
     {
         var trail = new List<FlightTrailPoint>();
@@ -580,9 +711,7 @@ public class FlightTrackerService : IFlightTrackerService
 
         foreach (var pos in positions.EnumerateArray())
         {
-            // Skip string entries like "..."
-            if (pos.ValueKind != JsonValueKind.Object)
-                continue;
+            if (pos.ValueKind != JsonValueKind.Object) continue;
 
             try
             {
@@ -597,15 +726,12 @@ public class FlightTrackerService : IFlightTrackerService
                     Timestamp = GetLongFromElement(pos, "updated")
                 });
             }
-            catch { /* Skip malformed */ }
+            catch { }
         }
 
         return trail;
     }
 
-    // ========================================================
-    // Helper: Get last position from flightPositions array
-    // ========================================================
     private static JsonElement? GetLastPosition(JsonElement flight)
     {
         if (!flight.TryGetProperty("flightPositions", out var positions) ||
@@ -621,9 +747,6 @@ public class FlightTrackerService : IFlightTrackerService
         return last;
     }
 
-    // ========================================================
-    // Safe Redis operations (won't crash if Redis is down)
-    // ========================================================
     private async Task<string?> SafeCacheGet(string key)
     {
         try { return await _redis.GetAsync(key); }
@@ -633,16 +756,13 @@ public class FlightTrackerService : IFlightTrackerService
     private async Task SafeCacheSet(string key, string value, TimeSpan ttl)
     {
         try { await _redis.SetAsync(key, value, ttl); }
-        catch { /* Redis down — continue without caching */ }
+        catch { }
     }
 
-    // ========================================================
-    // Utility helpers
-    // ========================================================
     private static string? BuildDelayMessage(int? departureDelay)
     {
         if (departureDelay is > 0)
-            return $"{departureDelay}Min delay due to air port traffic";
+            return $"{departureDelay} min delay";
         return null;
     }
 
@@ -657,11 +777,9 @@ public class FlightTrackerService : IFlightTrackerService
     {
         if (string.IsNullOrWhiteSpace(scheduledTime)) return "";
 
-        // Format: "2025-10-21T17:35:00.000" → "17:35"
         if (DateTime.TryParse(scheduledTime, out var dt))
             return dt.ToString("HH:mm");
 
-        // Already in "HH:mm" format
         if (scheduledTime.Contains(':') && scheduledTime.Length <= 8)
             return scheduledTime;
 
@@ -674,8 +792,6 @@ public class FlightTrackerService : IFlightTrackerService
         var code = GetNestedString(rawFlight.Value, "aircraft", "icaoCode");
         return string.IsNullOrEmpty(code) ? null : code;
     }
-
-    // ── JSON Navigation Helpers ──
 
     private static string GetNestedString(JsonElement element, string obj, string prop)
     {

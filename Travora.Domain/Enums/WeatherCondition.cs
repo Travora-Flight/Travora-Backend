@@ -5,12 +5,12 @@ namespace Travora.Domain.Enums;
 /// </summary>
 public enum WeatherCondition
 {
-    Clear = 1,   // صافي
-    Cloudy = 2,  // غائم
-    Rainy = 3,   // ممطر
-    Stormy = 4,  // عاصف
-    Snowy = 5,   // ثلجي
-    Foggy = 6,   // ضبابي
-    Windy = 7,   // رياح شديدة
-    Hazy = 8     // ضبابي خفيف
+    Clear = 1,   // Clear
+    Cloudy = 2,  // Cloudy
+    Rainy = 3,   // Rainy
+    Stormy = 4,  // Stormy
+    Snowy = 5,   // Snowy
+    Foggy = 6,   // Foggy
+    Windy = 7,   // Strong winds
+    Hazy = 8     // Light haze
 }

@@ -47,13 +47,13 @@ public class BagTrackingOrderService : IBagTrackingOrderService
             .FirstOrDefaultAsync(c => c.CustomerId == customerId, cancellationToken);
 
         if (customer == null)
-            return new ValidateFlightResponse { IsValid = false, ErrorMessage = "العميل غير موجود" };
+            return new ValidateFlightResponse { IsValid = false, ErrorMessage = "Customer not found" };
         if (string.IsNullOrEmpty(customer.PassportNumber))
-            return new ValidateFlightResponse { IsValid = false, ErrorMessage = "رقم الجواز غير موجود، يرجى استكمال البيانات" };
+            return new ValidateFlightResponse { IsValid = false, ErrorMessage = "Passport number not found, please complete your profile data" };
         if (customer.AccountStatus != CustomerAccountStatus.Verified)
-            return new ValidateFlightResponse { IsValid = false, ErrorMessage = "يجب توثيق حسابك لاستخدام الخدمة" };
+            return new ValidateFlightResponse { IsValid = false, ErrorMessage = "Your account must be verified to use this service" };
 
-        // التحقق من أن التذكرة مش مستخدمة في نفس الباكيج
+        // Check if ticket is used in the same package
         try
         {
             await ValidateTicketNotUsedAsync(request.TicketNumber, PackageNames.TrackingBaggage, cancellationToken);
@@ -63,7 +63,7 @@ public class BagTrackingOrderService : IBagTrackingOrderService
             return new ValidateFlightResponse { IsValid = false, ErrorMessage = ex.Message };
         }
 
-        // استدعاء Airline API
+        // Call Airline API
         var airlineReq = new AirlineValidateTicketRequest
         {
             PassportNumber = customer.PassportNumber,
@@ -80,7 +80,7 @@ public class BagTrackingOrderService : IBagTrackingOrderService
         {
             var errorMsg = airlineRes.Errors != null && airlineRes.Errors.Any()
                 ? string.Join(", ", airlineRes.Errors)
-                : "بيانات الرحلة أو التذكرة غير صحيحة";
+                : "Flight or ticket data is invalid";
             return new ValidateFlightResponse { IsValid = false, ErrorMessage = errorMsg };
         }
 
@@ -97,7 +97,7 @@ public class BagTrackingOrderService : IBagTrackingOrderService
         var departure = flightData.DepartureTimeUtc;
         var diff = departure - DateTime.UtcNow;
         if (diff.TotalHours < 12)
-            return new ValidateFlightResponse { IsValid = false, ErrorMessage = "لا يمكن الحجز قبل أقل من 12 ساعة من الإقلاع" };
+            return new ValidateFlightResponse { IsValid = false, ErrorMessage = "Booking must be made at least 12 hours before departure" };
 
         var bookingDeadlineUtc = departure.AddHours(-12);
 
@@ -124,17 +124,17 @@ public class BagTrackingOrderService : IBagTrackingOrderService
     }
 
     // ===================================================================
-    // STEP 2 — validate-companion (اختياري)
+    // STEP 2 — validate-companion (Optional)
     // ===================================================================
     public async Task<ValidateCompanionResponse> ValidateCompanionAsync(
         int customerId, ValidateCompanionRequest request, CancellationToken cancellationToken = default)
     {
         var draft = await _draftOrderService.GetBagTrackingDraftAsync(customerId.ToString(), cancellationToken);
         if (draft == null || draft.FlightInfo == null)
-            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "الجلسة انتهت أو غير موجودة، يرجى إعادة البدء" };
+            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Session expired or not found, please restart the process" };
 
         if (request.PassportNumber == draft.PassengerInfo?.PassportNumber)
-            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "لا يمكنك إضافة نفسك كمرافق" };
+            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "You cannot add yourself as a companion" };
 
         var airlineReq = new AirlineValidateTicketRequest
         {
@@ -152,12 +152,12 @@ public class BagTrackingOrderService : IBagTrackingOrderService
         {
             var errorMsg = airlineRes.Errors != null && airlineRes.Errors.Any()
                 ? string.Join(", ", airlineRes.Errors)
-                : "بيانات المرافق غير صحيحة";
+                : "Companion data is invalid";
             return new ValidateCompanionResponse { IsValid = false, ErrorMessage = errorMsg };
         }
 
         if (flightData.FlightNumber != draft.FlightInfo.FlightNumber)
-            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "المرافق ليس على نفس الرحلة" };
+            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Companion is not on the same flight" };
 
         string imageUrl = "https://res.cloudinary.com/travora/image/upload/vdefault/companion.jpg";
         if (request.PassportImage != null && request.PassportImage.Length > 0)
@@ -213,7 +213,7 @@ public class BagTrackingOrderService : IBagTrackingOrderService
     {
         var draft = await _draftOrderService.GetBagTrackingDraftAsync(customerId.ToString(), cancellationToken);
         if (draft == null || draft.FlightInfo == null)
-            return new ValidateBaggageResponse { IsValid = false, ErrorMessage = "الجلسة غير موجودة" };
+            return new ValidateBaggageResponse { IsValid = false, ErrorMessage = "Session not found" };
 
         var tasks = new List<(string TicketNumber, Task<AirlineBaggageCheckResponse> Task)>
         {
@@ -239,7 +239,7 @@ public class BagTrackingOrderService : IBagTrackingOrderService
             {
                 IsValid = false,
                 ErrorCode = "BaggageCountMismatch",
-                ErrorMessage = "عدد الشنط المدخل لا يطابق السجل لدى شركة الطيران",
+                ErrorMessage = "The number of bags entered does not match the airline records",
                 Expected = totalFromAirline,
                 Actual = draft.BaggageCount,
                 TotalBaggageCount = totalFromAirline,
@@ -273,16 +273,16 @@ public class BagTrackingOrderService : IBagTrackingOrderService
     {
         var draft = await _draftOrderService.GetBagTrackingDraftAsync(customerId.ToString(), cancellationToken);
         if (draft == null || draft.FlightInfo == null)
-            return new ScanBagResponse { Found = false, ErrorMessage = "الجلسة غير موجودة" };
+            return new ScanBagResponse { Found = false, ErrorMessage = "Session not found" };
 
         if (!draft.BaggageValidated)
-            return new ScanBagResponse { Found = false, ErrorMessage = "يجب إكمال خطوة التحقق من الشنط أولاً" };
+            return new ScanBagResponse { Found = false, ErrorMessage = "Baggage validation step must be completed first" };
 
-        // جمع كل الـ ticketNumbers
+        // Collect all ticketNumbers
         var ticketNumbers = new List<string> { draft.TicketNumber };
         ticketNumbers.AddRange(draft.Companions.Select(c => c.TicketNumber));
 
-        // استدعاء baggage-check بالتوازي
+        // Call baggage-check in parallel
         var bagTasks = ticketNumbers.Select(tn => new
         {
             TicketNumber = tn,
@@ -291,7 +291,7 @@ public class BagTrackingOrderService : IBagTrackingOrderService
 
         await Task.WhenAll(bagTasks.Select(t => t.Task));
 
-        // استخراج كل الـ baggageTags
+        // Extract all baggageTags
         var allTags = new List<AirlineBaggageTag>();
         foreach (var t in bagTasks)
         {
@@ -302,16 +302,16 @@ public class BagTrackingOrderService : IBagTrackingOrderService
                         allTags.AddRange(ticket.BaggageTags);
         }
 
-        // تحقق إن الـ qrData موجود في القائمة
+        // Check if qrData is in the list
         var matchedTag = allTags.FirstOrDefault(tag => tag.TagNumber == request.QrData);
         if (matchedTag == null)
-            return new ScanBagResponse { Found = false, ErrorMessage = "الشنطة مش بتاعتك" };
+            return new ScanBagResponse { Found = false, ErrorMessage = "This bag does not belong to you" };
 
-        // تحقق إن الشنطة مش اتسكانت قبل كده
+        // Check if the bag has already been scanned
         if (draft.ScannedBags.Any(sb => sb.TagNumber == request.QrData))
-            return new ScanBagResponse { Found = false, ErrorMessage = "هذه الشنطة تم مسحها مسبقاً" };
+            return new ScanBagResponse { Found = false, ErrorMessage = "This bag has already been scanned" };
 
-        // احفظ في draft
+        // Save to draft
         var scannedBag = new DraftScannedBag
         {
             TagNumber = request.QrData,
@@ -346,20 +346,20 @@ public class BagTrackingOrderService : IBagTrackingOrderService
     {
         var draft = await _draftOrderService.GetBagTrackingDraftAsync(customerId.ToString(), cancellationToken);
         if (draft == null)
-            return new UploadBagPhotosResponse { Saved = false, ErrorMessage = "الجلسة غير موجودة" };
+            return new UploadBagPhotosResponse { Saved = false, ErrorMessage = "Session not found" };
 
         var bag = draft.ScannedBags.FirstOrDefault(sb => sb.TagNumber == tagNumber);
         if (bag == null)
-            return new UploadBagPhotosResponse { Saved = false, ErrorMessage = "الشنطة مش مسكانة" };
+            return new UploadBagPhotosResponse { Saved = false, ErrorMessage = "Bag has not been scanned" };
 
         if (photos == null || !photos.Any())
-            return new UploadBagPhotosResponse { Saved = false, ErrorMessage = "يجب رفع صورة واحدة على الأقل" };
+            return new UploadBagPhotosResponse { Saved = false, ErrorMessage = "At least one photo must be uploaded" };
 
-        // التحقق من الحد الأدنى — لازم 3 صور على الأقل
+        // Minimum check — at least 3 photos required
         if (photos.Count < 3)
-            return new UploadBagPhotosResponse { Saved = false, ErrorMessage = "يجب رفع 3 صور على الأقل لكل شنطة" };
+            return new UploadBagPhotosResponse { Saved = false, ErrorMessage = "At least 3 photos must be uploaded for each bag" };
 
-        // التحقق من الحد الأقصى — مش أكتر من 6 صور لكل شنطة (draft + DB)
+        // Maximum check — no more than 6 photos per bag (draft + DB)
         int existingInDraft = bag.Photos.Count;
         int existingInDb = await _context.BaggagePhotos
             .CountAsync(bp => bp.Baggage.BaggageNumber == tagNumber
@@ -367,10 +367,10 @@ public class BagTrackingOrderService : IBagTrackingOrderService
         int totalExisting = existingInDraft + existingInDb;
 
         if (totalExisting >= 6)
-            return new UploadBagPhotosResponse { Saved = false, ErrorMessage = $"الحد الأقصى 6 صور لكل شنطة، لديك بالفعل {totalExisting} صور" };
+            return new UploadBagPhotosResponse { Saved = false, ErrorMessage = $"Maximum 6 photos per bag, you already have {totalExisting} photos" };
 
         if (totalExisting + photos.Count > 6)
-            return new UploadBagPhotosResponse { Saved = false, ErrorMessage = $"الحد الأقصى 6 صور لكل شنطة، لديك بالفعل {totalExisting} صور ويمكنك رفع {6 - totalExisting} صور فقط" };
+            return new UploadBagPhotosResponse { Saved = false, ErrorMessage = $"Maximum 6 photos per bag, you already have {totalExisting} photos and can only upload {6 - totalExisting} more" };
 
         var uploadedUrls = new List<string>();
         foreach (var photo in photos)
@@ -398,12 +398,12 @@ public class BagTrackingOrderService : IBagTrackingOrderService
     {
         var draft = await _draftOrderService.GetBagTrackingDraftAsync(customerId.ToString(), cancellationToken);
         if (draft == null)
-            return new InvoiceResponse { IsValid = false, ErrorMessage = "الجلسة غير موجودة" };
+            return new InvoiceResponse { IsValid = false, ErrorMessage = "Session not found" };
 
-        // تحقق إن كل الشنط المسكانة عندها صور
+        // Check if all scanned bags have photos
         var bagsWithoutPhotos = draft.ScannedBags.Where(sb => !sb.Photos.Any()).ToList();
         if (bagsWithoutPhotos.Any())
-            return new InvoiceResponse { IsValid = false, ErrorMessage = "يجب إضافة صورة لكل شنطة قبل المراجعة" };
+            return new InvoiceResponse { IsValid = false, ErrorMessage = "At least one photo must be added for each bag before review" };
 
         var pkg = await _context.Packages.FirstOrDefaultAsync(
             p => p.PackageName == PackageNames.TrackingBaggage, cancellationToken);
@@ -465,12 +465,12 @@ public class BagTrackingOrderService : IBagTrackingOrderService
     {
         var draft = await _draftOrderService.GetBagTrackingDraftAsync(customerId.ToString(), cancellationToken);
         if (draft == null || draft.FlightInfo == null)
-            return new ConfirmOrderResponse { Success = false, ErrorMessage = "الجلسة غير موجودة" };
+            return new ConfirmOrderResponse { Success = false, ErrorMessage = "Session not found" };
 
         if (!draft.BaggageValidated)
-            return new ConfirmOrderResponse { Success = false, ErrorMessage = "يجب إكمال خطوة التحقق من الشنط أولاً" };
+            return new ConfirmOrderResponse { Success = false, ErrorMessage = "Baggage validation step must be completed first" };
         if (!draft.ScannedBags.Any())
-            return new ConfirmOrderResponse { Success = false, ErrorMessage = "يجب مسح شنطة واحدة على الأقل" };
+            return new ConfirmOrderResponse { Success = false, ErrorMessage = "At least one bag must be scanned" };
 
         var strategy = _context.Database.CreateExecutionStrategy();
 
@@ -486,7 +486,7 @@ public class BagTrackingOrderService : IBagTrackingOrderService
 
                 string flightNo = draft.FlightInfo.FlightNumber;
 
-                // 1) استخرج IATA codes من draft
+                // 1) Extract IATA codes from draft
                 var depIata = (draft.FlightInfo.DepartureIataCode
                     ?? draft.FlightInfo.DepartureAirport
                     ?? "").Trim();
@@ -494,11 +494,11 @@ public class BagTrackingOrderService : IBagTrackingOrderService
                     ?? draft.FlightInfo.ArrivalAirport
                     ?? "").Trim();
 
-                // 2) ابحث عن الرحلة بالـ FlightNumber
+                // 2) Find flight by FlightNumber
                 var flight = await _context.Flights
                     .FirstOrDefaultAsync(f => f.FlightNumber == flightNo, cancellationToken);
 
-                // 3) لو جديدة → أنشئها
+                // 3) If new → create it
                 if (flight == null)
                 {
                     flight = new Domain.Entities.Flight
@@ -518,7 +518,7 @@ public class BagTrackingOrderService : IBagTrackingOrderService
                     };
                     _context.Flights.Add(flight);
                 }
-                // 4) لو موجودة → حدّث البيانات
+                // 4) If exists → update data
                 else
                 {
                     flight.DepartureIataCode = depIata;
@@ -531,7 +531,7 @@ public class BagTrackingOrderService : IBagTrackingOrderService
                     flight.UpdatedAt = DateTime.UtcNow;
                 }
 
-                // 5) اربط بالـ Airport من جدول Airports
+                // 5) Link to Airport from Airports table
                 var departureAirport = await _context.Airports
                     .FirstOrDefaultAsync(a => a.CodeIataAirport == depIata, cancellationToken);
                 if (departureAirport != null)
@@ -542,10 +542,10 @@ public class BagTrackingOrderService : IBagTrackingOrderService
                 if (arrivalAirport != null)
                     flight.ArrivalAirportId = arrivalAirport.AirportId;
 
-                // 6) احفظ
+                // 6) Save
                 await _context.SaveChangesAsync(cancellationToken);
 
-                // Order (مفيش locations في Bag Tracking، بس الـ DB بتطلبها)
+                // Order (no locations in Bag Tracking, but DB requires them)
                 var pickupLocation = new Domain.Entities.Location
                 {
                     StreetAddress = "N/A",
@@ -791,7 +791,7 @@ public class BagTrackingOrderService : IBagTrackingOrderService
     {
         var package = await _context.Packages
             .FirstOrDefaultAsync(p => p.PackageName == packageName, cancellationToken)
-            ?? throw new InvalidOperationException($"باكيج {packageName} مش موجود في الـ DB");
+            ?? throw new InvalidOperationException($"Package {packageName} not found in DB");
 
         var isTicketUsed = await _context.Orders
             .AnyAsync(o => o.TicketNumber == ticketNumber
@@ -799,6 +799,6 @@ public class BagTrackingOrderService : IBagTrackingOrderService
                         && o.OrderStatus != OrderStatus.Cancelled, cancellationToken);
 
         if (isTicketUsed)
-            throw new InvalidOperationException($"هذه التذكرة مستخدمة بالفعل في خدمة {packageName}.");
+            throw new InvalidOperationException($"This ticket is already used in {packageName} service.");
     }
 }

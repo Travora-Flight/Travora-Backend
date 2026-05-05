@@ -10,16 +10,16 @@ using Travora.Application.Interfaces.Services.Admin;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ===== تسجيل الخدمات =====
+// ===== Register Services =====
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
-        // السطر ده هو اللي بيحول الأرقام لأسماء الـ Enum في السواجر والـ API كله
+        // This line converts numbers to Enum names in Swagger and the whole API
         options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
     });
 builder.Services.AddEndpointsApiExplorer();
 
-// Swagger مع JWT
+// Swagger with JWT
 builder.Services.AddSwaggerWithJwt();
 
 // JWT Authentication + Authorization Policies
@@ -28,10 +28,10 @@ builder.Services.AddJwtAuthentication(builder.Configuration);
 // CORS
 builder.Services.AddCorsPolicy(builder.Configuration);
 
-// Rate Limiting (حماية ضد الـ Brute Force و DDoS)
+// Rate Limiting (Protection against Brute Force and DDoS)
 builder.Services.AddRateLimitingPolicies();
 
-// خدمات البنية التحتية (DB, Redis, JWT Generator, AuthService, AdminService, Cloudinary, Email)
+// Infrastructure services (DB, Redis, JWT Generator, AuthService, AdminService, Cloudinary, Email)
 builder.Services.AddInfrastructureServices(builder.Configuration);
 
 // SignalR
@@ -41,7 +41,7 @@ QuestPDF.Settings.License = LicenseType.Community;
 
 var app = builder.Build();
 
-// ===== Seed Data عند التشغيل =====
+// ===== Seed Data on Startup =====
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -49,17 +49,17 @@ using (var scope = app.Services.CreateScope())
     await DataSeeder.SeedAsync(db);
 }
 
-// ===== الـ Middleware Pipeline =====
-// 1. Exception Handler (أول حاجة - يمسك أي Error قبل ما يوصل للعميل)
+// ===== Middleware Pipeline =====
+// 1. Exception Handler (First thing - catches any error before it reaches the client)
 app.UseMiddleware<GlobalExceptionHandlerMiddleware>();
 
-// 2. Rate Limiting (حماية ضد الطلبات الكتيرة)
+// 2. Rate Limiting (Protection against excessive requests)
 app.UseRateLimiter();
 
 
 app.UseWebSockets();
 
-// 3. باقي الـ Middleware
+// 3. Rest of Middleware
 app.UseTravoraMiddleware();
 
 // 4. Hangfire Dashboard (optional secure config later, for now just open map)

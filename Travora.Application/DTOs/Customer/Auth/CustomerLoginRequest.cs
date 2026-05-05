@@ -4,10 +4,10 @@ namespace Travora.Application.DTOs.Customer.Auth;
 
 public class CustomerLoginRequest
 {
-    [Required(ErrorMessage = "الإيميل مطلوب")]
-    [EmailAddress(ErrorMessage = "الإيميل غير صحيح")]
+    [Required(ErrorMessage = "Email is required")]
+    [EmailAddress(ErrorMessage = "Invalid email address")]
     public string Email { get; set; } = string.Empty;
 
-    [Required(ErrorMessage = "كلمة المرور مطلوبة")]
+    [Required(ErrorMessage = "Password is required")]
     public string Password { get; set; } = string.Empty;
 }

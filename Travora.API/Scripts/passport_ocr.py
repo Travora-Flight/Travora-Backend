@@ -14,15 +14,15 @@ pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tessera
 
 def process_and_extract_passport_data(image_path):
     """
-    تقرأ صورة الجواز وتستخرج البيانات كـ JSON.
-    تعالج اختصارات الجنس ومشكلة القرن للتواريخ بشكل ذكي.
+    Reads passport image and extracts data as JSON.
+    Intelligently handles gender abbreviations and century date issues.
     """
     if not os.path.exists(image_path):
-        # إرجاع الخطأ بصيغة JSON
-        return json.dumps({"error": f"الملف غير موجود في المسار: {image_path}"}, ensure_ascii=False)
+        # Return error in JSON format
+        return json.dumps({"error": f"File not found at path: {image_path}"}, ensure_ascii=False)
 
     try:
-        # --- 1. تحميل الصورة وقص منطقة الـ MRZ ---
+        # --- 1. Load image and crop MRZ region ---
         image = Image.open(image_path).convert('RGB')
         img_array = np.array(image)
         height, width = img_array.shape[:2]
@@ -30,7 +30,7 @@ def process_and_extract_passport_data(image_path):
         mrz_height = int(height * 0.35)
         cropped_array = img_array[(height - mrz_height):height, :]
 
-        # --- 2. تحسين الصورة (معالجة OpenCV) ---
+        # --- 2. Enhance image (OpenCV processing) ---
         if len(cropped_array.shape) == 3:
             gray = cv2.cvtColor(cropped_array, cv2.COLOR_RGB2GRAY)
         else:
@@ -43,7 +43,7 @@ def process_and_extract_passport_data(image_path):
         
         mrz_enhanced = Image.fromarray(binary)
 
-        # --- 3. استخراج البيانات ---
+        # --- 3. Extract data ---
         img_buffer = io.BytesIO()
         mrz_enhanced.save(img_buffer, format='PNG')
         img_buffer.seek(0)
@@ -51,27 +51,27 @@ def process_and_extract_passport_data(image_path):
         mrz = read_mrz(img_buffer)
         
         if mrz is None:
-            return json.dumps({"error": "فشل في قراءة منطقة MRZ. تأكد من وضوح السطرين السفليين."}, ensure_ascii=False)
+            return json.dumps({"error": "Failed to read MRZ region. Ensure the bottom two lines are clear."}, ensure_ascii=False)
 
         mrz_data = mrz.to_dict()
 
-        # --- 4. معالجة وتنسيق الاختصارات (مشكلة القرن) ---
+        # --- 4. Process and format abbreviations (Century problem) ---
         def format_mrz_date(date_str, is_dob=False):
             if not date_str or not date_str.isdigit() or len(date_str) != 6:
                 return date_str
             try:
-                # محاولة تحويل النص إلى تاريخ
+                # Try to convert text to date
                 dt = datetime.strptime(date_str, "%y%m%d")
                 current_year = datetime.now().year
                 
                 if is_dob:
-                    # منطق تاريخ الميلاد: لا يمكن أن يكون في المستقبل
-                    # إذا كانت السنة المحسوبة أكبر من السنة الحالية، نطرح 100 عام
+                    # Date of birth logic: cannot be in the future
+                    # If the calculated year is greater than the current year, subtract 100 years
                     if dt.year > current_year:
                         dt = dt.replace(year=dt.year - 100)
                 else:
-                    # منطق تاريخ الانتهاء: لا يمكن أن يكون في ماضي بعيد جداً (مثلا قبل 20 سنة من الآن)
-                    # إذا تم حسابها كسنة ماضية بعيدة، نضيف 100 عام لتصبح في المستقبل
+                    # Expiry date logic: cannot be in the distant past (e.g., more than 20 years ago)
+                    # If calculated as a distant past year, add 100 years to make it in the future
                     if dt.year < (current_year - 20):
                         dt = dt.replace(year=dt.year + 100)
                         
@@ -79,24 +79,24 @@ def process_and_extract_passport_data(image_path):
             except ValueError:
                 return date_str
 
-        # تطبيق دالة التنسيق على التواريخ مع تحديد نوع التاريخ
+        # Apply formatting function to dates with date type specification
         if 'date_of_birth' in mrz_data:
             mrz_data['date_of_birth_formatted'] = format_mrz_date(mrz_data['date_of_birth'], is_dob=True)
             
         if 'expiration_date' in mrz_data:
             mrz_data['expiration_date_formatted'] = format_mrz_date(mrz_data['expiration_date'], is_dob=False)
 
-        # تنسيق الجنس
+        # Format gender
         if 'sex' in mrz_data:
             sex_mapping = {'M': 'Male', 'F': 'Female', '<': 'Unspecified'}
             mrz_data['sex_formatted'] = sex_mapping.get(mrz_data['sex'].upper(), mrz_data['sex'])
 
-        # --- 5. إرجاع النتيجة كـ JSON ---
-        # indent=4 لجعل شكل الـ JSON مقروء ومرتب
+        # --- 5. Return result as JSON ---
+        # indent=4 to make JSON human-readable and organized
         return json.dumps(mrz_data, ensure_ascii=False, indent=4)
 
     except Exception as e:
-        return json.dumps({"error": f"حدث خطأ أثناء المعالجة: {str(e)}"}, ensure_ascii=False)
+        return json.dumps({"error": f"An error occurred during processing: {str(e)}"}, ensure_ascii=False)
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print(json.dumps({"error": "No image path provided"}))

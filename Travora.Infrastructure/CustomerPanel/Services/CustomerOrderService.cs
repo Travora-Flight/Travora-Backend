@@ -48,46 +48,46 @@ public class CustomerOrderService : ICustomerOrderService
     {
         [PackageNames.DoorToDoor] = new()
         {
-            ("Order Confirmed",    BaggageTrackingStatus.Registered,       "db",      "تم تأكيد الطلب وجدولة الخدمة"),
-            ("Picked Up",          BaggageTrackingStatus.PickedUp,         "db",      "تم استلام الشنط من عنوانك"),
-            ("Check-In",           BaggageTrackingStatus.PickedUp,         "airline", "تم تسجيل الشنط في المطار"),
-            ("Security Check",     BaggageTrackingStatus.AtSecurity,       "airline", "الشنط في الفحص الأمني"),
-            ("At Customs",         BaggageTrackingStatus.AtCustoms,        "airline", "الشنط في الجمارك"),
-            ("At Gate",            BaggageTrackingStatus.AtGate,           "airline", "الشنط عند البوابة"),
-            ("Loaded on Aircraft", BaggageTrackingStatus.LoadedOnAircraft, "airline", "تم تحميل الشنط على الطائرة"),
-            ("Arrived",            BaggageTrackingStatus.Arrived,          "airline", "وصلت الطائرة للوجهة"),
-            ("Out for Delivery",   BaggageTrackingStatus.OutForDelivery,   "db",      "الشنط في الطريق إليك"),
-            ("Delivered",          BaggageTrackingStatus.Delivered,        "db",      "تم التسليم بنجاح")
+            ("Order Confirmed",    BaggageTrackingStatus.Registered,       "db",      "Order confirmed and service scheduled"),
+            ("Picked Up",          BaggageTrackingStatus.PickedUp,         "db",      "Bags picked up from your address"),
+            ("Check-In",           BaggageTrackingStatus.PickedUp,         "airline", "Bags checked-in at the airport"),
+            ("Security Check",     BaggageTrackingStatus.AtSecurity,       "airline", "Bags at security check"),
+            ("At Customs",         BaggageTrackingStatus.AtCustoms,        "airline", "Bags at customs"),
+            ("At Gate",            BaggageTrackingStatus.AtGate,           "airline", "Bags at the gate"),
+            ("Loaded on Aircraft", BaggageTrackingStatus.LoadedOnAircraft, "airline", "Bags loaded on the aircraft"),
+            ("Arrived",            BaggageTrackingStatus.Arrived,          "airline", "Aircraft arrived at destination"),
+            ("Out for Delivery",   BaggageTrackingStatus.OutForDelivery,   "db",      "Bags out for delivery"),
+            ("Delivered",          BaggageTrackingStatus.Delivered,        "db",      "Delivered successfully")
         },
         [PackageNames.CarServiceToAirport] = new()
         {
-            ("Order Confirmed",    BaggageTrackingStatus.Registered,       "db",      "تم تأكيد الطلب"),
-            ("Picked Up",          BaggageTrackingStatus.PickedUp,         "db",      "تم استلام الشنط من عنوانك"),
-            ("Check-In",           BaggageTrackingStatus.PickedUp,         "airline", "تم تسجيل الشنط في المطار"),
-            ("Security Check",     BaggageTrackingStatus.AtSecurity,       "airline", "الشنط في الفحص الأمني"),
-            ("At Gate",            BaggageTrackingStatus.AtGate,           "airline", "الشنط عند البوابة"),
-            ("Loaded on Aircraft", BaggageTrackingStatus.LoadedOnAircraft, "airline", "تم تحميل الشنط على الطائرة"),
-            ("Arrived",            BaggageTrackingStatus.Arrived,          "airline", "وصلت الشنط للوجهة")
+            ("Order Confirmed",    BaggageTrackingStatus.Registered,       "db",      "Order confirmed"),
+            ("Picked Up",          BaggageTrackingStatus.PickedUp,         "db",      "Bags picked up from your address"),
+            ("Check-In",           BaggageTrackingStatus.PickedUp,         "airline", "Bags checked-in at the airport"),
+            ("Security Check",     BaggageTrackingStatus.AtSecurity,       "airline", "Bags at security check"),
+            ("At Gate",            BaggageTrackingStatus.AtGate,           "airline", "Bags at the gate"),
+            ("Loaded on Aircraft", BaggageTrackingStatus.LoadedOnAircraft, "airline", "Bags loaded on the aircraft"),
+            ("Arrived",            BaggageTrackingStatus.Arrived,          "airline", "Bags arrived at destination")
         },
         [PackageNames.CarServiceFromAirport] = new()
         {
-            ("Order Confirmed",    BaggageTrackingStatus.Registered,      "db",      "تم تأكيد الطلب"),
-            ("Arrived",            BaggageTrackingStatus.Arrived,         "airline", "وصلت الطائرة"),
-            ("Baggage Belt",       BaggageTrackingStatus.OnBelt,          "airline", "الشنط على سير الأمتعة"),
-            ("Out for Delivery",   BaggageTrackingStatus.OutForDelivery,  "db",      "الشنط في الطريق إليك"),
-            ("Delivered",          BaggageTrackingStatus.Delivered,       "db",      "تم التسليم بنجاح")
+            ("Order Confirmed",    BaggageTrackingStatus.Registered,      "db",      "Order confirmed"),
+            ("Arrived",            BaggageTrackingStatus.Arrived,         "airline", "Aircraft arrived at destination"),
+            ("Baggage Belt",       BaggageTrackingStatus.OnBelt,          "airline", "Bags on baggage belt"),
+            ("Out for Delivery",   BaggageTrackingStatus.OutForDelivery,  "db",      "Bags out for delivery"),
+            ("Delivered",          BaggageTrackingStatus.Delivered,       "db",      "Delivered successfully")
         },
         [PackageNames.TrackingBaggage] = new()
         {
             ("Bags Registered",    BaggageTrackingStatus.Registered,       "db",      "placeholder"),
-            ("Check-In",           BaggageTrackingStatus.PickedUp,         "airline", "تم تسجيل الشنط في المطار"),
-            ("Security Check",     BaggageTrackingStatus.AtSecurity,       "airline", "الشنط في الفحص الأمني"),
-            ("At Customs",         BaggageTrackingStatus.AtCustoms,        "airline", "الشنط في الجمارك"),
-            ("At Terminal",        BaggageTrackingStatus.AtTerminal,       "airline", "الشنط في الصالة"),
-            ("At Gate",            BaggageTrackingStatus.AtGate,           "airline", "الشنط عند البوابة"),
-            ("Loaded on Aircraft", BaggageTrackingStatus.LoadedOnAircraft, "airline", "تم تحميل الشنط على الطائرة"),
-            ("Arrived",            BaggageTrackingStatus.Arrived,          "airline", "وصلت الطائرة للوجهة"),
-            ("Ready for Pickup",   BaggageTrackingStatus.OnBelt,           "airline", "الشنط جاهزة للاستلام من سير الأمتعة")
+            ("Check-In",           BaggageTrackingStatus.PickedUp,         "airline", "Bags checked-in at the airport"),
+            ("Security Check",     BaggageTrackingStatus.AtSecurity,       "airline", "Bags at security check"),
+            ("At Customs",         BaggageTrackingStatus.AtCustoms,        "airline", "Bags at customs"),
+            ("At Terminal",        BaggageTrackingStatus.AtTerminal,       "airline", "Bags at terminal"),
+            ("At Gate",            BaggageTrackingStatus.AtGate,           "airline", "Bags at the gate"),
+            ("Loaded on Aircraft", BaggageTrackingStatus.LoadedOnAircraft, "airline", "Bags loaded on the aircraft"),
+            ("Arrived",            BaggageTrackingStatus.Arrived,          "airline", "Aircraft arrived at destination"),
+            ("Ready for Pickup",   BaggageTrackingStatus.OnBelt,           "airline", "Bags ready for pickup from baggage belt")
         }
     };
 
@@ -172,10 +172,10 @@ public class CustomerOrderService : ICustomerOrderService
             .FirstOrDefaultAsync(o => o.OrderId == orderId, cancellationToken);
 
         if (order == null)
-            throw new KeyNotFoundException("الطلب غير موجود");
+            throw new KeyNotFoundException("Order not found");
 
         if (order.CustomerId != customerId)
-            throw new UnauthorizedAccessException("ليس لديك صلاحية لعرض هذا الطلب");
+            throw new UnauthorizedAccessException("You do not have permission to view this order");
 
         var packageName = order.Package?.PackageName ?? string.Empty;
 
@@ -349,8 +349,8 @@ public class CustomerOrderService : ICustomerOrderService
                     UserId = order.CustomerId,
                     UserType = UserType.Customer,
                     NotificationType = NotificationType.OrderCompleted,
-                    Title = "شنطتك وصلت",
-                    Message = "شنطتك جاهزة للاستلام من سير الأمتعة",
+                    Title = "Your bag has arrived",
+                    Message = "Your bag is ready for pickup from the baggage belt",
                     NotificationChannel = NotificationChannel.InApp,
                     OrderId = orderId
                 });
@@ -359,8 +359,8 @@ public class CustomerOrderService : ICustomerOrderService
 
                 await _notificationPusher.PushToCustomerAsync(
                     order.CustomerId,
-                    "شنطتك وصلت",
-                    "شنطتك جاهزة للاستلام من سير الأمتعة",
+                    "Your bag has arrived",
+                    "Your bag is ready for pickup from the baggage belt",
                     "OrderCompleted",
                     orderId);
                 
@@ -388,7 +388,7 @@ public class CustomerOrderService : ICustomerOrderService
 
                 string? stepDescription;
                 if (stepName == "Bags Registered" && packageName == PackageNames.TrackingBaggage)
-                    stepDescription = $"تم تسجيل {order.TotalBaggageCount} شنط في النظام";
+                    stepDescription = $"{order.TotalBaggageCount} bags registered in the system";
                 else
                     stepDescription = description;
 
@@ -510,16 +510,16 @@ public class CustomerOrderService : ICustomerOrderService
             .FirstOrDefaultAsync(o => o.OrderId == orderId, cancellationToken);
 
         if (order == null)
-            return new CancelOrderResponse { Success = false, Message = "الطلب غير موجود" };
+            return new CancelOrderResponse { Success = false, Message = "Order not found" };
 
         if (order.CustomerId != customerId)
-            return new CancelOrderResponse { Success = false, Message = "ليس لديك صلاحية لإلغاء هذا الطلب" };
+            return new CancelOrderResponse { Success = false, Message = "You do not have permission to cancel this order" };
 
         if (order.OrderStatus == OrderStatus.Completed)
-            return new CancelOrderResponse { Success = false, Message = "لا يمكن إلغاء طلب مكتمل" };
+            return new CancelOrderResponse { Success = false, Message = "A completed order cannot be cancelled" };
 
         if (order.OrderStatus == OrderStatus.Cancelled)
-            return new CancelOrderResponse { Success = false, Message = "الطلب ملغي بالفعل" };
+            return new CancelOrderResponse { Success = false, Message = "Order is already cancelled" };
 
         var hasActiveService = order.OrderServices
             .Any(os => os.ServiceStatus == ServiceStatus.InProgress);
@@ -527,7 +527,7 @@ public class CustomerOrderService : ICustomerOrderService
             return new CancelOrderResponse
             {
                 Success = false,
-                Message = "لا يمكن إلغاء الطلب أثناء تنفيذ الخدمة، يرجى الانتظار حتى انتهاء الخدمة الجارية"
+                Message = "Order cannot be cancelled while the service is in progress"
             };
 
         bool shouldRefund = order.OrderStatus is OrderStatus.Confirmed or OrderStatus.InProgress;
@@ -551,13 +551,13 @@ public class CustomerOrderService : ICustomerOrderService
             UserId = customerId,
             UserType = UserType.Customer,
             NotificationType = NotificationType.OrderUpdated,
-            Title = "تم إلغاء طلبك",
-            Message = "تم إلغاء طلبك بنجاح",
+            Title = "Your order has been cancelled",
+            Message = "Your order has been cancelled successfully",
             NotificationChannel = NotificationChannel.InApp,
             OrderId = orderId
         });
 
-        await _notificationPusher.PushToCustomerAsync(customerId, "تم إلغاء طلبك", "تم إلغاء طلبك بنجاح", "OrderCancelled", orderId);
+        await _notificationPusher.PushToCustomerAsync(customerId, "Your order has been cancelled", "Your order has been cancelled successfully", "OrderCancelled", orderId);
 
         // Notification to assigned employee (if any)
         var assignedServices = order.OrderServices.Where(os => os.AssignedEmployeeId.HasValue).ToList();
@@ -569,12 +569,12 @@ public class CustomerOrderService : ICustomerOrderService
                 UserId = empId,
                 UserType = UserType.Employee,
                 NotificationType = NotificationType.OrderUpdated,
-                Title = "تم إلغاء الطلب",
-                Message = "تم إلغاء الطلب المعين لك",
+                Title = "Order Cancelled",
+                Message = "The order assigned to you has been cancelled",
                 NotificationChannel = NotificationChannel.InApp,
                 OrderId = orderId
             });
-            await _notificationPusher.PushToEmployeeAsync(empId, "تم إلغاء الطلب", "تم إلغاء الطلب المعين لك", "OrderCancelled", orderId);
+            await _notificationPusher.PushToEmployeeAsync(empId, "Order Cancelled", "The order assigned to you has been cancelled", "OrderCancelled", orderId);
         }
 
         await _context.SaveChangesAsync(cancellationToken);
@@ -592,7 +592,7 @@ public class CustomerOrderService : ICustomerOrderService
             }
         }
 
-        return new CancelOrderResponse { Success = true, Message = "تم إلغاء الطلب بنجاح" };
+        return new CancelOrderResponse { Success = true, Message = "Your order has been cancelled successfully" };
     }
 
     // ===================================================================
@@ -608,31 +608,31 @@ public class CustomerOrderService : ICustomerOrderService
             .FirstOrDefaultAsync(o => o.OrderId == orderId, cancellationToken);
 
         if (order == null)
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "الطلب غير موجود" };
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Order not found" };
 
         if (order.CustomerId != customerId)
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "ليس لديك صلاحية" };
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "You do not have permission" };
 
         if (order.OrderStatus is not (OrderStatus.Confirmed or OrderStatus.rescheduled))
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "لا يمكن تغيير موعد هذا الطلب" };
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "The date for this order cannot be changed" };
 
         var packageName = order.Package?.PackageName ?? string.Empty;
 
         if (string.Equals(type, "delivery", StringComparison.OrdinalIgnoreCase) && packageName != PackageNames.DoorToDoor)
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "تغيير موعد التوصيل متاح فقط لخدمة Door To Door" };
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Rescheduling delivery is only available for Door to Door service" };
 
         // 12-hour rule
         var departureTime = order.Flight.ScheduledDepartureTime;
         if ((departureTime - date.Date).TotalHours < 12)
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "لا يمكن الحجز قبل أقل من 12 ساعة من الإقلاع" };
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Booking must be made at least 12 hours before departure" };
 
         var today = DateTime.UtcNow.Date;
         if (date.Date < today)
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "لا يمكن اختيار يوم في الماضي" };
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Cannot select a date in the past" };
 
         var flightDate = departureTime.Date;
         if (date.Date > flightDate)
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "لا يمكن الحجز بعد يوم الرحلة" };
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Booking cannot be made after the flight date" };
 
         var response = new AvailableSlotsResponse();
         TimeSpan? cutoffTimeSpan = null;
@@ -642,7 +642,7 @@ public class CustomerOrderService : ICustomerOrderService
             var cutoffUtc = departureTime.AddHours(-12);
             cutoffTimeSpan = cutoffUtc.TimeOfDay;
             response.CutoffTime = cutoffTimeSpan.Value.ToString(@"hh\:mm");
-            response.Note = $"آخر slot متاح يجب أن ينتهي قبل {response.CutoffTime}";
+            response.Note = $"The last available slot must end before {response.CutoffTime}";
         }
 
         var allDrivers = await _context.Employees
@@ -699,25 +699,25 @@ public class CustomerOrderService : ICustomerOrderService
             .FirstOrDefaultAsync(o => o.OrderId == orderId, cancellationToken);
 
         if (order == null)
-            return new RescheduleResponse { Success = false, Message = "الطلب غير موجود" };
+            return new RescheduleResponse { Success = false, Message = "Order not found" };
 
         if (order.CustomerId != customerId)
-            return new RescheduleResponse { Success = false, Message = "ليس لديك صلاحية" };
+            return new RescheduleResponse { Success = false, Message = "You do not have permission" };
 
         if (order.OrderStatus is not (OrderStatus.Confirmed or OrderStatus.rescheduled))
-            return new RescheduleResponse { Success = false, Message = "لا يمكن تغيير موعد هذا الطلب" };
+            return new RescheduleResponse { Success = false, Message = "The date for this order cannot be changed" };
 
         var packageName = order.Package?.PackageName ?? string.Empty;
         bool isDelivery = string.Equals(request.Type, "delivery", StringComparison.OrdinalIgnoreCase);
 
         if (isDelivery && packageName != PackageNames.DoorToDoor)
-            return new RescheduleResponse { Success = false, Message = "تغيير موعد التوصيل متاح فقط لخدمة Door To Door" };
+            return new RescheduleResponse { Success = false, Message = "Rescheduling delivery is only available for Door to Door service" };
 
         // Validate slot is available
         var slotsResponse = await GetAvailableSlotsForRescheduleAsync(customerId, orderId, request.Type, request.NewDate, cancellationToken);
         var chosenSlot = slotsResponse.AvailableSlots.FirstOrDefault(s => s.Slot == request.NewTimeSlot);
         if (chosenSlot == null || !chosenSlot.Available)
-            return new RescheduleResponse { Success = false, Message = "هذا الموعد غير متاح" };
+            return new RescheduleResponse { Success = false, Message = "This time slot is not available" };
 
         // Parse slot times
         var slotParts = request.NewTimeSlot.Split('-');
@@ -760,12 +760,12 @@ public class CustomerOrderService : ICustomerOrderService
             UserId = customerId,
             UserType = UserType.Customer,
             NotificationType = NotificationType.OrderUpdated,
-            Title = "تم تغيير الموعد بنجاح",
-            Message = "تم تغيير الموعد بنجاح",
+            Title = "Appointment rescheduled successfully",
+            Message = "Appointment rescheduled successfully",
             NotificationChannel = NotificationChannel.InApp,
             OrderId = orderId
         });
-        await _notificationPusher.PushToCustomerAsync(customerId, "تم تغيير الموعد بنجاح", "تم تغيير الموعد بنجاح", "OrderRescheduled", orderId);
+        await _notificationPusher.PushToCustomerAsync(customerId, "Appointment rescheduled successfully", "Appointment rescheduled successfully", "OrderRescheduled", orderId);
 
         // Notification — assigned driver (if any)
         var assignedServices = order.OrderServices
@@ -779,12 +779,12 @@ public class CustomerOrderService : ICustomerOrderService
                 UserId = empId,
                 UserType = UserType.Employee,
                 NotificationType = NotificationType.OrderUpdated,
-                Title = "تم تغيير موعد الطلب",
-                Message = "تم تغيير موعد الطلب المعين لك",
+                Title = "Order Appointment Changed",
+                Message = "The appointment for the order assigned to you has been changed",
                 NotificationChannel = NotificationChannel.InApp,
                 OrderId = orderId
             });
-            await _notificationPusher.PushToEmployeeAsync(empId, "تم تغيير موعد الطلب", "تم تغيير موعد الطلب المعين لك", "OrderRescheduled", orderId);
+            await _notificationPusher.PushToEmployeeAsync(empId, "Order Appointment Changed", "The appointment for the order assigned to you has been changed", "OrderRescheduled", orderId);
         }
 
         await _context.SaveChangesAsync(cancellationToken);
@@ -794,7 +794,7 @@ public class CustomerOrderService : ICustomerOrderService
             Success = true,
             NewDate = request.NewDate.ToString("yyyy-MM-dd"),
             NewTimeSlot = request.NewTimeSlot,
-            Message = "تم تغيير الموعد بنجاح"
+            Message = "Appointment rescheduled successfully"
         };
     }
 
@@ -812,17 +812,17 @@ public class CustomerOrderService : ICustomerOrderService
             .FirstOrDefaultAsync(o => o.OrderId == orderId, cancellationToken);
 
         if (order == null)
-            throw new KeyNotFoundException("الطلب غير موجود");
+            throw new KeyNotFoundException("Order not found");
 
         if (order.CustomerId != customerId)
-            throw new UnauthorizedAccessException("ليس لديك صلاحية");
+            throw new UnauthorizedAccessException("You do not have permission");
 
         var packageName = order.Package?.PackageName ?? string.Empty;
         if (packageName is not (PackageNames.DoorToDoor or PackageNames.CarServiceToAirport))
-            throw new InvalidOperationException("بطاقة الصعود غير متاحة لهذا النوع من الطلبات");
+            throw new InvalidOperationException("Boarding pass is not available for this type of order");
 
         if (order.OrderStatus != OrderStatus.Confirmed && order.OrderStatus != OrderStatus.rescheduled && order.OrderStatus != OrderStatus.InProgress && order.OrderStatus != OrderStatus.Completed)
-            throw new InvalidOperationException("يجب إتمام الدفع أولاً");
+            throw new InvalidOperationException("Payment must be completed first");
 
         // If already generated, return from DB
         if (order.BoardingPasses.Any())

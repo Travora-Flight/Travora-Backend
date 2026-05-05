@@ -152,7 +152,7 @@ public class AdminRequestService : IAdminRequestService
         var employee = await _db.Employees.FindAsync(request.EmployeeId)
             ?? throw new KeyNotFoundException("Employee not found");
 
-        // لو فيه OrderServiceId محدد → assign لخدمة معينة
+        // If OrderServiceId is specified -> assign to a specific service
         if (request.OrderServiceId.HasValue)
         {
             var targetService = order.OrderServices
@@ -160,7 +160,7 @@ public class AdminRequestService : IAdminRequestService
                 ?? throw new KeyNotFoundException("Order service not found");
 
             if (targetService.ServiceStatus != ServiceStatus.Pending)
-                throw new InvalidOperationException("هذه الخدمة مش في حالة Pending");
+                throw new InvalidOperationException("This service is not in Pending status");
 
             targetService.AssignedEmployeeId = request.EmployeeId;
             targetService.ServiceStatus = ServiceStatus.Assigned;
@@ -169,10 +169,10 @@ public class AdminRequestService : IAdminRequestService
         }
         else
         {
-            // Fallback: assign لأول خدمة Pending
+            // Fallback: assign to the first Pending service
             var pendingService = order.OrderServices
                 .FirstOrDefault(s => s.ServiceStatus == ServiceStatus.Pending)
-                ?? throw new InvalidOperationException("لا توجد خدمات في حالة Pending");
+                ?? throw new InvalidOperationException("No services in Pending status found");
 
             pendingService.AssignedEmployeeId = request.EmployeeId;
             pendingService.ServiceStatus = ServiceStatus.Assigned;
@@ -186,8 +186,8 @@ public class AdminRequestService : IAdminRequestService
             UserId = request.EmployeeId,
             UserType = UserType.Employee,
             NotificationType = NotificationType.OrderUpdated,
-            Title = "تم تعيينك على مهمة جديدة",
-            Message = "تم تعيينك يدوياً من قِبَل الإدارة",
+            Title = "You have been assigned to a new task",
+            Message = "You have been manually assigned by the administration",
             NotificationChannel = NotificationChannel.InApp,
             OrderId = order.OrderId
         });

@@ -18,4 +18,5 @@ public interface ICustomerProfileService
     Task<(bool Success, string Message)> RemoveSavedFlightAsync(int customerId, int savedFlightId);
     Task<(bool Success, string Message, bool? NotificationEnabled)> ToggleFlightNotificationAsync(int customerId, int savedFlightId);
     Task<(bool Success, string Message, object? Data)> AddPaymentMethodAsync(int customerId, AddPaymentMethodRequest request);
+    Task ChangePasswordAsync(int customerId, string currentPassword, string newPassword, string confirmPassword);
 }

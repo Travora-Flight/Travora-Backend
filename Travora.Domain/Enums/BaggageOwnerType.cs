@@ -2,6 +2,6 @@ namespace Travora.Domain.Enums;
 
 public enum BaggageOwnerType
 {
-    Customer = 1,  // العميل صاحب الشنطة
-    Companion = 2  // مرافق العميل
+    Customer = 1,  // The customer who owns the bag
+    Companion = 2  // The customer's companion
 }

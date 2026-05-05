@@ -54,7 +54,7 @@ public class AirportDetailsService : IAirportDetailsService
             .FirstOrDefaultAsync(a => a.CodeIcaoAirport == code || a.CodeIataAirport == code);
 
         if (airport == null)
-            throw new KeyNotFoundException("المطار غير موجود");
+            throw new KeyNotFoundException("Airport not found");
 
         // 2) Get weather (Aviation Weather API requires ICAO code)
         var weather = await GetWeatherAsync(airport.CodeIcaoAirport, airport);

@@ -82,7 +82,7 @@ public class CustomerProfileService : ICustomerProfileService
     {
         var customer = await _db.Customers.FirstOrDefaultAsync(c => c.CustomerId == customerId);
         if (customer == null)
-            return (false, "العميل غير موجود");
+            return (false, "Customer not found");
 
         // Validate MobileNumber — required when provided
         if (!string.IsNullOrEmpty(request.MobileNumber))
@@ -94,19 +94,18 @@ public class CustomerProfileService : ICustomerProfileService
                 Regex.IsMatch(cleaned, @"^002001[0-9]{9}$");
 
             if (!isValid)
-                return (false, "رقم الهاتف غير صحيح");
+                return (false, "Invalid phone number");
 
             customer.PhoneNumber = cleaned;
         }
 
         if (request.FirstName != null) customer.Firstname = request.FirstName;
         if (request.LastName  != null) customer.Lastname  = request.LastName;
-        if (request.Gender    != null) customer.Gender    = request.Gender;
 
         customer.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
-        return (true, "تم تحديث بيانات الحساب بنجاح");
+        return (true, "Account data updated successfully");
     }
 
     // ── POST Upload Photo ────────────────────────────────────────────────────
@@ -114,14 +113,14 @@ public class CustomerProfileService : ICustomerProfileService
     {
         var allowedTypes = new[] { "image/jpeg", "image/jpg", "image/png" };
         if (!allowedTypes.Contains(photo.ContentType.ToLower()))
-            throw new InvalidOperationException("يجب رفع صورة بصيغة jpg أو png فقط");
+            throw new InvalidOperationException("Only JPG or PNG images are allowed");
 
         const long maxSize = 5L * 1024 * 1024; // 5 MB
         if (photo.Length > maxSize)
-            throw new InvalidOperationException("حجم الصورة يجب أن لا يتجاوز 5MB");
+            throw new InvalidOperationException("Image size must not exceed 5MB");
 
         var customer = await _db.Customers.FirstOrDefaultAsync(c => c.CustomerId == customerId)
-            ?? throw new KeyNotFoundException("العميل غير موجود");
+            ?? throw new KeyNotFoundException("Customer not found");
 
         // Delete old photo from Cloudinary if exists
         if (!string.IsNullOrEmpty(customer.ProfileImagePath))
@@ -148,10 +147,10 @@ public class CustomerProfileService : ICustomerProfileService
     public async Task<(bool Success, string Message)> DeletePhotoAsync(int customerId)
     {
         var customer = await _db.Customers.FirstOrDefaultAsync(c => c.CustomerId == customerId)
-            ?? throw new KeyNotFoundException("العميل غير موجود");
+            ?? throw new KeyNotFoundException("Customer not found");
 
         if (string.IsNullOrEmpty(customer.ProfileImagePath))
-            return (false, "لا توجد صورة لحذفها");
+            return (false, "No photo to delete");
 
         var publicId = _cloudinary.ExtractPublicId(customer.ProfileImagePath);
         await _cloudinary.DeleteFileAsync(publicId);
@@ -160,7 +159,7 @@ public class CustomerProfileService : ICustomerProfileService
         customer.UpdatedAt        = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
-        return (true, "تم حذف الصورة بنجاح");
+        return (true, "Photo deleted successfully");
     }
 
     // ── GET Settings (Redis) ─────────────────────────────────────────────────
@@ -261,7 +260,7 @@ public class CustomerProfileService : ICustomerProfileService
     {
         var flightExists = await _db.Flights.AnyAsync(f => f.FlightId == flightId);
         if (!flightExists)
-            return (false, "الرحلة غير موجودة", null);
+            return (false, "Flight not found", null);
 
         var existing = await _db.SavedFlights
             .FirstOrDefaultAsync(sf => sf.CustomerId == customerId && sf.FlightId == flightId);
@@ -269,13 +268,13 @@ public class CustomerProfileService : ICustomerProfileService
         if (existing != null)
         {
             if (existing.IsActive)
-                return (false, "الرحلة محفوظة بالفعل", null);
+                return (false, "Flight already saved", null);
 
             existing.IsActive             = true;
             existing.NotificationEnabled  = true;
             existing.SavedAt              = DateTime.UtcNow;
             await _db.SaveChangesAsync();
-            return (true, "تم الحفظ", existing.SavedFlightId);
+            return (true, "Saved", existing.SavedFlightId);
         }
 
         var newSavedFlight = new SavedFlight
@@ -290,7 +289,7 @@ public class CustomerProfileService : ICustomerProfileService
         _db.SavedFlights.Add(newSavedFlight);
         await _db.SaveChangesAsync();
 
-        return (true, "تم الحفظ", newSavedFlight.SavedFlightId);
+        return (true, "Saved", newSavedFlight.SavedFlightId);
     }
 
     // ── DELETE Saved Flight (soft delete) ────────────────────────────────────
@@ -300,12 +299,12 @@ public class CustomerProfileService : ICustomerProfileService
             .FirstOrDefaultAsync(sf => sf.SavedFlightId == savedFlightId && sf.CustomerId == customerId);
 
         if (savedFlight == null)
-            return (false, "الرحلة غير موجودة أو لا تمتلك الصلاحية");
+            return (false, "Flight not found or unauthorized");
 
         savedFlight.IsActive = false;
         await _db.SaveChangesAsync();
 
-        return (true, "تم حذف الرحلة");
+        return (true, "Flight removed");
     }
 
     // ── PATCH Toggle Notification ─────────────────────────────────────────────
@@ -315,12 +314,12 @@ public class CustomerProfileService : ICustomerProfileService
             .FirstOrDefaultAsync(sf => sf.SavedFlightId == savedFlightId && sf.CustomerId == customerId && sf.IsActive);
 
         if (savedFlight == null)
-            return (false, "الرحلة غير موجودة", null);
+            return (false, "Flight not found", null);
 
         savedFlight.NotificationEnabled = !savedFlight.NotificationEnabled;
         await _db.SaveChangesAsync();
 
-        return (true, "تم التعديل بنجاح", savedFlight.NotificationEnabled);
+        return (true, "Updated successfully", savedFlight.NotificationEnabled);
     }
 
     // ── POST Add Payment Method ───────────────────────────────────────────────
@@ -330,10 +329,10 @@ public class CustomerProfileService : ICustomerProfileService
         var currentMonth = DateTime.UtcNow.Month;
 
         if (request.ExpiryMonth < 1 || request.ExpiryMonth > 12)
-            return (false, "شهر الانتهاء غير صالح", null);
+            return (false, "Invalid expiry month", null);
 
         if (request.ExpiryYear < currentYear || (request.ExpiryYear == currentYear && request.ExpiryMonth < currentMonth))
-            return (false, "البطاقة منتهية الصلاحية", null);
+            return (false, "The card is expired", null);
 
         string lastFour = request.CardNumber.Length >= 4
             ? request.CardNumber[^4..]
@@ -357,7 +356,7 @@ public class CustomerProfileService : ICustomerProfileService
             !pm.IsDeleted);
 
         if (isDuplicate)
-            return (false, "هذه البطاقة مضافة بالفعل", null);
+            return (false, "This card is already added", null);
 
         bool isFirstCard = !await _db.PaymentMethods.AnyAsync(pm =>
             pm.CustomerId == customerId && pm.IsActive && !pm.IsDeleted);
@@ -392,6 +391,38 @@ public class CustomerProfileService : ICustomerProfileService
             isDefault       = isFirstCard
         };
 
-        return (true, "تم إضافة البطاقة بنجاح", resultData);
+        return (true, "Card added successfully", resultData);
+    }
+
+    // ── POST Change Password ────────────────────────────────────────────────
+    public async Task ChangePasswordAsync(int customerId, string currentPassword, string newPassword, string confirmPassword)
+    {
+        var customer = await _db.Customers.FindAsync(customerId)
+            ?? throw new KeyNotFoundException("Customer not found");
+
+        if (string.IsNullOrEmpty(customer.PasswordHash) || !BCrypt.Net.BCrypt.Verify(currentPassword, customer.PasswordHash))
+            throw new UnauthorizedAccessException("Current password is incorrect");
+
+        if (newPassword != confirmPassword)
+            throw new ArgumentException("Passwords do not match");
+
+        if (currentPassword == newPassword)
+            throw new ArgumentException("New password cannot be the same as the current password");
+
+        // Password strength validation
+        if (newPassword.Length < 8)
+            throw new ArgumentException("Password must be at least 8 characters");
+        if (!newPassword.Any(char.IsUpper))
+            throw new ArgumentException("Password must contain an uppercase letter");
+        if (!newPassword.Any(char.IsLower))
+            throw new ArgumentException("Password must contain a lowercase letter");
+        if (!newPassword.Any(char.IsDigit))
+            throw new ArgumentException("Password must contain a number");
+        if (!newPassword.Any(c => !char.IsLetterOrDigit(c)))
+            throw new ArgumentException("Password must contain a symbol (!@#$%^&*)");
+
+        customer.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
+        customer.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
     }
 }

@@ -216,7 +216,7 @@ public class AviationSeederService : IAviationSeederService
                 // but wait, the model requires CodeIataCity to not be null because City is a required FK.
                 // Assuming it's tracked by string in DB... wait... The navigation property is public City City { get; set; } = null!;
                 // But the FK property in City is 'CodeIataCity' ??? Actually I need to check how they map it.
-                // User said: لو codeIataCity مش موجود في CITY table → insert بـ codeIataCity = null
+                // If codeIataCity is not in the CITY table → insert with codeIataCity = null
                 // So I will make it null if not found, but it might throw EF validation if it's required. Let's try.
                 string? cityCode = validCities.Contains(item.CodeIataCity ?? "") ? item.CodeIataCity : null;
 
@@ -391,7 +391,7 @@ public class AviationSeederService : IAviationSeederService
                 validAirlines[a.CodeIataAirline] = a.AirlineId;
         }
 
-        // جيب كل الموجودين في Dictionary واحدة
+        // Get all existing records in a single Dictionary
         var existingAircrafts = await _db.Aircrafts
             .ToDictionaryAsync(a => a.NumberRegistration);
 
@@ -486,14 +486,14 @@ public class AviationSeederService : IAviationSeederService
             }
         }
 
-        // Insert الباقي
+        // Insert the rest
         if (toInsert.Count > 0)
         {
             await _db.Aircrafts.AddRangeAsync(toInsert);
             await _db.SaveChangesAsync();
         }
 
-        // Save كل الـ updates
+        // Save all updates
         await _db.SaveChangesAsync();
 
         return result;

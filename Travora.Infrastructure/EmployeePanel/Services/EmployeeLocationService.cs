@@ -32,7 +32,7 @@ public class EmployeeLocationService : IEmployeeLocationService
             ?? throw new KeyNotFoundException("Employee not found");
 
         if (employee.JobRole != JobRole.Driver)
-            throw new UnauthorizedAccessException("GPS tracking للـ Drivers فقط");
+            throw new UnauthorizedAccessException("GPS tracking is for Drivers only");
 
         var status = request.OrderServiceId.HasValue ? "on_service" : "available";
 

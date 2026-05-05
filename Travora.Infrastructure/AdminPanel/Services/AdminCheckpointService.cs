@@ -39,7 +39,7 @@ public class AdminCheckpointService : IAdminCheckpointService
         var c = await _db.Checkpoints
             .Include(x => x.Employees)
             .FirstOrDefaultAsync(x => x.CheckpointId == id)
-            ?? throw new KeyNotFoundException("نقطة التفتيش غير موجودة");
+            ?? throw new KeyNotFoundException("Checkpoint not found");
 
         var activeEmployee = c.Employees.FirstOrDefault(e => e.IsActive && !e.IsDeleted);
 
@@ -61,7 +61,7 @@ public class AdminCheckpointService : IAdminCheckpointService
     {
         if (!Enum.TryParse<CheckpointType>(request.CheckpointType, true, out var cType))
         {
-            throw new ArgumentException("نوع نقطة التفتيش غير صالح");
+            throw new ArgumentException("Invalid checkpoint type");
         }
 
         var checkpoint = new Checkpoint
@@ -84,7 +84,7 @@ public class AdminCheckpointService : IAdminCheckpointService
     public async Task<CheckpointResponse> UpdateCheckpointAsync(int id, UpdateCheckpointRequest request)
     {
         var c = await _db.Checkpoints.FindAsync(id)
-            ?? throw new KeyNotFoundException("نقطة التفتيش غير موجودة");
+            ?? throw new KeyNotFoundException("Checkpoint not found");
 
         if (!string.IsNullOrEmpty(request.CheckpointName)) c.CheckpointName = request.CheckpointName;
         if (!string.IsNullOrEmpty(request.Description)) c.Description = request.Description;
@@ -97,7 +97,7 @@ public class AdminCheckpointService : IAdminCheckpointService
         {
             if (!Enum.TryParse<CheckpointType>(request.CheckpointType, true, out var cType))
             {
-                throw new ArgumentException("نوع نقطة التفتيش غير صالح");
+                throw new ArgumentException("Invalid checkpoint type");
             }
             c.CheckpointType = cType;
         }
@@ -111,11 +111,11 @@ public class AdminCheckpointService : IAdminCheckpointService
         var c = await _db.Checkpoints
             .Include(x => x.Employees)
             .FirstOrDefaultAsync(x => x.CheckpointId == id)
-            ?? throw new KeyNotFoundException("نقطة التفتيش غير موجودة");
+            ?? throw new KeyNotFoundException("Checkpoint not found");
 
         if (c.Employees.Any(e => e.IsActive && !e.IsDeleted))
         {
-            throw new InvalidOperationException("لا يمكن حذف نقطة تفتيش معينة لموظف");
+            throw new InvalidOperationException("Cannot delete a checkpoint that is assigned to an employee");
         }
 
         _db.Checkpoints.Remove(c);

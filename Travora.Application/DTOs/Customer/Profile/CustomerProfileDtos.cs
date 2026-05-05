@@ -25,7 +25,6 @@ public class UpdateAccountRequest
     public string? FirstName { get; set; }
     public string? LastName { get; set; }
     public string? MobileNumber { get; set; }
-    public string? Gender { get; set; }
 }
 
 public class UploadPhotoResponse

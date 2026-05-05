@@ -25,20 +25,20 @@ public static class SwaggerExtensions
             options.CustomSchemaIds(type => type.FullName?.Replace("Travora.Application.DTOs.", "").Replace(".", "_") ?? type.Name);
             options.OrderActionsBy(apiDesc =>
             {
-                // بنجيب اسم الـ Controller
+                // Get the controller name
                 var controllerName = apiDesc.ActionDescriptor.RouteValues["controller"];
 
-                // لو الكنترولر اسمه Auth، هنديله الأولوية "0" عشان يترسم فوق خالص
+                // If the controller name is Auth, give it priority "0" to appear at the top
                 if (controllerName == "Auth")
                 {
                     return "0";
                 }
 
-                // أي كنترولر تاني هنديله "1" وبعدين اسمه، عشان ينزلوا تحت ويترتبوا أبجدي
+                // For any other controller, give it "1" followed by its name, so they appear below and are sorted alphabetically
                 return $"1_{controllerName}";
             });
 
-            // إعداد JWT في Swagger
+            // Configure JWT in Swagger
             options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
             {
                 Name = "Authorization",

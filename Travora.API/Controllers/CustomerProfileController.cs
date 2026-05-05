@@ -127,7 +127,7 @@ public class CustomerProfileController : ControllerBase
 
         if (!success)
         {
-            if (message.Contains("غير موجودة")) return NotFound(new CustomerProfileSaveFlightResponse { Success = success, Message = message });
+            if (message.Contains("not found")) return NotFound(new CustomerProfileSaveFlightResponse { Success = success, Message = message });
             return Conflict(new CustomerProfileSaveFlightResponse { Success = success, Message = message });
         }
 
@@ -152,6 +152,15 @@ public class CustomerProfileController : ControllerBase
         var (success, message, notificationEnabled) = await _profileService.ToggleFlightNotificationAsync(GetCustomerId(), savedFlightId);
         if (!success) return NotFound(new CustomerProfileToggleNotificationResponse { Success = success, Message = message });
         return Ok(new CustomerProfileToggleNotificationResponse { Success = success, NotificationEnabled = notificationEnabled ?? false });
+    }
+
+    // ENDPOINT 13 — POST change password
+    [HttpPost("change-password")]
+    [ProducesResponseType(typeof(CustomerChangePasswordResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ChangePassword([FromBody] CustomerChangePasswordRequest request)
+    {
+        await _profileService.ChangePasswordAsync(GetCustomerId(), request.CurrentPassword, request.NewPassword, request.ConfirmPassword);
+        return Ok(new CustomerChangePasswordResponse { Success = true, Message = "Password changed successfully" });
     }
 }
 
@@ -179,5 +188,11 @@ public class CustomerProfileToggleNotificationResponse
 {
     public bool Success { get; set; }
     public bool NotificationEnabled { get; set; }
+    public string Message { get; set; } = string.Empty;
+}
+
+public class CustomerChangePasswordResponse
+{
+    public bool Success { get; set; }
     public string Message { get; set; } = string.Empty;
 }

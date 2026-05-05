@@ -38,7 +38,7 @@ public class CarServiceOrderService : ICarServiceOrderService
     }
 
     // ===================================================================
-    // STEP 1 — التحقق من بيانات الرحلة + نوع الخدمة
+    // STEP 1 — Flight Data Validation + Service Type
     // ===================================================================
     public async Task<CarServiceValidateFlightResponse> ValidateFlightAsync(
         int customerId, CarServiceValidateFlightRequest request, CancellationToken cancellationToken = default)
@@ -48,13 +48,13 @@ public class CarServiceOrderService : ICarServiceOrderService
             .FirstOrDefaultAsync(c => c.CustomerId == customerId, cancellationToken);
 
         if (customer == null)
-            return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = "العميل غير موجود" };
+            return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = "Customer not found" };
         if (string.IsNullOrEmpty(customer.PassportNumber))
-            return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = "رقم الجواز غير موجود، يرجى استكمال البيانات" };
+            return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = "Passport number not found, please complete your profile data" };
         if (customer.AccountStatus != CustomerAccountStatus.Verified)
-            return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = "يجب توثيق حسابك لاستخدام الخدمة" };
+            return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = "Your account must be verified to use this service" };
 
-        // التحقق من أن التذكرة مش مستخدمة في نفس الباكيج
+        // Check if ticket is used in the same package
         var packageName = request.ServiceType == CarServiceType.DeliveryToAirport
             ? PackageNames.CarServiceToAirport
             : PackageNames.CarServiceFromAirport;
@@ -67,7 +67,7 @@ public class CarServiceOrderService : ICarServiceOrderService
             return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = ex.Message };
         }
 
-        // استدعاء Airline API
+        // Call Airline API
         var airlineReq = new AirlineValidateTicketRequest
         {
             PassportNumber = customer.PassportNumber,
@@ -84,7 +84,7 @@ public class CarServiceOrderService : ICarServiceOrderService
         {
             var errorMsg = airlineRes.Errors != null && airlineRes.Errors.Any()
                 ? string.Join(", ", airlineRes.Errors)
-                : "بيانات الرحلة أو التذكرة غير صحيحة";
+                : "Flight or ticket data is invalid";
             return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = errorMsg };
         }
 
@@ -101,7 +101,7 @@ public class CarServiceOrderService : ICarServiceOrderService
         var departure = flightData.DepartureTimeUtc;
         var diff = departure - DateTime.UtcNow;
         if (diff.TotalHours < 12)
-            return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = "لا يمكن الحجز قبل أقل من 12 ساعة من الإقلاع" };
+            return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = "Booking must be made at least 12 hours before departure" };
 
         var bookingDeadlineUtc = departure.AddHours(-12);
 
@@ -130,17 +130,17 @@ public class CarServiceOrderService : ICarServiceOrderService
     }
 
     // ===================================================================
-    // STEP 2 — إضافة مرافقين
+    // STEP 2 — Add Companions
     // ===================================================================
     public async Task<ValidateCompanionResponse> ValidateCompanionAsync(
         int customerId, ValidateCompanionRequest request, CancellationToken cancellationToken = default)
     {
         var draft = await _draftOrderService.GetCarServiceDraftAsync(customerId.ToString(), cancellationToken);
         if (draft == null || draft.FlightInfo == null)
-            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "الجلسة انتهت أو غير موجودة، يرجى إعادة البدء" };
+            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Session expired or not found, please restart the process" };
 
         if (request.PassportNumber == draft.PassengerInfo?.PassportNumber)
-            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "لا يمكنك إضافة نفسك كمرافق" };
+            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "You cannot add yourself as a companion" };
 
         var airlineReq = new AirlineValidateTicketRequest
         {
@@ -158,12 +158,12 @@ public class CarServiceOrderService : ICarServiceOrderService
         {
             var errorMsg = airlineRes.Errors != null && airlineRes.Errors.Any()
                 ? string.Join(", ", airlineRes.Errors)
-                : "بيانات المرافق غير صحيحة";
+                : "Companion data is invalid";
             return new ValidateCompanionResponse { IsValid = false, ErrorMessage = errorMsg };
         }
 
         if (flightData.FlightNumber != draft.FlightInfo.FlightNumber)
-            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "المرافق ليس على نفس الرحلة" };
+            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Companion is not on the same flight" };
 
         string imageUrl = "https://res.cloudinary.com/travora/image/upload/vdefault/companion.jpg";
         if (request.PassportImage != null && request.PassportImage.Length > 0)
@@ -213,15 +213,15 @@ public class CarServiceOrderService : ICarServiceOrderService
     }
 
     // ===================================================================
-    // STEP 2.5 — التحقق من إجمالي الشنط
+    // STEP 2.5 — Total Baggage Validation
     // ===================================================================
     public async Task<ValidateBaggageResponse> ValidateBaggageAsync(int customerId, CancellationToken cancellationToken = default)
     {
         var draft = await _draftOrderService.GetCarServiceDraftAsync(customerId.ToString(), cancellationToken);
         if (draft == null || draft.FlightInfo == null)
-            return new ValidateBaggageResponse { IsValid = false, ErrorMessage = "الجلسة غير موجودة" };
+            return new ValidateBaggageResponse { IsValid = false, ErrorMessage = "Session not found" };
 
-        // استدعاء baggage-check بالتوازي
+        // Call baggage-check in parallel
         var tasks = new List<(string TicketNumber, Task<AirlineBaggageCheckResponse> Task)>
         {
             (draft.TicketNumber, _airlineService.GetBaggageCountAsync(draft.TicketNumber, cancellationToken))
@@ -232,14 +232,14 @@ public class CarServiceOrderService : ICarServiceOrderService
 
         await Task.WhenAll(tasks.Select(t => t.Task));
 
-        // بناء الـ breakdown من الـ response الحقيقية
+        // Build breakdown from the real response
         var breakdown = new List<BaggageBreakdown>();
         int totalFromAirline = 0;
 
         foreach (var t in tasks)
         {
             var result = t.Task.Result;
-            // لو فيه tickets في الـ response، استخدمها
+            // If tickets are in the response, use them
             if (result.Tickets != null && result.Tickets.Any())
             {
                 foreach (var ticket in result.Tickets)
@@ -268,7 +268,7 @@ public class CarServiceOrderService : ICarServiceOrderService
             {
                 IsValid = false,
                 ErrorCode = "BaggageCountMismatch",
-                ErrorMessage = "عدد الشنط المدخل لا يطابق السجل لدى شركة الطيران",
+                ErrorMessage = "The number of bags entered does not match the airline records",
                 Expected = totalFromAirline,
                 Actual = draft.BaggageCount,
                 TotalBaggageCount = totalFromAirline,
@@ -296,17 +296,17 @@ public class CarServiceOrderService : ICarServiceOrderService
     }
 
     // ===================================================================
-    // STEP 3 — العنوان (Reverse Geocoding)
+    // STEP 3 — Location (Reverse Geocoding)
     // ===================================================================
     public async Task<ResolveLocationResponse> ResolveLocationAsync(
         int customerId, CarServiceResolveLocationRequest request, CancellationToken cancellationToken = default)
     {
         var draft = await _draftOrderService.GetCarServiceDraftAsync(customerId.ToString(), cancellationToken);
         if (draft == null)
-            return new ResolveLocationResponse { IsValid = false, ErrorMessage = "الجلسة غير موجودة" }; // using return new ErrorMessage since return type changed
+            return new ResolveLocationResponse { IsValid = false, ErrorMessage = "Session not found" }; // using return new ErrorMessage since return type changed
 
         if (!draft.BaggageValidated)
-            return new ResolveLocationResponse { IsValid = false, ErrorMessage = "يجب إكمال خطوة التحقق من الشنط أولاً" };
+            return new ResolveLocationResponse { IsValid = false, ErrorMessage = "Baggage validation step must be completed first" };
 
         var result = await _geocodingService.ReverseGeocodeAsync(request.Latitude, request.Longitude, cancellationToken);
 
@@ -338,25 +338,25 @@ public class CarServiceOrderService : ICarServiceOrderService
     }
 
     // ===================================================================
-    // STEP 4 — اختيار المواعيد
+    // STEP 4 — Slot Selection
     // ===================================================================
     public async Task<AvailableSlotsResponse> GetAvailableSlotsAsync(
         int customerId, DateTime date, CancellationToken cancellationToken = default)
     {
         var draft = await _draftOrderService.GetCarServiceDraftAsync(customerId.ToString(), cancellationToken);
         if (draft == null || draft.FlightInfo == null)
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "الجلسة غير موجودة، يرجى البدء من الخطوة الأولى" };
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Session not found, please start from the first step" };
 
         if (string.IsNullOrEmpty(draft.LocationFormattedAddress))
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "يجب إكمال خطوة تحديد الموقع أولاً" };
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Location selection step must be completed first" };
 
         var flightDate = draft.FlightInfo.DepartureTimeUtc.Date;
         var today = DateTime.UtcNow.Date;
 
         if (date.Date < today)
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "لا يمكن اختيار يوم في الماضي" };
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Cannot select a day in the past" };
         if (date.Date > flightDate)
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "لا يمكن الحجز بعد يوم الرحلة" };
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Cannot book after the flight date" };
 
         var response = new AvailableSlotsResponse();
         TimeSpan? cutoffTimeSpan = null;
@@ -366,7 +366,7 @@ public class CarServiceOrderService : ICarServiceOrderService
             var cutoffUtc = draft.FlightInfo.DepartureTimeUtc.AddHours(-12);
             cutoffTimeSpan = cutoffUtc.TimeOfDay;
             response.CutoffTime = cutoffTimeSpan.Value.ToString(@"hh\:mm");
-            response.Note = $"آخر slot متاح يجب أن ينتهي قبل {response.CutoffTime}";
+            response.Note = $"The last available slot must end before {response.CutoffTime}";
         }
 
         var allDrivers = await _context.Employees
@@ -412,25 +412,25 @@ public class CarServiceOrderService : ICarServiceOrderService
     }
 
     // ===================================================================
-    // STEP 5 — الشنط (delivery_from_airport فقط) — بيانات حقيقية من baggageTags
+    // STEP 5 — Bags (delivery_from_airport only) — Real data from baggageTags
     // ===================================================================
     public async Task<MyBagsResponse> GetMyBagsAsync(int customerId, CancellationToken cancellationToken = default)
     {
         var draft = await _draftOrderService.GetCarServiceDraftAsync(customerId.ToString(), cancellationToken);
         if (draft == null || draft.FlightInfo == null)
-            return new MyBagsResponse { IsValid = false, ErrorMessage = "الجلسة غير موجودة" };
+            return new MyBagsResponse { IsValid = false, ErrorMessage = "Session not found" };
 
         if (string.IsNullOrEmpty(draft.SelectedSlot))
-            return new MyBagsResponse { IsValid = false, ErrorMessage = "يجب إكمال خطوة اختيار الموعد أولاً" };
+            return new MyBagsResponse { IsValid = false, ErrorMessage = "Appointment selection step must be completed first" };
 
         if (draft.ServiceType != CarServiceType.DeliveryFromAirport)
-            return new MyBagsResponse { IsValid = false, ErrorMessage = "هذه الخطوة متاحة فقط لخدمة delivery From Airport" };
+            return new MyBagsResponse { IsValid = false, ErrorMessage = "This step is only available for delivery From Airport service" };
 
-        // جمع كل الـ ticketNumbers
+        // Collect all ticketNumbers
         var ticketNumbers = new List<string> { draft.TicketNumber };
         ticketNumbers.AddRange(draft.Companions.Select(c => c.TicketNumber));
 
-        // استدعاء baggage-check بالتوازي
+        // Call baggage-check in parallel
         var tasks = ticketNumbers.Select(tn => new
         {
             TicketNumber = tn,
@@ -443,7 +443,7 @@ public class CarServiceOrderService : ICarServiceOrderService
         foreach (var t in tasks)
         {
             var result = t.Task.Result;
-            // استخدام baggageTags الحقيقية من الـ response
+            // Use real baggageTags from the response
             if (result.Tickets != null)
             {
                 foreach (var ticket in result.Tickets)
@@ -471,45 +471,45 @@ public class CarServiceOrderService : ICarServiceOrderService
     }
 
     // ===================================================================
-    // STEP 5.5 — اختيار الشنط
+    // STEP 5.5 — Bag Selection
     // ===================================================================
     public async Task SelectBagsAsync(int customerId, SelectBagsRequest request, CancellationToken cancellationToken = default)
     {
         var draft = await _draftOrderService.GetCarServiceDraftAsync(customerId.ToString(), cancellationToken);
         if (draft == null)
-            throw new Exception("الجلسة غير موجودة");
+            throw new Exception("Session not found");
 
         if (string.IsNullOrEmpty(draft.SelectedSlot))
-            throw new Exception("يجب إكمال خطوة اختيار الموعد أولاً");
+            throw new Exception("Appointment selection step must be completed first");
 
         if (draft.ServiceType != CarServiceType.DeliveryFromAirport)
-            throw new Exception("هذه الخطوة متاحة فقط لخدمة delivery From Airport");
+            throw new Exception("This step is only available for delivery From Airport service");
 
         if (request.SelectedTagNumbers == null || !request.SelectedTagNumbers.Any())
-            throw new Exception("يجب اختيار شنطة واحدة على الأقل");
+            throw new Exception("At least one bag must be selected");
 
-        // امنع العميل من اختيار نفس الـ tag مرتين
+        // Prevent customer from selecting same tag twice
         if (request.SelectedTagNumbers.Distinct().Count() != request.SelectedTagNumbers.Count)
-            throw new Exception("لا يمكن اختيار نفس الشنطة مرتين");
+            throw new Exception("The same bag cannot be selected twice");
 
         draft.SelectedBagTags = request.SelectedTagNumbers;
         await _draftOrderService.SaveCarServiceDraftAsync(draft, TimeSpan.FromMinutes(30), cancellationToken);
     }
 
     // ===================================================================
-    // STEP 6 — الفاتورة
+    // STEP 6 — Invoice
     // ===================================================================
     public async Task<InvoiceResponse> GetInvoiceAsync(int customerId, CancellationToken cancellationToken = default)
     {
         var draft = await _draftOrderService.GetCarServiceDraftAsync(customerId.ToString(), cancellationToken);
         if (draft == null || draft.FlightInfo == null)
-            return new InvoiceResponse { IsValid = false, ErrorMessage = "الجلسة غير موجودة" };
+            return new InvoiceResponse { IsValid = false, ErrorMessage = "Session not found" };
 
         if (string.IsNullOrEmpty(draft.SelectedSlot))
-            return new InvoiceResponse { IsValid = false, ErrorMessage = "يجب إكمال خطوة اختيار الموعد أولاً" };
+            return new InvoiceResponse { IsValid = false, ErrorMessage = "Appointment selection step must be completed first" };
 
         if (draft.ServiceType == CarServiceType.DeliveryFromAirport && !draft.SelectedBagTags.Any())
-            return new InvoiceResponse { IsValid = false, ErrorMessage = "يجب إكمال خطوة اختيار الشنط المراد توصيلها أولاً" };
+            return new InvoiceResponse { IsValid = false, ErrorMessage = "Baggage selection step must be completed first" };
 
         var packageName = draft.ServiceType == CarServiceType.DeliveryToAirport
             ? PackageNames.CarServiceToAirport
@@ -571,22 +571,22 @@ public class CarServiceOrderService : ICarServiceOrderService
     }
 
     // ===================================================================
-    // STEP 7 — تأكيد الأوردر
+    // STEP 7 — Confirm Order
     // ===================================================================
     public async Task<ConfirmOrderResponse> ConfirmOrderAsync(int customerId, CancellationToken cancellationToken = default)
     {
         var draft = await _draftOrderService.GetCarServiceDraftAsync(customerId.ToString(), cancellationToken);
         if (draft == null || draft.FlightInfo == null)
-            return new ConfirmOrderResponse { Success = false, ErrorMessage = "الجلسة غير موجودة" };
+            return new ConfirmOrderResponse { Success = false, ErrorMessage = "Session not found" };
 
         if (!draft.BaggageValidated)
-            return new ConfirmOrderResponse { Success = false, ErrorMessage = "يجب إكمال خطوة التحقق من الشنط أولاً" };
+            return new ConfirmOrderResponse { Success = false, ErrorMessage = "Baggage validation step must be completed first" };
         if (string.IsNullOrEmpty(draft.LocationFormattedAddress))
-            return new ConfirmOrderResponse { Success = false, ErrorMessage = "يجب إكمال خطوة تحديد الموقع أولاً" };
+            return new ConfirmOrderResponse { Success = false, ErrorMessage = "Location selection step must be completed first" };
         if (string.IsNullOrEmpty(draft.SelectedSlot))
-            return new ConfirmOrderResponse { Success = false, ErrorMessage = "يجب إكمال خطوة اختيار الموعد أولاً" };
+            return new ConfirmOrderResponse { Success = false, ErrorMessage = "Appointment selection step must be completed first" };
         if (draft.ServiceType == CarServiceType.DeliveryFromAirport && !draft.SelectedBagTags.Any())
-            return new ConfirmOrderResponse { Success = false, ErrorMessage = "يجب إكمال خطوة اختيار الشنط المراد توصيلها أولاً" };
+            return new ConfirmOrderResponse { Success = false, ErrorMessage = "Baggage selection step must be completed first" };
 
         var strategy = _context.Database.CreateExecutionStrategy();
 
@@ -605,7 +605,7 @@ public class CarServiceOrderService : ICarServiceOrderService
 
                 string flightNo = draft.FlightInfo.FlightNumber;
 
-                // 1) استخرج IATA codes من draft
+                // 1) Extract IATA codes from draft
                 var depIata = (draft.FlightInfo.DepartureIataCode
                     ?? draft.FlightInfo.DepartureAirport
                     ?? "").Trim();
@@ -613,11 +613,11 @@ public class CarServiceOrderService : ICarServiceOrderService
                     ?? draft.FlightInfo.ArrivalAirport
                     ?? "").Trim();
 
-                // 2) ابحث عن الرحلة بالـ FlightNumber
+                // 2) Find flight by FlightNumber
                 var flight = await _context.Flights
                     .FirstOrDefaultAsync(f => f.FlightNumber == flightNo, cancellationToken);
 
-                // 3) لو جديدة → أنشئها
+                // 3) If new → create it
                 if (flight == null)
                 {
                     flight = new Domain.Entities.Flight
@@ -637,7 +637,7 @@ public class CarServiceOrderService : ICarServiceOrderService
                     };
                     _context.Flights.Add(flight);
                 }
-                // 4) لو موجودة → حدّث البيانات
+                // 4) If exists → update data
                 else
                 {
                     flight.DepartureIataCode = depIata;
@@ -650,7 +650,7 @@ public class CarServiceOrderService : ICarServiceOrderService
                     flight.UpdatedAt = DateTime.UtcNow;
                 }
 
-                // 5) اربط بالـ Airport من جدول Airports
+                // 5) Link to Airport from Airports table
                 var departureAirport = await _context.Airports
                     .FirstOrDefaultAsync(a => a.CodeIataAirport == depIata, cancellationToken);
                 if (departureAirport != null)
@@ -661,7 +661,7 @@ public class CarServiceOrderService : ICarServiceOrderService
                 if (arrivalAirport != null)
                     flight.ArrivalAirportId = arrivalAirport.AirportId;
 
-                // 6) احفظ
+                // 6) Save
                 await _context.SaveChangesAsync(cancellationToken);
 
                 // Locations
@@ -973,7 +973,7 @@ public class CarServiceOrderService : ICarServiceOrderService
     }
 
     // ===================================================================
-    // STEP 8 — تعيين سائق بعد الدفع + إشعار العميل
+    // STEP 8 — Assign driver after payment + notify customer
     // ===================================================================
     public async Task AssignEmployeesAfterPaymentAsync(int orderId, CancellationToken cancellationToken = default)
     {
@@ -997,15 +997,15 @@ public class CarServiceOrderService : ICarServiceOrderService
                     UserId = driver.EmployeeId,
                     UserType = UserType.Employee,
                     NotificationType = NotificationType.OrderUpdated,
-                    Title = "تم تعيينك على طلب جديد (Car Service)",
-                    Message = $"طلب توصيل - الموعد: {service.ScheduledStartTime:dd/MM hh:mm tt}",
+                    Title = "You have been assigned to a new request (Car Service)",
+                    Message = $"Delivery request - Time: {service.ScheduledStartTime:dd/MM hh:mm tt}",
                     NotificationChannel = NotificationChannel.InApp,
                     OrderId = orderId
                 });
             }
         }
 
-        // إشعار العميل
+        // Notify customer
         if (order != null)
         {
             _context.Notifications.Add(new Domain.Entities.Notification
@@ -1013,16 +1013,16 @@ public class CarServiceOrderService : ICarServiceOrderService
                 UserId = order.CustomerId,
                 UserType = UserType.Customer,
                 NotificationType = NotificationType.OrderUpdated,
-                Title = "تم تأكيد طلبك",
-                Message = "تم تعيين سائق لطلبك بنجاح",
+                Title = "Order confirmed",
+                Message = "A driver has been successfully assigned to your request",
                 NotificationChannel = NotificationChannel.InApp,
                 OrderId = orderId
             });
 
             await _pusher.PushToCustomerAsync(
                 order.CustomerId,
-                "تم تأكيد طلبك",
-                "تم تعيين سائق لطلبك بنجاح",
+                "Order confirmed",
+                "A driver has been successfully assigned to your request",
                 "OrderConfirmed",
                 orderId);
         }
@@ -1076,7 +1076,7 @@ public class CarServiceOrderService : ICarServiceOrderService
     {
         var package = await _context.Packages
             .FirstOrDefaultAsync(p => p.PackageName == packageName, cancellationToken)
-            ?? throw new InvalidOperationException($"باكيج {packageName} مش موجود في الـ DB");
+            ?? throw new InvalidOperationException($"Package {packageName} not found in DB");
 
         var isTicketUsed = await _context.Orders
             .AnyAsync(o => o.TicketNumber == ticketNumber
@@ -1084,6 +1084,6 @@ public class CarServiceOrderService : ICarServiceOrderService
                         && o.OrderStatus != OrderStatus.Cancelled, cancellationToken);
 
         if (isTicketUsed)
-            throw new InvalidOperationException($"هذه التذكرة مستخدمة بالفعل في خدمة {packageName}.");
+            throw new InvalidOperationException($"This ticket is already used in {packageName} service.");
     }
 }

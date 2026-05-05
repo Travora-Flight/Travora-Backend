@@ -8,7 +8,7 @@ public static class RateLimitingExtensions
     {
         services.AddRateLimiter(options =>
         {
-            // حماية عامة: 100 طلب / دقيقة لكل IP
+            // General protection: 100 requests / minute per IP
             options.AddPolicy("general", context =>
                 RateLimitPartition.GetFixedWindowLimiter(
                     partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
@@ -19,7 +19,7 @@ public static class RateLimitingExtensions
                         QueueLimit = 0
                     }));
 
-            // حماية الـ Login: 5 محاولات / دقيقة لكل IP (ضد Brute Force)
+            // Login protection: 5 attempts / minute per IP (against Brute Force)
             options.AddPolicy("auth", context =>
                 RateLimitPartition.GetFixedWindowLimiter(
                     partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
@@ -30,7 +30,7 @@ public static class RateLimitingExtensions
                         QueueLimit = 0
                     }));
 
-            // الرسالة لما يتعدا الحد
+            // Message when limit is exceeded
             options.RejectionStatusCode = 429;
             options.OnRejected = async (context, cancellationToken) =>
             {

@@ -34,7 +34,7 @@ public class EmployeeTaskService : IEmployeeTaskService
             ?? throw new KeyNotFoundException("Task not found");
 
         if (os.AssignedEmployeeId != employeeId)
-            throw new UnauthorizedAccessException("مش مسموح");
+            throw new UnauthorizedAccessException("Unauthorized");
 
         var now = DateTime.UtcNow;
         var canStart = os.ServiceStatus == ServiceStatus.Assigned
@@ -117,14 +117,14 @@ public class EmployeeTaskService : IEmployeeTaskService
             ?? throw new KeyNotFoundException("Task not found");
 
         if (os.AssignedEmployeeId != employeeId)
-            throw new UnauthorizedAccessException("مش مسموح");
+            throw new UnauthorizedAccessException("Unauthorized");
 
         if (os.ServiceStatus != ServiceStatus.Assigned)
             throw new InvalidOperationException("Task not assigned yet or already started");
 
         var now = DateTime.UtcNow;
         if (os.ScheduledStartTime > now.AddMinutes(30))
-            throw new InvalidOperationException("لسه مجاش وقت الطلب");
+            throw new InvalidOperationException("The order time has not arrived yet");
 
         os.ServiceStatus = ServiceStatus.InProgress;
         os.ActualStartTime = now;
@@ -144,8 +144,8 @@ public class EmployeeTaskService : IEmployeeTaskService
             UserId = order.CustomerId,
             UserType = UserType.Customer,
             NotificationType = NotificationType.OrderUpdated,
-            Title = "جاري تنفيذ طلبك",
-            Message = "الموظف في الطريق إليك",
+            Title = "Your order is being processed",
+            Message = "The employee is on the way to you",
             NotificationChannel = NotificationChannel.InApp,
             OrderId = order.OrderId
         });
@@ -154,8 +154,8 @@ public class EmployeeTaskService : IEmployeeTaskService
 
         await _pusher.PushToCustomerAsync(
             order.CustomerId,
-            "جاري تنفيذ طلبك",
-            "الموظف في الطريق إليك",
+            "Your order is being processed",
+            "The employee is on the way to you",
             "OrderUpdated",
             order.OrderId);
 
@@ -182,7 +182,7 @@ public class EmployeeTaskService : IEmployeeTaskService
             ?? throw new KeyNotFoundException("Task not found");
 
         if (os.AssignedEmployeeId != employeeId)
-            throw new UnauthorizedAccessException("مش مسموح");
+            throw new UnauthorizedAccessException("Unauthorized");
 
         if (os.ServiceStatus != ServiceStatus.InProgress)
             throw new InvalidOperationException("Task not in progress");
@@ -198,11 +198,11 @@ public class EmployeeTaskService : IEmployeeTaskService
                 .ToListAsync();
             var unscannedBags = completeBaggageIds.Count - completeScannedIds.Count;
             if (unscannedBags > 0)
-                throw new InvalidOperationException("يجب سكان كل الشنط قبل الإكمال");
+                throw new InvalidOperationException("All bags must be scanned before completion");
 
             var bagsWithoutPhotos = os.Order.Baggages.Count(b => b.BaggagePhotos.Count < 3);
             if (bagsWithoutPhotos > 0)
-                throw new InvalidOperationException("يجب رفع صور لكل الشنط");
+                throw new InvalidOperationException("Photos must be uploaded for all bags");
         }
 
         var now = DateTime.UtcNow;
@@ -248,16 +248,16 @@ public class EmployeeTaskService : IEmployeeTaskService
                         UserId = availableHandler.EmployeeId,
                         UserType = UserType.Employee,
                         NotificationType = NotificationType.OrderUpdated,
-                        Title = "تم تعيينك على طلب جديد",
-                        Message = "يرجى استلام الشنط من السواق في نقطة الـ Check-in",
+                        Title = "You have been assigned to a new request",
+                        Message = "Please receive the bags from the driver at the Check-in point",
                         NotificationChannel = NotificationChannel.InApp,
                         OrderId = order.OrderId
                     });
 
                     await _pusher.PushToEmployeeAsync(
                         availableHandler.EmployeeId,
-                        "تم تعيينك على طلب جديد",
-                        "يرجى استلام الشنط من السواق في نقطة الـ Check-in",
+                        "You have been assigned to a new request",
+                        "Please receive the bags from the driver at the Check-in point",
                         "NewTaskAssigned",
                         order.OrderId);
 
@@ -319,18 +319,18 @@ public class EmployeeTaskService : IEmployeeTaskService
                         UserId = availableDriver.EmployeeId,
                         UserType = UserType.Employee,
                         NotificationType = NotificationType.OrderUpdated,
-                        Title = "تم تعيينك على توصيل جديد",
-                        Message = "يرجى استلام الشنط من المطار وتوصيلها للعميل",
+                        Title = "You have been assigned to a new delivery",
+                        Message = "Please receive the bags from the airport and deliver them to the customer",
                         NotificationChannel = NotificationChannel.InApp,
                         OrderId = order.OrderId
                     });
 
                     await _pusher.PushToEmployeeAsync(
                         availableDriver.EmployeeId,
-                        "تم تعيينك على توصيل جديد",
-                        "يرجى استلام الشنط من المطار وتوصيلها للعميل",
+                        "You have been assigned to a new delivery",
+                        "Please receive the bags from the airport and deliver them to the customer",
                         "NewTaskAssigned",
-                        order.OrderId);
+                        availableDriver.EmployeeId);
 
                     // Customer notification — delivery driver assigned
                     _db.Notifications.Add(new Notification
@@ -351,7 +351,7 @@ public class EmployeeTaskService : IEmployeeTaskService
                         "OrderUpdated",
                         order.OrderId);
                 }
-                // لو مفيش driver → فاضل Pending والـ Admin يعمل assign يدوي
+                // If no driver -> remains Pending and Admin assigns manually
             }
         }
 
@@ -371,8 +371,8 @@ public class EmployeeTaskService : IEmployeeTaskService
             UserId = order.CustomerId,
             UserType = UserType.Customer,
             NotificationType = allCompleted ? NotificationType.OrderCompleted : NotificationType.OrderUpdated,
-            Title = allCompleted ? "تم إتمام طلبك بالكامل" : "تم إكمال مرحلة من طلبك",
-            Message = allCompleted ? "تم تسليم شنطتك بنجاح ✅" : "جاري تنفيذ المرحلة التالية",
+            Title = allCompleted ? "Your order has been fully completed" : "A stage of your order has been completed",
+            Message = allCompleted ? "Your bag has been successfully delivered ✅" : "The next stage is being processed",
             NotificationChannel = NotificationChannel.InApp,
             OrderId = order.OrderId
         });
@@ -383,8 +383,8 @@ public class EmployeeTaskService : IEmployeeTaskService
         {
             await _pusher.PushToCustomerAsync(
                 order.CustomerId,
-                "تم إتمام طلبك بالكامل",
-                "تم تسليم شنطتك بنجاح ✅",
+                "Your order has been fully completed",
+                "Your bag has been successfully delivered ✅",
                 "OrderCompleted",
                 order.OrderId);
         }
@@ -392,8 +392,8 @@ public class EmployeeTaskService : IEmployeeTaskService
         {
             await _pusher.PushToCustomerAsync(
                 order.CustomerId,
-                "تم إكمال مرحلة من طلبك",
-                "جاري تنفيذ المرحلة التالية",
+                "A stage of your order has been completed",
+                "The next stage is being processed",
                 "OrderUpdated",
                 order.OrderId);
         }

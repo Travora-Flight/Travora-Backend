@@ -4,7 +4,7 @@ namespace Travora.Application.DTOs.Customer.Auth;
 
 public class ResendVerifyEmailRequest
 {
-    [Required(ErrorMessage = "الإيميل مطلوب")]
-    [EmailAddress(ErrorMessage = "الإيميل غير صحيح")]
+    [Required(ErrorMessage = "Email is required")]
+    [EmailAddress(ErrorMessage = "Invalid email address")]
     public string Email { get; set; } = string.Empty;
 }

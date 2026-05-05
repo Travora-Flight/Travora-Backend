@@ -35,7 +35,7 @@ public class CustomerNotificationController : ControllerBase
     {
         var customerId = GetCustomerId();
         await _notificationService.MarkAsReadAsync(customerId, notificationId);
-        return Ok(new CustomerNotificationGenericResponse { Success = true, Message = "تم قراءة الإشعار" });
+        return Ok(new CustomerNotificationGenericResponse { Success = true, Message = "Notification marked as read" });
     }
 
     [HttpPatch("read-all")]
@@ -44,7 +44,7 @@ public class CustomerNotificationController : ControllerBase
     {
         var customerId = GetCustomerId();
         await _notificationService.MarkAllAsReadAsync(customerId);
-        return Ok(new CustomerNotificationGenericResponse { Success = true, Message = "تم قراءة جميع الإشعارات" });
+        return Ok(new CustomerNotificationGenericResponse { Success = true, Message = "All notifications marked as read" });
     }
 }
 

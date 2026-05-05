@@ -39,7 +39,7 @@ public class AdminVehicleService : IAdminVehicleService
         var v = await _db.Vehicles
             .Include(v => v.Employees)
             .FirstOrDefaultAsync(x => x.VehicleId == id)
-            ?? throw new KeyNotFoundException("المركبة غير موجودة");
+            ?? throw new KeyNotFoundException("Vehicle not found");
 
         var activeEmployee = v.Employees.FirstOrDefault(e => e.IsActive && !e.IsDeleted);
 
@@ -61,7 +61,7 @@ public class AdminVehicleService : IAdminVehicleService
     public async Task<VehicleResponse> CreateVehicleAsync(CreateVehicleRequest request)
     {
         if (await _db.Vehicles.AnyAsync(v => v.PlateNumber == request.PlateNumber))
-            throw new InvalidOperationException("رقم اللوحة موجود مسبقا");
+            throw new InvalidOperationException("Plate number already exists");
 
         var vehicle = new Vehicle
         {
@@ -82,12 +82,12 @@ public class AdminVehicleService : IAdminVehicleService
     public async Task<VehicleResponse> UpdateVehicleAsync(int id, UpdateVehicleRequest request)
     {
         var vehicle = await _db.Vehicles.FindAsync(id)
-            ?? throw new KeyNotFoundException("المركبة غير موجودة");
+            ?? throw new KeyNotFoundException("Vehicle not found");
 
         if (!string.IsNullOrEmpty(request.PlateNumber) && request.PlateNumber != vehicle.PlateNumber)
         {
             if (await _db.Vehicles.AnyAsync(v => v.PlateNumber == request.PlateNumber))
-                throw new InvalidOperationException("رقم اللوحة موجود مسبقا");
+                throw new InvalidOperationException("Plate number already exists");
             vehicle.PlateNumber = request.PlateNumber;
         }
 
@@ -106,11 +106,11 @@ public class AdminVehicleService : IAdminVehicleService
         var vehicle = await _db.Vehicles
             .Include(v => v.Employees)
             .FirstOrDefaultAsync(x => x.VehicleId == id)
-            ?? throw new KeyNotFoundException("المركبة غير موجودة");
+            ?? throw new KeyNotFoundException("Vehicle not found");
 
         if (vehicle.Employees.Any(e => e.IsActive && !e.IsDeleted))
         {
-            throw new InvalidOperationException("لا يمكن حذف مركبة معينة لموظف");
+            throw new InvalidOperationException("Cannot delete a vehicle that is assigned to an employee");
         }
 
         _db.Vehicles.Remove(vehicle);

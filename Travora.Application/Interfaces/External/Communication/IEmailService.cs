@@ -3,17 +3,17 @@ namespace Travora.Application.Interfaces.External.Communication;
 public interface IEmailService
 {
     /// <summary>
-    /// إرسال إيميل
+    /// Send email
     /// </summary>
     Task SendEmailAsync(string toEmail, string subject, string htmlBody);
 
     /// <summary>
-    /// إرسال إيميل بيانات الموظف الجديد للـ Admin
+    /// Send new employee credentials email to Admin
     /// </summary>
     Task SendNewEmployeeCredentialsAsync(string adminEmail, string employeeName, string employeeEmail, string tempPassword);
 
     /// <summary>
-    /// إرسال إشعار تحقق جواز السفر
+    /// Send passport verification result notification
     /// </summary>
     Task SendPassportVerificationResultAsync(string customerEmail, string customerName, bool approved, string? reason = null);
 }

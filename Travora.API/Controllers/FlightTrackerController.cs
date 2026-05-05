@@ -18,16 +18,47 @@ public class FlightTrackerController : ControllerBase
     }
 
     /// <summary>
-    /// Get live flights for the map. Optional viewport filtering with lat/lng/distance.
+    /// Get live flights within the viewport bounds.
     /// </summary>
     [HttpGet("live")]
-    [ProducesResponseType(typeof(LiveFlightsResponse), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetLiveFlights(
-        [FromQuery] decimal? lat = null,
-        [FromQuery] decimal? lng = null,
+    [ProducesResponseType(typeof(ViewportFlightsResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetViewportFlights(
+        [FromQuery] decimal minLat = -90,
+        [FromQuery] decimal maxLat = 90,
+        [FromQuery] decimal minLng = -180,
+        [FromQuery] decimal maxLng = 180,
+        [FromQuery] bool isZoomedIn = false,
+        [FromQuery] decimal? centerLat = null,
+        [FromQuery] decimal? centerLng = null,
         [FromQuery] int? distance = null)
     {
-        var result = await _trackerService.GetLiveFlightsAsync(lat, lng, distance);
+        var result = await _trackerService.GetViewportFlightsAsync(minLat, maxLat, minLng, maxLng, isZoomedIn, centerLat, centerLng, distance);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Get airports within viewport bounds.
+    /// </summary>
+    [HttpGet("airports")]
+    [ProducesResponseType(typeof(AirportViewportResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetAirportsInViewport(
+        [FromQuery] decimal minLat = -90,
+        [FromQuery] decimal maxLat = 90,
+        [FromQuery] decimal minLng = -180,
+        [FromQuery] decimal maxLng = 180)
+    {
+        var result = await _trackerService.GetAirportsInViewportAsync(minLat, maxLat, minLng, maxLng);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Get airport departure/arrival timetable.
+    /// </summary>
+    [HttpGet("timetable/{airportCode}")]
+    [ProducesResponseType(typeof(TimetableResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetAirportTimetable(string airportCode, [FromQuery] string type = "departure")
+    {
+        var result = await _trackerService.GetAirportTimetableAsync(airportCode, type);
         return Ok(result);
     }
 

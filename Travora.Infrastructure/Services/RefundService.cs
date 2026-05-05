@@ -42,30 +42,30 @@ public class RefundService : IRefundService
             .FirstOrDefaultAsync(o => o.OrderId == orderId && o.CustomerId == customerId);
 
         if (order == null)
-            return new RefundResponse { Success = false, Message = "الأوردر مش موجود" };
+            return new RefundResponse { Success = false, Message = "Order not found" };
 
         if (order.OrderStatus == OrderStatus.Completed)
-            return new RefundResponse { Success = false, Message = "لا يمكن استرداد أوردر تم تنفيذه بالكامل" };
+            return new RefundResponse { Success = false, Message = "Cannot refund a fully completed order" };
 
         if (order.OrderStatus == OrderStatus.Cancelled)
-            return new RefundResponse { Success = false, Message = "الأوردر ملغي بالفعل" };
+            return new RefundResponse { Success = false, Message = "Order is already cancelled" };
 
         if (order.OrderStatus is not (OrderStatus.Confirmed or OrderStatus.InProgress or OrderStatus.rescheduled))
-            return new RefundResponse { Success = false, Message = "لا يمكن طلب استرداد لهذا الأوردر في حالته الحالية" };
+            return new RefundResponse { Success = false, Message = "Refund cannot be requested for this order in its current status" };
 
         var invoice = order.Invoices.FirstOrDefault(i => i.InvoiceStatus == InvoiceStatus.Paid);
         if (invoice == null)
-            return new RefundResponse { Success = false, Message = "لا يوجد فاتورة مدفوعة لهذا الأوردر" };
+            return new RefundResponse { Success = false, Message = "No paid invoice found for this order" };
 
         var existingRefund = await _db.Refunds
             .AnyAsync(r => r.OrderId == orderId && r.RefundStatus == RefundStatus.Requested);
         if (existingRefund)
-            return new RefundResponse { Success = false, Message = "يوجد طلب استرداد معلق بالفعل" };
+            return new RefundResponse { Success = false, Message = "A pending refund request already exists" };
 
         var payment = await _db.Payments
             .FirstOrDefaultAsync(p => p.InvoiceId == invoice.InvoiceId && p.PaymentStatus == PaymentStatus.Completed);
         if (payment == null)
-            return new RefundResponse { Success = false, Message = "لا يوجد عملية دفع مكتملة" };
+            return new RefundResponse { Success = false, Message = "No completed payment found" };
 
         var refund = new Refund
         {
@@ -95,8 +95,8 @@ public class RefundService : IRefundService
                     refund,
                     invoice.TotalAmount,
                     adminId: null,
-                    title: "تم استرداد المبلغ بالكامل",
-                    message: $"تم استرداد مبلغ {invoice.TotalAmount} جنيه بنجاح لإلغاء الطلب",
+                    title: "Full amount refunded",
+                    message: $"Amount of {invoice.TotalAmount} EGP has been successfully refunded for order cancellation",
                     isPartial: false);
             }
             else if (hasStarted && !hasPending)
@@ -104,7 +104,7 @@ public class RefundService : IRefundService
                 var now = DateTime.UtcNow;
                 refund.RefundStatus = RefundStatus.Rejected;
                 refund.ProcessedAt = now;
-                refund.AdminNotes = "مرفوض تلقائياً: لا يمكن استرداد المبلغ بعد بدء تنفيذ جميع الخدمات";
+                refund.AdminNotes = "Automatically rejected: Refund is not possible after all services have started";
                 await _db.SaveChangesAsync();
 
                 _db.Notifications.Add(new Notification
@@ -112,7 +112,7 @@ public class RefundService : IRefundService
                     UserId = order.CustomerId,
                     UserType = UserType.Customer,
                     NotificationType = NotificationType.OrderUpdated,
-                    Title = "تم رفض طلب الاسترداد",
+                    Title = "Refund request rejected",
                     Message = refund.AdminNotes,
                     NotificationChannel = NotificationChannel.InApp,
                     OrderId = order.OrderId
@@ -121,12 +121,12 @@ public class RefundService : IRefundService
 
                 await _pusher.PushToCustomerAsync(
                     order.CustomerId,
-                    "تم رفض طلب الاسترداد",
+                    "Refund request rejected",
                     refund.AdminNotes,
                     "RefundRejected",
                     order.OrderId);
 
-                return new RefundResponse { Success = false, Message = "لا يمكن استرداد المبلغ بعد بدء تنفيذ جميع الخدمات" };
+                return new RefundResponse { Success = false, Message = "Refund is not possible after all services have started" };
             }
             else if (hasStarted && hasPending)
             {
@@ -138,20 +138,20 @@ public class RefundService : IRefundService
                     refund,
                     partialAmount,
                     adminId: null,
-                    title: "تم استرداد جزئي للمبلغ",
-                    message: $"تم استرداد مبلغ {partialAmount} جنيه بنجاح للخدمات غير المنفذة",
+                    title: "Partial amount refunded",
+                    message: $"Amount of {partialAmount} EGP has been successfully refunded for unexecuted services",
                     isPartial: true);
             }
         }
         else if (pkgName == PackageNames.TrackingBaggage)
         {
-            // Bag Tracking مفيش موظفين → full refund أوتوماتيك دايماً
+            // Bag Tracking no employees -> automatic full refund always
             return await ExecutePaymobRefundAsync(
                 refund,
                 invoice.TotalAmount,
                 adminId: null,
-                title: "تم استرداد المبلغ بالكامل",
-                message: $"تم استرداد مبلغ {invoice.TotalAmount} جنيه بنجاح",
+                title: "Full amount refunded",
+                message: $"Amount of {invoice.TotalAmount} EGP has been successfully refunded",
                 isPartial: false);
         }
 
@@ -162,7 +162,7 @@ public class RefundService : IRefundService
             Success = true,
             RefundId = refund.RefundId,
             Status = refund.RefundStatus.ToString(),
-            Message = "تم تقديم طلب الاسترداد بنجاح، سيتم مراجعته من الإدارة"
+            Message = "Refund request submitted successfully, it will be reviewed by the administration"
         };
     }
 
@@ -213,7 +213,7 @@ public class RefundService : IRefundService
                 .ThenInclude(o => o.Customer)
             .Include(r => r.ProcessedByAdmin)
             .FirstOrDefaultAsync(r => r.RefundId == refundId)
-            ?? throw new KeyNotFoundException("طلب الاسترداد مش موجود");
+            ?? throw new KeyNotFoundException("Refund request not found");
 
         return new AdminRefundDetail
         {
@@ -240,17 +240,17 @@ public class RefundService : IRefundService
             .Include(r => r.Order)
                 .ThenInclude(o => o.Invoices)
             .FirstOrDefaultAsync(r => r.RefundId == refundId)
-            ?? throw new KeyNotFoundException("طلب الاسترداد مش موجود");
+            ?? throw new KeyNotFoundException("Refund request not found");
 
         if (refund.RefundStatus != RefundStatus.Requested)
-            return new RefundResponse { Success = false, Message = "طلب الاسترداد مش في حالة انتظار" };
+            return new RefundResponse { Success = false, Message = "Refund request is not in pending status" };
 
         return await ExecutePaymobRefundAsync(
             refund,
             refund.RefundAmount,
             adminId,
-            "تم الموافقة على طلب الاسترداد",
-            $"تم استرداد مبلغ {refund.RefundAmount} جنيه بنجاح",
+            "Refund request approved",
+            $"Amount of {refund.RefundAmount} EGP has been successfully refunded",
             isPartial: false);
     }
 
@@ -302,7 +302,7 @@ public class RefundService : IRefundService
             }
 
             refund.Order.OrderStatus = OrderStatus.Cancelled;
-            refund.Order.CancellationReason = "تم إلغاء الأوردر بسبب استرداد المبلغ";
+            refund.Order.CancellationReason = "Order cancelled due to refund";
             refund.Order.UpdatedAt = now;
 
             refund.Payment.PaymentStatus = PaymentStatus.Refunded;
@@ -335,7 +335,7 @@ public class RefundService : IRefundService
                 Success = true,
                 RefundId = refund.RefundId,
                 Status = RefundStatus.Processed.ToString(),
-                Message = "تم الاسترداد بنجاح"
+                Message = "Refund successful"
             };
         }
         catch
@@ -352,7 +352,7 @@ public class RefundService : IRefundService
                 Success = false,
                 RefundId = refund.RefundId,
                 Status = RefundStatus.Failed.ToString(),
-                Message = "فشل الاسترداد من بوابة الدفع، يرجى المحاولة لاحقاً"
+                Message = "Refund failed from payment gateway, please try again later"
             };
         }
     }
@@ -362,10 +362,10 @@ public class RefundService : IRefundService
         var refund = await _db.Refunds
             .Include(r => r.Order)
             .FirstOrDefaultAsync(r => r.RefundId == refundId)
-            ?? throw new KeyNotFoundException("طلب الاسترداد مش موجود");
+            ?? throw new KeyNotFoundException("Refund request not found");
 
         if (refund.RefundStatus != RefundStatus.Requested)
-            return new RefundResponse { Success = false, Message = "طلب الاسترداد مش في حالة انتظار" };
+            return new RefundResponse { Success = false, Message = "Refund request is not in pending status" };
 
         var now = DateTime.UtcNow;
         refund.RefundStatus = RefundStatus.Rejected;
@@ -380,8 +380,8 @@ public class RefundService : IRefundService
             UserId = refund.Order.CustomerId,
             UserType = UserType.Customer,
             NotificationType = NotificationType.OrderUpdated,
-            Title = "تم رفض طلب الاسترداد",
-            Message = request.Notes ?? "تم رفض طلب الاسترداد",
+            Title = "Refund request rejected",
+            Message = request.Notes ?? "Refund request rejected",
             NotificationChannel = NotificationChannel.InApp,
             OrderId = refund.OrderId
         });
@@ -391,8 +391,8 @@ public class RefundService : IRefundService
         // Real-time push
         await _pusher.PushToCustomerAsync(
             refund.Order.CustomerId,
-            "تم رفض طلب الاسترداد",
-            request.Notes ?? "تم رفض طلب الاسترداد من الإدارة",
+            "Refund request rejected",
+            request.Notes ?? "Refund request rejected by administration",
             "RefundRejected",
             refund.OrderId);
 
@@ -401,7 +401,7 @@ public class RefundService : IRefundService
             Success = true,
             RefundId = refund.RefundId,
             Status = RefundStatus.Rejected.ToString(),
-            Message = "تم رفض طلب الاسترداد"
+            Message = "Refund request rejected"
         };
     }
 }

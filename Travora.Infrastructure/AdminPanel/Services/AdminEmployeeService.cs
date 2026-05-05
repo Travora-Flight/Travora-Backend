@@ -145,15 +145,15 @@ public class AdminEmployeeService : IAdminEmployeeService
         if (request.JobRole == JobRole.Driver && request.VehicleId.HasValue)
         {
             var vehicleExists = await _db.Vehicles.AnyAsync(v => v.VehicleId == request.VehicleId);
-            if (!vehicleExists) throw new KeyNotFoundException("المركبة غير موجودة");
+            if (!vehicleExists) throw new KeyNotFoundException("Vehicle not found");
 
             var vehicleInUse = await _db.Employees.AnyAsync(e => e.VehicleId == request.VehicleId && e.IsActive && !e.IsDeleted);
-            if (vehicleInUse) throw new InvalidOperationException("هذه المركبة معينة لموظف آخر بالفعل");
+            if (vehicleInUse) throw new InvalidOperationException("This vehicle is already assigned to another employee");
         }
         else if (request.JobRole == JobRole.BaggageHandler && request.CheckpointId.HasValue)
         {
             var checkpointExists = await _db.Checkpoints.AnyAsync(c => c.CheckpointId == request.CheckpointId);
-            if (!checkpointExists) throw new KeyNotFoundException("نقطة التفتيش غير موجودة");
+            if (!checkpointExists) throw new KeyNotFoundException("Checkpoint not found");
         }
 
         // 2) Generate Email
@@ -223,7 +223,7 @@ public class AdminEmployeeService : IAdminEmployeeService
             EmployeeId = employee.EmployeeId,
             GeneratedEmail = generatedEmail,
             TempPassword = tempPassword,
-            Message = "تم إنشاء الحساب بنجاح. يرجى إبلاغ الموظف ببيانات الدخول."
+            Message = "Account created successfully. Please inform the employee of the login details."
         };
     }
 
@@ -243,15 +243,15 @@ public class AdminEmployeeService : IAdminEmployeeService
         if (e.JobRole == JobRole.Driver && request.VehicleId.HasValue && request.VehicleId != e.VehicleId)
         {
             var vehicleExists = await _db.Vehicles.AnyAsync(v => v.VehicleId == request.VehicleId);
-            if (!vehicleExists) throw new KeyNotFoundException("المركبة غير موجودة");
+            if (!vehicleExists) throw new KeyNotFoundException("Vehicle not found");
 
             var vehicleInUse = await _db.Employees.AnyAsync(emp => emp.VehicleId == request.VehicleId && emp.IsActive && !emp.IsDeleted && emp.EmployeeId != employeeId);
-            if (vehicleInUse) throw new InvalidOperationException("هذه المركبة معينة لموظف آخر بالفعل");
+            if (vehicleInUse) throw new InvalidOperationException("This vehicle is already assigned to another employee");
         }
         else if (e.JobRole == JobRole.BaggageHandler && request.CheckpointId.HasValue && request.CheckpointId != e.CheckpointId)
         {
             var checkpointExists = await _db.Checkpoints.AnyAsync(c => c.CheckpointId == request.CheckpointId);
-            if (!checkpointExists) throw new KeyNotFoundException("نقطة التفتيش غير موجودة");
+            if (!checkpointExists) throw new KeyNotFoundException("Checkpoint not found");
         }
 
         if (request.ProfilePhoto != null)

@@ -4,7 +4,7 @@ public static class ApplicationBuilderExtensions
 {
     public static WebApplication UseTravoraMiddleware(this WebApplication app)
     {
-        // Swagger في بيئة التطوير فقط
+        // Swagger in development environment only
         app.UseSwagger();
         app.UseSwaggerUI(options =>
         {

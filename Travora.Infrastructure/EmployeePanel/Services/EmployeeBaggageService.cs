@@ -49,10 +49,10 @@ public class EmployeeBaggageService : IEmployeeBaggageService
             ?? throw new KeyNotFoundException("Task not found");
 
         if (orderService.AssignedEmployeeId != employeeId)
-            throw new UnauthorizedAccessException("مش مسموح");
+            throw new UnauthorizedAccessException("Unauthorized");
 
         if (orderService.ServiceStatus != ServiceStatus.InProgress)
-            throw new InvalidOperationException("ابدأ الطلب الأول");
+            throw new InvalidOperationException("Please start the order first");
 
         var baggage = await _db.Baggages.FindAsync(request.BaggageId)
             ?? throw new KeyNotFoundException("Baggage not found");
@@ -60,23 +60,23 @@ public class EmployeeBaggageService : IEmployeeBaggageService
         var alreadyScanned = await _db.QrScans
             .AnyAsync(q => q.BaggageId == baggage.BaggageId);
         if (alreadyScanned)
-            throw new InvalidOperationException("هذه الشنطة تم مسحها مسبقاً");
+            throw new InvalidOperationException("This bag has already been scanned");
 
         if (baggage.OrderId != orderService.OrderId)
-            throw new InvalidOperationException("الشنطة مش في الأوردر ده");
+            throw new InvalidOperationException("This bag is not in this order");
 
         // 1) Call Airline API
         var client = _httpClientFactory.CreateClient("AirlineApi");
         var apiResponse = await client.GetAsync($"/api/airline/verify-baggage/{request.QrData}");
 
         if (!apiResponse.IsSuccessStatusCode)
-            throw new InvalidOperationException("رقم الشنطة غير موجود في نظام الطيران");
+            throw new InvalidOperationException("Bag number not found in airline system");
 
         var content = await apiResponse.Content.ReadAsStringAsync();
         var airlineResult = JsonSerializer.Deserialize<AirlineVerifyResponse>(content, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
         if (airlineResult == null || !airlineResult.Valid)
-            throw new InvalidOperationException("رقم الشنطة غير موجود في نظام الطيران");
+            throw new InvalidOperationException("Bag number not found in airline system");
 
         // 2) Determine bag owner from passport
         var passportNumber = airlineResult.Passport;
@@ -102,7 +102,7 @@ public class EmployeeBaggageService : IEmployeeBaggageService
             }
             else
             {
-                throw new UnauthorizedAccessException("صاحب الشنطة مش مسجل في الأوردر");
+                throw new UnauthorizedAccessException("Bag owner is not registered in the order");
             }
         }
 
@@ -176,8 +176,8 @@ public class EmployeeBaggageService : IEmployeeBaggageService
             if (allBagsScanned)
             {
                 var totalBags = orderWithBags.Baggages.Count;
-                var title = "تم استلام جميع شنطك";
-                var message = $"السواق استلم {totalBags} شنطة وفي الطريق للمطار";
+                var title = "All your bags have been received";
+                var message = $"The driver received {totalBags} bags and is on the way to the airport";
 
                 // DB Notification
                 _db.Notifications.Add(new Notification
@@ -239,34 +239,34 @@ public class EmployeeBaggageService : IEmployeeBaggageService
             .FirstOrDefaultAsync(b =>
                 b.BaggageId == baggageId &&
                 b.Order.OrderServices.Any(os => os.AssignedEmployeeId == employeeId))
-            ?? throw new UnauthorizedAccessException("هذه الشنطة مش في طلب مرتبط بيك");
+            ?? throw new UnauthorizedAccessException("This bag is not in an order associated with you");
 
         if (baggage.BaggageNumber == null)
-            throw new InvalidOperationException("يجب سكان الشنطة الأول");
+            throw new InvalidOperationException("Must scan the bag first");
 
         // Requires active lock before uploading photos
         var hasActiveLock = await _db.SecurityLocks
             .AnyAsync(l => l.BaggageId == baggageId && l.IsActive && !l.IsDeleted);
         
         if (!hasActiveLock)
-            throw new InvalidOperationException("يجب تسجيل كود القفل الأول");
+            throw new InvalidOperationException("Must register the lock code first");
 
         // Validate photo count (max 6 per baggage) directly against the DB
         var existingCount = await _db.BaggagePhotos.CountAsync(p => p.BaggageId == baggageId);
         if (existingCount >= 6)
-            throw new InvalidOperationException("وصلت للحد الأقصى 6 صور لهذه الشنطة");
+            throw new InvalidOperationException("Reached the maximum limit of 6 photos for this bag");
 
         var allowedToAdd = 6 - existingCount;
         if (photos.Count > allowedToAdd)
-            throw new InvalidOperationException($"يمكن إضافة {allowedToAdd} صور فقط، الشنطة عندها {existingCount} صور");
+            throw new InvalidOperationException($"Only {allowedToAdd} photos can be added, the bag has {existingCount} photos");
 
         if (photos.Count < 3 && existingCount == 0)
-            throw new InvalidOperationException("يجب رفع 3 صور على الأقل للبدء");
+            throw new InvalidOperationException("At least 3 photos must be uploaded to start");
 
         // Validate file types
         var allowedTypes = new[] { "image/jpg", "image/jpeg", "image/png" };
         if (photos.Any(p => !allowedTypes.Contains(p.ContentType.ToLower())))
-            throw new InvalidOperationException("يجب رفع صور فقط (jpg/jpeg/png)");
+            throw new InvalidOperationException("Only images can be uploaded (jpg/jpeg/png)");
 
         var uploadedUrls = new List<string>();
         foreach (var photo in photos)
@@ -338,26 +338,26 @@ public class EmployeeBaggageService : IEmployeeBaggageService
             .Any(os => os.AssignedEmployeeId == employeeId && os.ServiceStatus == ServiceStatus.InProgress);
 
         if (!hasAssignedService)
-            throw new UnauthorizedAccessException("هذه الإجراء غير متاح لك حالياً. يجب أن تكون مخصصاً للطلب وأن يكون قيد التنفيذ.");
+            throw new UnauthorizedAccessException("This action is not available to you currently. You must be assigned to the order and it must be in progress.");
 
         if (baggage.BaggageNumber == null)
-            throw new InvalidOperationException("يجب مسح الشنطة الأول (Scan) قبل تعيين القفل.");
+            throw new InvalidOperationException("Must scan the bag first before setting the lock.");
 
         if (baggage.SecurityLocks.Any(l => l.IsActive))
-            throw new InvalidOperationException("هذه الشنطة مربوطة بقفل نشط بالفعل.");
+            throw new InvalidOperationException("This bag is already linked to an active lock.");
 
         if (string.IsNullOrWhiteSpace(request.LockCode) || request.LockCode.Length != 9 || !request.LockCode.StartsWith("112371"))
-            throw new InvalidOperationException("كود القفل غير صحيح، يجب أن يتكون من 9 أرقام ويبدأ بـ 112371.");
+            throw new InvalidOperationException("Invalid lock code, it must consist of 9 digits and start with 112371.");
 
         if (!request.LockCode.All(char.IsDigit))
-            throw new InvalidOperationException("كود القفل يجب أن يحتوي على أرقام فقط.");
+            throw new InvalidOperationException("Lock code must contain digits only.");
 
         // Check if lock code is already active on another bag
         var lockExists = await _db.SecurityLocks
             .AnyAsync(l => l.LockCode == request.LockCode && l.IsActive && !l.IsDeleted);
 
         if (lockExists)
-            throw new InvalidOperationException("هذا القفل مستخدم حالياً مع شنطة أخرى.");
+            throw new InvalidOperationException("This lock is currently in use with another bag.");
 
         // Assigned new lock
         var newLock = new SecurityLock
@@ -411,15 +411,15 @@ public class EmployeeBaggageService : IEmployeeBaggageService
             ?? throw new KeyNotFoundException("Employee not found");
 
         if (employee.JobRole != JobRole.BaggageHandler)
-            throw new UnauthorizedAccessException("هذا الإجراء للـ Baggage Handler فقط");
+            throw new UnauthorizedAccessException("This action is for the Baggage Handler only");
 
         if (employee.CheckpointId == null || employee.Checkpoint == null)
-            throw new InvalidOperationException("مفيش checkpoint معين للموظف");
+            throw new InvalidOperationException("No specific checkpoint for the employee");
 
         var baggage = await _db.Baggages
             .Include(b => b.Order)
             .FirstOrDefaultAsync(b => b.BaggageNumber == request.BaggageTagNumber)
-            ?? throw new KeyNotFoundException("رقم الشنطة غير موجود");
+            ?? throw new KeyNotFoundException("Bag tag number not found");
 
         // Determine status from checkpoint type
         var newStatus = employee.Checkpoint.CheckpointType switch
@@ -482,8 +482,8 @@ public class EmployeeBaggageService : IEmployeeBaggageService
             UserId = baggage.Order.CustomerId,
             UserType = UserType.Customer,
             NotificationType = NotificationType.BaggageUpdated,
-            Title = "تحديث شنطتك",
-            Message = $"شنطتك الآن في {employee.Checkpoint.CheckpointName}",
+            Title = "Bag Update",
+            Message = $"Your bag is now at {employee.Checkpoint.CheckpointName}",
             NotificationChannel = NotificationChannel.InApp,
             OrderId = baggage.OrderId,
             BaggageId = baggage.BaggageId
@@ -494,8 +494,8 @@ public class EmployeeBaggageService : IEmployeeBaggageService
         // SignalR Real-time
         await _pusher.PushToCustomerAsync(
             baggage.Order.CustomerId,
-            "تحديث شنطتك",
-            $"شنطتك الآن في {employee.Checkpoint.CheckpointName}",
+            "Bag Update",
+            $"Your bag is now at {employee.Checkpoint.CheckpointName}",
             "BaggageUpdated",
             baggage.OrderId);
 

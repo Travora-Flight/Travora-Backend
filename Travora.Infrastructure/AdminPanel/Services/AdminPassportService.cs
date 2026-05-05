@@ -88,7 +88,7 @@ public class AdminPassportService : IAdminPassportService
                               await _db.Companions.AnyAsync(c => c.PassportNumber == request.PassportNumber);
 
         if (passportExists)
-            throw new InvalidOperationException("رقم جواز السفر المدخل مسجل بالفعل لشخص آخر في النظام.");
+            throw new InvalidOperationException("The entered passport number is already registered to another person in the system.");
 
         DateTime.TryParse(request.DateOfBirth, out var parsedDob);
         DateTime.TryParse(request.ExpiryDate, out var parsedExpiry);
@@ -114,7 +114,7 @@ public class AdminPassportService : IAdminPassportService
             UserType = UserType.Customer,
             NotificationType = NotificationType.AccountAlert, // Assuming enum value
             Title = "Passport Verified",
-            Message = "تم التحقق من جواز السفر بنجاح وأصبح حسابك مفعل.",
+            Message = "Your passport has been successfully verified and your account is now active.",
             IsRead = false,
             SentAt = DateTime.UtcNow
         };
@@ -128,8 +128,8 @@ public class AdminPassportService : IAdminPassportService
             {
                 await _emailService.SendEmailAsync(
                     customer.Email,
-                    "مرحباً بك في Travora - تم تفعيل الحساب",
-                    $"<h2>أهلاً {customer.Firstname} 👋</h2><p>تم الحصول على بياناتك ورقم جوازك (<b style='letter-spacing:1px;'>{customer.PassportNumber}</b>) ومراجعة جواز سفرك يدوياً بنجاح.</p><p>حسابك الآن <b>مفعل</b> ويمكنك البدء في حجز وتتبع رحلاتك.</p>");
+                    "Welcome to Travora - Account Activated",
+                    $"<h2>Hello {customer.Firstname} 👋</h2><p>Your data and passport number (<b style='letter-spacing:1px;'>{customer.PassportNumber}</b>) have been manually reviewed and verified successfully.</p><p>Your account is now <b>active</b> and you can start booking and tracking your flights.</p>");
             }
             catch { /* Ignore */ }
         });
@@ -160,7 +160,7 @@ public class AdminPassportService : IAdminPassportService
             UserType = UserType.Customer,
             NotificationType = NotificationType.AccountAlert,
             Title = "Passport Rejected",
-            Message = $"تم رفض جواز السفر. السبب: {request.Reason}",
+            Message = $"Passport rejected. Reason: {request.Reason}",
             IsRead = false,
             SentAt = DateTime.UtcNow
         };

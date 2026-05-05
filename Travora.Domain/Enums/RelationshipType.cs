@@ -5,8 +5,8 @@ namespace Travora.Domain.Enums;
 /// </summary>
 public enum RelationshipType
 {
-    Family = 1,    // فرد من العائلة
-    Friend = 2,    // صديق
-    Colleague = 3, // زميل عمل
-    Other = 4      // أخرى
+    Family = 1,    // Family member
+    Friend = 2,    // Friend
+    Colleague = 3, // Colleague
+    Other = 4      // Other
 }

@@ -31,7 +31,7 @@ public static class AuthenticationExtensions
                 ClockSkew = TimeSpan.Zero
             };
 
-            // دعم SignalR - قراءة التوكن من الـ Query String
+            // SignalR support - reading token from Query String
             options.Events = new JwtBearerEvents
             {
                 OnMessageReceived = context =>

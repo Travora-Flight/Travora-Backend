@@ -31,12 +31,12 @@ public class PaymentController : ControllerBase
     {
         try
         {
-            // بنبعت الـ JSON والـ HMAC للـ Service من غير أي لعب في الداتا
+            // Send JSON and HMAC to the service without any data modification
             await _paymobService.HandleWebhookAsync(payload, hmac);
         }
         catch (Exception ex)
         {
-            // بنسجل أي إيرور عشان نقدر نتابعه، بس لازم نرد بـ Ok لـ Paymob
+            // Log any error for tracking, but must respond with Ok to Paymob
             Console.WriteLine($"Webhook Error: {ex.Message}");
         }
 

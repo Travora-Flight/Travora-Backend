@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
@@ -10,8 +10,8 @@ namespace Travora.Infrastructure.Data.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            // تحويل كل قيم الـ Enum من 0-based إلى 1-based
-            // ملاحظة: BaggageTrackingStatus و CheckpointType كانوا 1-based من الأول فمش محتاجين تحديث
+            // Convert all Enum values from 0-based to 1-based
+            // Note: BaggageTrackingStatus and CheckpointType were already 1-based, so no update needed
 
             // Orders
             migrationBuilder.Sql("UPDATE Orders SET OrderStatus = OrderStatus + 1");
@@ -71,7 +71,7 @@ namespace Travora.Infrastructure.Data.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            // التراجع: رجع القيم من 1-based إلى 0-based
+            // Down: Rollback values from 1-based to 0-based
             migrationBuilder.Sql("UPDATE Orders SET OrderStatus = OrderStatus - 1");
             migrationBuilder.Sql("UPDATE Flights SET FlightStatus = FlightStatus - 1");
             migrationBuilder.Sql("UPDATE BoardingPasses SET BoardingStatus = BoardingStatus - 1");

@@ -54,15 +54,15 @@ public class PaymobService : IPaymobService
             .Include(o => o.Invoices)
             .Include(o => o.Package)
             .FirstOrDefaultAsync(o => o.OrderId == orderId && o.CustomerId == customerId)
-            ?? throw new KeyNotFoundException("الأوردر مش موجود");
+            ?? throw new KeyNotFoundException("Order not found");
 
         if (order.OrderStatus != OrderStatus.Pending)
-            throw new InvalidOperationException("الأوردر مش في حالة انتظار الدفع");
+            throw new InvalidOperationException("Order is not in pending payment status");
 
         // Allow re-payment after failed attempt — reset Failed invoice back to Pending
         var invoice = order.Invoices.FirstOrDefault(i => i.InvoiceStatus == InvoiceStatus.Pending)
             ?? order.Invoices.FirstOrDefault(i => i.InvoiceStatus == InvoiceStatus.Failed)
-            ?? throw new InvalidOperationException("مفيش فاتورة للأوردر ده");
+            ?? throw new InvalidOperationException("No invoice found for this order");
 
         if (invoice.InvoiceStatus == InvoiceStatus.Failed)
         {
@@ -158,7 +158,7 @@ public class PaymobService : IPaymobService
 
     public async Task HandleWebhookAsync(System.Text.Json.JsonElement payload, string hmacFromPaymob)
     {
-        // 1. فلتر الاسترداد: تجاهل الريكويست لو كان يخص Refund
+        // 1. Refund Filter: ignore request if it concerns Refund
         var type = payload.TryGetProperty("type", out var t) ? t.GetString() : "";
         if (string.Equals(type, "REFUND", StringComparison.OrdinalIgnoreCase))
             return;
@@ -166,11 +166,11 @@ public class PaymobService : IPaymobService
         if (!payload.TryGetProperty("obj", out var obj))
             return;
 
-        // تأكيد إضافي لتجاهل عمليات الدفع اللي معمولها استرداد
+        // Additional confirmation to ignore payments that have been refunded
         if (obj.TryGetProperty("is_refunded", out var isRef) && isRef.ValueKind == System.Text.Json.JsonValueKind.True)
             return;
 
-        // 2. تجميع الـ HMAC بالترتيب الأبجدي الصارم واستخراج القيم خام من الـ JSON
+        // 2. Assemble HMAC in strict alphabetical order and extract raw values from JSON
         var amount_cents = obj.GetProperty("amount_cents").GetRawText();
         var created_at = obj.GetProperty("created_at").GetString();
         var currency = obj.GetProperty("currency").GetString();
@@ -193,13 +193,13 @@ public class PaymobService : IPaymobService
         var success_bool = obj.GetProperty("success").GetBoolean();
         var success = success_bool.ToString().ToLower();
 
-        // دمج المتغيرات
+        // Concatenate variables
         var concatenated = amount_cents + created_at + currency + error_occured + has_parent_transaction +
                         id + integration_id + is_3d_secure + is_auth + is_capture + is_refunded +
                         is_standalone_payment + is_voided + order_id + owner + pending +
                         source_data_pan + source_data_sub_type + source_data_type + success;
 
-        // التشفير والمقارنة (الحماية شغالة ومفيش كومنت)
+        // Encryption and comparison (protection is active, no comment)
         var computedHmac = ComputeHmacSha512(concatenated, _settings.HmacSecret);
 
         if (!string.Equals(computedHmac, hmacFromPaymob, StringComparison.OrdinalIgnoreCase))
@@ -208,13 +208,13 @@ public class PaymobService : IPaymobService
             throw new UnauthorizedAccessException("Invalid HMAC signature");
         }
 
-        // 3. استخراج باقي الداتا عشان نحدث الداتا بيز
+        // 3. Extract remaining data to update the database
         var merchantOrderIdStr = obj.GetProperty("order").GetProperty("merchant_order_id").GetString();
         var transactionId = id;
         var paymobOrderId = order_id;
 
         if (!int.TryParse(merchantOrderIdStr, out var orderId))
-            return; // أوردر غير معروف
+            return; // Unknown order
 
         var order = await _db.Orders.Include(o => o.Invoices).FirstOrDefaultAsync(o => o.OrderId == orderId);
         if (order == null) return;
@@ -227,7 +227,7 @@ public class PaymobService : IPaymobService
 
         if (success_bool)
         {
-            // تم الدفع بنجاح
+            // Payment successful
             invoice.InvoiceStatus = InvoiceStatus.Paid;
             invoice.PaidAt = now;
             invoice.UpdatedAt = now;
@@ -241,7 +241,7 @@ public class PaymobService : IPaymobService
                 payment.TransactionId = transactionId;
                 payment.UpdatedAt = now;
 
-                // تحديث بيانات كارت الدفع
+                // Update payment card data
                 var paymentMethod = await _db.PaymentMethods.FirstOrDefaultAsync(pm => pm.PaymentMethodId == payment.PaymentMethodId);
                 if (paymentMethod != null)
                 {
@@ -259,7 +259,7 @@ public class PaymobService : IPaymobService
         }
         else
         {
-            // فشل الدفع
+            // Payment failed
             invoice.InvoiceStatus = InvoiceStatus.Failed;
             invoice.UpdatedAt = now;
 
@@ -323,7 +323,7 @@ public class PaymobService : IPaymobService
                 orderId);
         }
 
-        // 4. استكمال الخدمات وتعيين الموظفين بعد الدفع
+        // 4. Complete services and assign employees after payment
         if (success_bool)
         {
             var orderWithPackage = await _db.Orders.Include(o => o.Package).FirstOrDefaultAsync(o => o.OrderId == orderId);
@@ -344,7 +344,7 @@ public class PaymobService : IPaymobService
                 }
             }
 
-            // إنشاء البوردينج باس
+            // Generate boarding pass
             if (orderWithPackage?.Package?.PackageName is PackageNames.DoorToDoor or PackageNames.CarServiceToAirport)
             {
                 _ = Task.Run(async () =>
@@ -360,7 +360,7 @@ public class PaymobService : IPaymobService
         var order = await _db.Orders
             .Include(o => o.Invoices)
             .FirstOrDefaultAsync(o => o.OrderId == orderId)
-            ?? throw new KeyNotFoundException("الأوردر مش موجود");
+            ?? throw new KeyNotFoundException("Order not found");
 
         var invoice = order.Invoices
             .OrderByDescending(i => i.CreatedAt)

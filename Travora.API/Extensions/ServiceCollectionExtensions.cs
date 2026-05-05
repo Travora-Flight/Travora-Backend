@@ -23,7 +23,7 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddInfrastructureServices(this IServiceCollection services, IConfiguration configuration)
     {
-        // قاعدة البيانات
+        // Database
         var connectionString = configuration.GetConnectionString("DefaultConnection");
         services.AddDbContext<ApplicationDbContext>(options =>
             options.UseSqlServer(connectionString, sqlOptions =>
@@ -33,11 +33,11 @@ public static class ServiceCollectionExtensions
             })
             .ConfigureWarnings(warnings =>
             {
-                // الـ Warnings دي متوقعة بسبب الـ ISoftDelete Query Filter - مش مشكلة
+                // These warnings are expected due to ISoftDelete Query Filter - not an issue
                 warnings.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.PossibleIncorrectRequiredNavigationWithQueryFilterInteractionWarning);
-                // الـ Decimal Precision warnings
+                // Decimal Precision warnings
                 warnings.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ShadowForeignKeyPropertyCreated);
-                // الـ Pending Migration warning - بنعمل migration يدوي
+                // Pending Migration warning - we run migrations manually
                 warnings.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning);
             })
         );
@@ -130,7 +130,7 @@ public static class ServiceCollectionExtensions
         services.Configure<PaymobSettings>(configuration.GetSection("Paymob"));
 
 
-        // HttpClient للـ APIs الخارجية
+        // HttpClient for external APIs
         services.AddHttpClient("AirlineApi", client =>
         {
             var airlineApi = configuration.GetSection("AirlineApi").Get<AirlineApiSettings>();

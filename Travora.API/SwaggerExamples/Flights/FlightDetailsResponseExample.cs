@@ -10,37 +10,47 @@ public class FlightDetailsResponseExample : IExamplesProvider<FlightDetailsRespo
         return new FlightDetailsResponse
         {
             FlightIata = "MS739",
-            AirlineName = "EgyptAir",
-            AirlineLogoUrl = "https://example.com/ms-logo.png",
-            From = "CAI",
-            FromCity = "Cairo",
-            To = "DXB",
-            ToCity = "Dubai",
-            UtcFrom = "UTC+2",
-            UtcTo = "UTC+4",
+            Status = "En Route",
+            DelayMessage = "Delayed by 10 minutes",
+            Airline = new FlightDetailAirlineDto
+            {
+                Name = "EgyptAir",
+                Iata = "MS",
+                Logo = "https://example.com/ms-logo.png"
+            },
             Aircraft = new AircraftInfo
             {
-                ModelText = "Boeing 737-800",
+                Model = "Boeing 737-800",
                 Registration = "SU-GCS"
             },
-            Speed = 850.5m,
-            Altitude = 35000,
-            DepartureGate = "G2",
-            DepartureTerminal = "Terminal 3",
-            ArrivalGate = "D10",
-            ArrivalTerminal = "Terminal 1",
-            ScheduledDeparture = "2026-04-12T10:00:00Z",
-            ActualDeparture = "2026-04-12T10:15:00Z",
-            ScheduledArrival = "2026-04-12T14:30:00Z",
-            EstimatedArrival = "2026-04-12T14:40:00Z",
-            DelayMessage = "Delayed by 10 minutes",
-            Status = "En Route",
-            CurrentPosition = new FlightPosition
+            Departure = new FlightDetailAirportDto
+            {
+                Iata = "CAI",
+                Name = "Cairo International Airport",
+                City = "Cairo",
+                Utc = "UTC+2",
+                Gate = "G2",
+                Terminal = "Terminal 3",
+                ScheduledTime = "10:00",
+                ActualTime = "10:15"
+            },
+            Arrival = new FlightDetailAirportDto
+            {
+                Iata = "DXB",
+                Name = "Dubai International Airport",
+                City = "Dubai",
+                Utc = "UTC+4",
+                Gate = "D10",
+                Terminal = "Terminal 1",
+                ScheduledTime = "14:30",
+                EstimatedTime = "14:40"
+            },
+            Position = new FlightPosition
             {
                 Latitude = 28.53m,
                 Longitude = 34.12m
             },
-            FlightTrail = new List<FlightTrailPoint>
+            Trail = new List<FlightTrailPoint>
             {
                 new FlightTrailPoint { Latitude = 30.12m, Longitude = 31.40m, Timestamp = 1712916900 },
                 new FlightTrailPoint { Latitude = 29.50m, Longitude = 32.50m, Timestamp = 1712917800 }

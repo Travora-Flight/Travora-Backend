@@ -6,7 +6,7 @@ namespace Travora.Application.DTOs.Orders.DoorToDoor;
 public class ValidateFlightRequest
 {
     // Note: PassportNumber is not needed, it will be taken from JWT.
-    // However, the spec says: "passportNumber مش محتاج — بيتاخد من الـ JWT تلقائياً"
+    // However, the spec says: "passportNumber is not needed — it's taken from JWT automatically"
     // I will let it be read from JWT inside the controller.
     public string TicketNumber { get; set; } = string.Empty;
     public string FlightNumber { get; set; } = string.Empty;

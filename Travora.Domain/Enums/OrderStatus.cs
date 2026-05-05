@@ -7,5 +7,5 @@ public enum OrderStatus
     InProgress = 3,
     Completed = 4,
     Cancelled = 5,
-    rescheduled  = 6    // Order تم إعادة جدولته
+    rescheduled  = 6    // Order has been rescheduled
 }

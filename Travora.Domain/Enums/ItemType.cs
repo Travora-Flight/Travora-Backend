@@ -2,15 +2,15 @@ namespace Travora.Domain.Enums;
 
 public enum ItemType
 {
-    Electronics = 1, // إلكترونيات
-    Clothing = 2,    // ملابس
-    Food = 3,        // طعام
-    Jewelry = 4,     // مجوهرات
-    Cosmetics = 5,   // مستحضرات تجميل
-    Books = 6,       // كتب
-    Toys = 7,        // ألعاب
-    Medicine = 8,    // أدوية
-    Furniture = 9,   // أثاث
-    Art = 10,        // أعمال فنية
-    Other = 11       // أخرى
+    Electronics = 1, // Electronics
+    Clothing = 2,    // Clothing
+    Food = 3,        // Food
+    Jewelry = 4,     // Jewelry
+    Cosmetics = 5,   // Cosmetics
+    Books = 6,       // Books
+    Toys = 7,        // Toys
+    Medicine = 8,    // Medicine
+    Furniture = 9,   // Furniture
+    Art = 10,        // Art
+    Other = 11       // Other
 }

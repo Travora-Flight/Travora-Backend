@@ -28,7 +28,7 @@ public class AdminDashboardService : IAdminDashboardService
         var currentRequests = await _db.Orders.CountAsync(o => o.OrderStatus == OrderStatus.InProgress);
         var doneRequests = await _db.Orders.CountAsync(o => o.OrderStatus == OrderStatus.Completed);
 
-        // نشاط آخر 7 أيام
+        // Activity last 7 days
         var ordersLast7Days = await _db.Orders
             .Where(o => o.CreatedAt >= sevenDaysAgo)
             .GroupBy(o => o.CreatedAt.Date)
@@ -113,7 +113,7 @@ public class AdminDashboardService : IAdminDashboardService
                 if (root.TryGetProperty("updatedAt", out var updatedProp))
                     lastUpdated = FormatTimeAgo(updatedProp.GetDateTime());
 
-                // لو on_service، اجيب الـ current task
+                // If on_service, get current task
                 if (status == "on_service")
                 {
                     var currentOrder = await _db.OrderServices
@@ -142,7 +142,7 @@ public class AdminDashboardService : IAdminDashboardService
             catch { /* ignore parsing errors */ }
         }
 
-        // ترتيب: on_service الأول، available التاني
+        // Sort: on_service first, available second
         employees = employees
             .OrderByDescending(e => e.Status == "on_service")
             .ThenByDescending(e => e.Status == "available")

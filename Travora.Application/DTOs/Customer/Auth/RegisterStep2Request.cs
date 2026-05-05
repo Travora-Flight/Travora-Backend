@@ -5,27 +5,27 @@ namespace Travora.Application.DTOs.Customer.Auth;
 
 public class RegisterStep2Request
 {
-    [Required(ErrorMessage = "الـ Session ID مطلوب")]
+    [Required(ErrorMessage = "Session ID is required")]
     public string SessionId { get; set; } = string.Empty;
 
-    [Required(ErrorMessage = "اسم المستخدم مطلوب")]
-    [StringLength(30, MinimumLength = 3, ErrorMessage = "اسم المستخدم من 3 إلى 30 حرف")]
-    [RegularExpression(@"^[a-zA-Z0-9_]+$", ErrorMessage = "اسم المستخدم يحتوي فقط على حروف وأرقام و _")]
+    [Required(ErrorMessage = "Username is required")]
+    [StringLength(30, MinimumLength = 3, ErrorMessage = "Username must be between 3 and 30 characters")]
+    [RegularExpression(@"^[a-zA-Z0-9_]+$", ErrorMessage = "Username can only contain letters, numbers and _")]
     public string Username { get; set; } = string.Empty;
 
-    [Required(ErrorMessage = "تاريخ الميلاد مطلوب")]
+    [Required(ErrorMessage = "Date of birth is required")]
     public string DateOfBirth { get; set; } = string.Empty;
 
-    [Required(ErrorMessage = "كلمة المرور مطلوبة")]
-    [MinLength(8, ErrorMessage = "كلمة المرور 8 أحرف على الأقل")]
+    [Required(ErrorMessage = "Password is required")]
+    [MinLength(8, ErrorMessage = "Password must be at least 8 characters")]
     public string Password { get; set; } = string.Empty;
 
-    [Required(ErrorMessage = "تأكيد كلمة المرور مطلوب")]
+    [Required(ErrorMessage = "Confirm password is required")]
     public string ConfirmPassword { get; set; } = string.Empty;
 
-    [Required(ErrorMessage = "صورة جواز السفر مطلوبة")]
+    [Required(ErrorMessage = "Passport image is required")]
     public IFormFile PassportImage { get; set; } = null!;
 
-    [Required(ErrorMessage = "تاريخ انتهاء الجواز مطلوب")]
+    [Required(ErrorMessage = "Passport expiry date is required")]
     public string PassportExpiryDate { get; set; } = string.Empty;
 }

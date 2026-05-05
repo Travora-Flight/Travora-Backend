@@ -128,11 +128,11 @@ public class CustomerCarServiceOrdersController : ControllerBase
             var chosenSlot = slotsResponse.AvailableSlots.FirstOrDefault(s => s.Slot == request.Slot);
 
             if (chosenSlot == null || !chosenSlot.Available)
-                return BadRequest(new { success = false, errorMessage = "هذا الموعد غير متاح" });
+                return BadRequest(new { success = false, errorMessage = "This time slot is not available" });
 
             var draft = await _draftOrderService.GetCarServiceDraftAsync(customerId.ToString(), cancellationToken);
             if (draft == null)
-                return BadRequest(new { success = false, errorMessage = "الجلسة غير موجودة" });
+                return BadRequest(new { success = false, errorMessage = "Session not found" });
 
             draft.SelectedSlot = request.Slot;
             draft.SelectedSlotDate = request.Date;

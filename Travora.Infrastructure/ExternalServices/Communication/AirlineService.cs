@@ -102,11 +102,11 @@ public class AirlineService : IAirlineService
             PropertyNameCaseInsensitive = true
         };
 
-        // جرب الـ wrapper الأول
+        // Try the wrapper first
         var wrapper = System.Text.Json.JsonSerializer.Deserialize<AirlineIssueBoardingPassWrapper>(json, options);
         var result = wrapper?.BoardingPasses?.FirstOrDefault();
 
-        // لو مش wrapper → جرب object مباشر
+        // If not a wrapper, try direct object
         if (result == null)
             result = System.Text.Json.JsonSerializer.Deserialize<AirlineIssueBoardingPassResponse>(json, options);
 

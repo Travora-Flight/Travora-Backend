@@ -5,6 +5,6 @@ namespace Travora.Domain.Enums;
 /// </summary>
 public enum OwnerType
 {
-    Customer = 1,  // عميل
-    Companion = 2  // مرافق
+    Customer = 1,  // Customer
+    Companion = 2  // Companion
 }

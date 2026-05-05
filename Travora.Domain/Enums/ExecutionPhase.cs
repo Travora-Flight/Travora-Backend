@@ -2,7 +2,7 @@ namespace Travora.Domain.Enums;
 
 public enum ExecutionPhase
 {
-    Pickup = 1,           // مرحلة الاستلام من العميل
-    AirportCheckin = 2,  // مرحلة Check-in في المطار
-    Delivery = 3         // مرحلة التسليم للعميل
+    Pickup = 1,           // Pickup phase from customer
+    AirportCheckin = 2,  // Check-in phase at airport
+    Delivery = 3         // Delivery phase to customer
 }

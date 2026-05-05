@@ -19,17 +19,17 @@ public class VehicleResponse
 
 public class CreateVehicleRequest
 {
-    [Required(ErrorMessage = "رقم اللوحة مطلوب")]
+    [Required(ErrorMessage = "Plate number is required")]
     public string PlateNumber { get; set; } = string.Empty;
-    [Required(ErrorMessage = "الماركة مطلوبة")]
+    [Required(ErrorMessage = "Brand is required")]
     public string Brand { get; set; } = string.Empty;
-    [Required(ErrorMessage = "الموديل مطلوب")]
+    [Required(ErrorMessage = "Model is required")]
     public string Model { get; set; } = string.Empty;
-    [Range(1900, 2100, ErrorMessage = "سنة الصنع غير صالحة")]
+    [Range(1900, 2100, ErrorMessage = "Manufacturing year is invalid")]
     public int Year { get; set; }
-    [Required(ErrorMessage = "اللون مطلوب")]
+    [Required(ErrorMessage = "Color is required")]
     public string Color { get; set; } = string.Empty;
-    [Range(1, 100, ErrorMessage = "السعة يجب أن تكون أكبر من 0")]
+    [Range(1, 100, ErrorMessage = "Capacity must be greater than 0")]
     public int Capacity { get; set; }
 }
 

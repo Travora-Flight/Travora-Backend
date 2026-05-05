@@ -19,9 +19,9 @@ public class CheckpointResponse
 
 public class CreateCheckpointRequest
 {
-    [Required(ErrorMessage = "اسم نقطة التفتيش مطلوب")]
+    [Required(ErrorMessage = "Checkpoint name is required")]
     public string CheckpointName { get; set; } = string.Empty;
-    [Required(ErrorMessage = "نوع نقطة التفتيش مطلوب")]
+    [Required(ErrorMessage = "Checkpoint type is required")]
     public string CheckpointType { get; set; } = string.Empty;
     public string? Description { get; set; }
     public int SequenceOrder { get; set; }

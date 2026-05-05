@@ -43,19 +43,19 @@ public class CreateEmployeeValidator : AbstractValidator<CreateEmployeeRequest>
         When(x => x.JobRole == JobRole.Driver, () =>
         {
             RuleFor(x => x.VehicleId)
-                .NotNull().WithMessage("vehicleId مطلوب للـ Driver")
-                .GreaterThan(0).WithMessage("vehicleId مطلوب للـ Driver");
+                .NotNull().WithMessage("vehicleId is required for Driver")
+                .GreaterThan(0).WithMessage("vehicleId is required for Driver");
 
             RuleFor(x => x.DriverLicense)
-                .NotNull().WithMessage("driverLicense مطلوب للـ Driver")
+                .NotNull().WithMessage("driverLicense is required for Driver")
                 .Must(BeAValidImage).WithMessage("Driver license must be an image (jpg, jpeg, png)");
         });
 
         When(x => x.JobRole == JobRole.BaggageHandler, () =>
         {
             RuleFor(x => x.CheckpointId)
-                .NotNull().WithMessage("checkpointId مطلوب للـ Baggage Handler")
-                .GreaterThan(0).WithMessage("checkpointId مطلوب للـ Baggage Handler");
+                .NotNull().WithMessage("checkpointId is required for Baggage Handler")
+                .GreaterThan(0).WithMessage("checkpointId is required for Baggage Handler");
         });
     }
 
