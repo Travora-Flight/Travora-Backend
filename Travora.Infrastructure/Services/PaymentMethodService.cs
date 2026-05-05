@@ -67,28 +67,19 @@ public class PaymentMethodService : IPaymentMethodService
                 && pm.CustomerId == customerId && pm.IsActive && !pm.IsDeleted);
 
         if (target == null)
-            return (false, "الكارت مش موجود");
+            return (false, "Card not found");
 
-        // Check if it's the only active card
-        var activeCount = await _db.PaymentMethods
-            .CountAsync(pm => pm.CustomerId == customerId && pm.IsActive && !pm.IsDeleted);
-
-        if (activeCount <= 1)
-            return (false, "لا يمكن حذف الكارت الوحيد");
-
-        // تحقق إن البطاقة مش مستخدمة في order نشط
-        var hasActiveOrder = await _db.Payments
-            .AnyAsync(p => p.PaymentMethodId == paymentMethodId && p.Invoice.Order.OrderStatus != Travora.Domain.Enums.OrderStatus.Cancelled);
-
-        if (hasActiveOrder)
-            return (false, "لا يمكن حذف بطاقة مرتبطة بطلب نشط");
+        // Payment is captured upfront at booking time.
+        // The card is no longer needed after payment is collected.
+        // Refunds (full or partial) are processed via TransactionId stored in the Payment table.
+        // Therefore, we allow deletion in all order statuses with no restrictions.
 
         var now = DateTime.UtcNow;
         target.IsDeleted = true;
         target.IsActive = false;
         target.UpdatedAt = now;
 
-        // If deleted card was default → make oldest remaining card default
+        // If deleted card was default → promote the oldest remaining active card to default
         if (target.IsDefault)
         {
             target.IsDefault = false;
@@ -105,6 +96,6 @@ public class PaymentMethodService : IPaymentMethodService
         }
 
         await _db.SaveChangesAsync();
-        return (true, "تم حذف الكارت بنجاح");
+        return (true, "Card deleted successfully");
     }
 }
