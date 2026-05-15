@@ -50,4 +50,5 @@ public class CompanionDetails
     public string? Nationality { get; set; }
     public DateTime? DateOfBirth { get; set; }
     public DateTime? PassportExpiryDate { get; set; }
+    public bool IsVerified { get; set; }
 }

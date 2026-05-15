@@ -8,6 +8,7 @@ public interface IDoorToDoorOrderService
     Task<ValidateCompanionResponse> ValidateCompanionAsync(int customerId, ValidateCompanionRequest request, CancellationToken cancellationToken = default);
     Task<ValidateBaggageResponse> ValidateBaggageAsync(int customerId, CancellationToken cancellationToken = default);
     Task<ResolveLocationResponse> ResolveLocationAsync(int customerId, ResolveLocationRequest request, CancellationToken cancellationToken = default);
+    Task<ResolveLocationResponse> UpdateLocationAsync(int customerId, UpdateLocationRequest request, CancellationToken cancellationToken = default);
     Task<AvailableSlotsResponse> GetAvailableSlotsAsync(int customerId, DateTime date, CancellationToken cancellationToken = default);
     Task<AvailableSlotsResponse> GetAvailableDeliverySlotsAsync(int customerId, DateTime date, CancellationToken cancellationToken = default);
     Task<SetCustomsTypeResponse> SetCustomsTypeAsync(int customerId, SetCustomsTypeRequest request, CancellationToken cancellationToken = default);

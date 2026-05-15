@@ -38,3 +38,13 @@ public class ResolveLocationResponse
     public string? PostalCode { get; set; }
     public string LocationType { get; set; } = "pickup";
 }
+
+public class UpdateLocationRequest
+{
+    public string LocationType { get; set; } = "pickup"; // pickup or delivery
+    public string? StreetAddress { get; set; }
+    public string? City { get; set; }
+    public string? State { get; set; }
+    public string? Country { get; set; }
+    public string? PostalCode { get; set; }
+}

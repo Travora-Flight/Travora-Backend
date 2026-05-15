@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Travora.Application.DTOs.External.Airline;
 using Travora.Application.DTOs.Orders.CarService;
@@ -8,6 +9,8 @@ using Travora.Application.Interfaces.Services;
 using Travora.Application.Interfaces.Services.Customer;
 using Travora.Domain.Constants;
 using Travora.Domain.Enums;
+using Travora.Application.DTOs.Customer.Auth;
+using Travora.Domain.Entities;
 using Travora.Infrastructure.Data;
 
 namespace Travora.Infrastructure.CustomerPanel.Services;
@@ -20,6 +23,7 @@ public class CarServiceOrderService : ICarServiceOrderService
     private readonly IDraftOrderService _draftOrderService;
     private readonly IGeocodingService _geocodingService;
     private readonly INotificationPusher _pusher;
+    private readonly IPassportOcrService _ocrService;
 
     public CarServiceOrderService(
         ApplicationDbContext context,
@@ -27,7 +31,8 @@ public class CarServiceOrderService : ICarServiceOrderService
         ICloudinaryService cloudinaryService,
         IDraftOrderService draftOrderService,
         IGeocodingService geocodingService,
-        INotificationPusher pusher)
+        INotificationPusher pusher,
+        IPassportOcrService ocrService)
     {
         _context = context;
         _airlineService = airlineService;
@@ -35,6 +40,7 @@ public class CarServiceOrderService : ICarServiceOrderService
         _draftOrderService = draftOrderService;
         _geocodingService = geocodingService;
         _pusher = pusher;
+        _ocrService = ocrService;
     }
 
     // ===================================================================
@@ -98,12 +104,17 @@ public class CarServiceOrderService : ICarServiceOrderService
         passengerData.TravelClass = airlineRes.Ticket?.TravelClass ?? passengerData.TravelClass;
         passengerData.BoardingStatus = airlineRes.Ticket?.BoardingStatus ?? passengerData.BoardingStatus;
 
-        var departure = flightData.DepartureTimeUtc;
-        var diff = departure - DateTime.UtcNow;
-        if (diff.TotalHours < 12)
-            return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = "Booking must be made at least 12 hours before departure" };
+        if (request.ServiceType != CarServiceType.DeliveryFromAirport)
+        {
+            var departure = flightData.DepartureTimeUtc;
+            var diff = departure - DateTime.UtcNow;
+            if (diff.TotalHours < 12)
+                return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = "Booking must be made at least 12 hours before departure" };
+        }
 
-        var bookingDeadlineUtc = departure.AddHours(-12);
+        var bookingDeadlineUtc = request.ServiceType == CarServiceType.DeliveryFromAirport
+            ? (flightData.ArrivalTimeUtc ?? flightData.DepartureTimeUtc.AddHours(4)).AddDays(4)
+            : flightData.DepartureTimeUtc.AddHours(-12);
 
         var draft = new CarServiceDraftOrder
         {
@@ -165,29 +176,81 @@ public class CarServiceOrderService : ICarServiceOrderService
         if (flightData.FlightNumber != draft.FlightInfo.FlightNumber)
             return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Companion is not on the same flight" };
 
-        string imageUrl = "https://res.cloudinary.com/travora/image/upload/vdefault/companion.jpg";
-        if (request.PassportImage != null && request.PassportImage.Length > 0)
+        if (request.PassportImage == null || request.PassportImage.Length == 0)
         {
-            using var stream = request.PassportImage.OpenReadStream();
-            var uploadResult = await _cloudinaryService.UploadFileAsync(stream, request.PassportImage.FileName, "travora/companions");
-            if (!string.IsNullOrEmpty(uploadResult))
-                imageUrl = uploadResult;
+            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Passport image is required for companion validation" };
+        }
+
+        var tempDir = Path.Combine(Path.GetTempPath(), "travora_ocr");
+        Directory.CreateDirectory(tempDir);
+        var tempPath = Path.Combine(tempDir, $"{Guid.NewGuid()}{Path.GetExtension(request.PassportImage.FileName)}");
+
+        string imageUrl = "https://res.cloudinary.com/travora/image/upload/vdefault/companion.jpg";
+        bool passportVerified = false;
+        string finalPassportNumber = request.PassportNumber;
+        string? ocrResultJson = null;
+
+        try
+        {
+            await using (var fileStream = System.IO.File.Create(tempPath))
+            {
+                await request.PassportImage.CopyToAsync(fileStream, cancellationToken);
+            }
+
+            await using (var uploadStream = System.IO.File.OpenRead(tempPath))
+            {
+                var uploadResult = await _cloudinaryService.UploadFileAsync(
+                    uploadStream, request.PassportImage.FileName, "travora/companions");
+                if (!string.IsNullOrEmpty(uploadResult))
+                    imageUrl = uploadResult;
+            }
+
+            var ocrResult = await _ocrService.ExtractPassportDataAsync(tempPath);
+
+            if (ocrResult.ValidScore < 65)
+            {
+                return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Passport image is unclear or invalid. Please upload a clearer image." };
+            }
+
+            passportVerified = ocrResult.Error == null && ocrResult.ValidScore >= 85;
+            
+            if (passportVerified && !string.IsNullOrWhiteSpace(ocrResult.Number))
+            {
+                finalPassportNumber = ocrResult.Number;
+            }
+
+            ocrResultJson = JsonSerializer.Serialize(ocrResult);
+        }
+        catch (Exception ex)
+        {
+            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = $"OCR Verification failed: {ex.Message}" };
+        }
+        finally
+        {
+            if (System.IO.File.Exists(tempPath))
+            {
+                try { System.IO.File.Delete(tempPath); } catch { }
+            }
         }
 
         var newCompanion = new DraftCompanion
         {
             FirstName = passengerData.FirstName ?? string.Empty,
             LastName = passengerData.LastName ?? string.Empty,
-            PassportNumber = request.PassportNumber,
+            PassportNumber = finalPassportNumber,
             TicketNumber = request.TicketNumber,
             SeatNumber = airlineRes.Ticket?.SeatNumber ?? passengerData.SeatNumber ?? string.Empty,
             PassportImageUrl = imageUrl,
             Nationality = passengerData.Nationality,
             DateOfBirth = DateTime.TryParse(passengerData.DateOfBirth, out var dob) ? dob : null,
-            PassportExpiryDate = DateTime.TryParse(passengerData.PassportExpiryDate, out var expiry) ? expiry : null
+            PassportExpiryDate = DateTime.TryParse(passengerData.PassportExpiryDate, out var expiry) ? expiry : null,
+            IsVerified = passportVerified,
+            PassportFileSizeKb = (int)(request.PassportImage.Length / 1024),
+            PassportMimeType = request.PassportImage.ContentType,
+            PassportOcrResultJson = ocrResultJson
         };
 
-        if (!draft.Companions.Any(c => c.PassportNumber == request.PassportNumber))
+        if (!draft.Companions.Any(c => c.PassportNumber == finalPassportNumber))
         {
             draft.Companions.Add(newCompanion);
             await _draftOrderService.SaveCarServiceDraftAsync(draft, TimeSpan.FromMinutes(30), cancellationToken);
@@ -206,7 +269,8 @@ public class CarServiceOrderService : ICarServiceOrderService
                 PassportImageUrl = newCompanion.PassportImageUrl,
                 Nationality = newCompanion.Nationality,
                 DateOfBirth = newCompanion.DateOfBirth,
-                PassportExpiryDate = newCompanion.PassportExpiryDate
+                PassportExpiryDate = newCompanion.PassportExpiryDate,
+                IsVerified = newCompanion.IsVerified
             },
             TotalCompanions = draft.Companions.Count
         };
@@ -221,78 +285,150 @@ public class CarServiceOrderService : ICarServiceOrderService
         if (draft == null || draft.FlightInfo == null)
             return new ValidateBaggageResponse { IsValid = false, ErrorMessage = "Session not found" };
 
-        // Call baggage-check in parallel
-        var tasks = new List<(string TicketNumber, Task<AirlineBaggageCheckResponse> Task)>
+        var allTicketNumbers = new List<string> { draft.TicketNumber };
+        allTicketNumbers.AddRange(draft.Companions.Select(c => c.TicketNumber));
+
+        if (draft.ServiceType == CarServiceType.DeliveryFromAirport)
         {
-            (draft.TicketNumber, _airlineService.GetBaggageCountAsync(draft.TicketNumber, cancellationToken))
-        };
-
-        foreach (var comp in draft.Companions)
-            tasks.Add((comp.TicketNumber, _airlineService.GetBaggageCountAsync(comp.TicketNumber, cancellationToken)));
-
-        await Task.WhenAll(tasks.Select(t => t.Task));
-
-        // Build breakdown from the real response
-        var breakdown = new List<BaggageBreakdown>();
-        int totalFromAirline = 0;
-
-        foreach (var t in tasks)
-        {
-            var result = t.Task.Result;
-            // If tickets are in the response, use them
-            if (result.Tickets != null && result.Tickets.Any())
+            // 1. Baggage Allowance Check
+            var allowanceTasks = allTicketNumbers.Select(tn => new
             {
-                foreach (var ticket in result.Tickets)
+                TicketNumber = tn,
+                Task = _airlineService.GetBaggageAllowanceAsync(tn, cancellationToken)
+            }).ToList();
+
+            await Task.WhenAll(allowanceTasks.Select(t => t.Task));
+            int summedAllowance = allowanceTasks.Sum(t => t.Task.Result.AllowedBaggageCount);
+
+            if (draft.BaggageCount > summedAllowance)
+            {
+                return new ValidateBaggageResponse
+                {
+                    IsValid = false,
+                    ErrorMessage = "The total number of bags entered exceeds the baggage allowance limit for these tickets"
+                };
+            }
+
+            // 2. Checked-In Registered bags Check
+            var bagTasks = allTicketNumbers.Select(tn => new
+            {
+                TicketNumber = tn,
+                Task = _airlineService.GetBaggageCountAsync(tn, cancellationToken)
+            }).ToList();
+
+            await Task.WhenAll(bagTasks.Select(t => t.Task));
+            int totalFromAirline = bagTasks.Sum(t => t.Task.Result.TotalBaggageCount);
+
+            if (totalFromAirline < draft.BaggageCount)
+            {
+                return new ValidateBaggageResponse
+                {
+                    IsValid = false,
+                    ErrorMessage = "Some of the bags you entered have not been registered with the airline yet"
+                };
+            }
+
+            // Build breakdown
+            var breakdown = new List<BaggageBreakdown>();
+            foreach (var t in bagTasks)
+            {
+                var result = t.Task.Result;
+                if (result.Tickets != null && result.Tickets.Any())
+                {
+                    foreach (var ticket in result.Tickets)
+                    {
+                        breakdown.Add(new BaggageBreakdown
+                        {
+                            TicketNumber = ticket.TicketNumber ?? t.TicketNumber,
+                            BaggageCount = ticket.BaggageCount
+                        });
+                    }
+                }
+                else
                 {
                     breakdown.Add(new BaggageBreakdown
                     {
-                        TicketNumber = ticket.TicketNumber ?? t.TicketNumber,
-                        BaggageCount = ticket.BaggageCount
+                        TicketNumber = t.TicketNumber,
+                        BaggageCount = result.TotalBaggageCount
                     });
                 }
             }
-            else
-            {
-                breakdown.Add(new BaggageBreakdown
-                {
-                    TicketNumber = t.TicketNumber,
-                    BaggageCount = result.TotalBaggageCount
-                });
-            }
-            totalFromAirline += result.TotalBaggageCount;
-        }
 
-        if (draft.BaggageCount != totalFromAirline)
-        {
+            draft.TotalBaggageCount = totalFromAirline;
+            draft.BaggageValidated = true;
+
+            foreach (var comp in draft.Companions)
+            {
+                var companionBags = breakdown.FirstOrDefault(b => b.TicketNumber == comp.TicketNumber);
+                comp.BaggageCount = companionBags?.BaggageCount ?? 0;
+            }
+
+            await _draftOrderService.SaveCarServiceDraftAsync(draft, TimeSpan.FromMinutes(30), cancellationToken);
+
             return new ValidateBaggageResponse
             {
-                IsValid = false,
-                ErrorCode = "BaggageCountMismatch",
-                ErrorMessage = "The number of bags entered does not match the airline records",
-                Expected = totalFromAirline,
-                Actual = draft.BaggageCount,
+                IsValid = true,
                 TotalBaggageCount = totalFromAirline,
                 Breakdown = breakdown
             };
         }
-
-        draft.TotalBaggageCount = totalFromAirline;
-        draft.BaggageValidated = true;
-
-        foreach (var comp in draft.Companions)
+        else
         {
-            var companionBags = breakdown.FirstOrDefault(b => b.TicketNumber == comp.TicketNumber);
-            comp.BaggageCount = companionBags?.BaggageCount ?? 0;
+            var allowanceTasks = allTicketNumbers.Select(tn => new
+            {
+                TicketNumber = tn,
+                Task = _airlineService.GetBaggageAllowanceAsync(tn, cancellationToken)
+            }).ToList();
+
+            await Task.WhenAll(allowanceTasks.Select(t => t.Task));
+            int summedAllowance = allowanceTasks.Sum(t => t.Task.Result.AllowedBaggageCount);
+
+            if (draft.BaggageCount > summedAllowance)
+            {
+                return new ValidateBaggageResponse
+                {
+                    IsValid = false,
+                    ErrorMessage = "The total number of bags entered exceeds the baggage allowance limit for these tickets"
+                };
+            }
+
+            draft.TotalBaggageCount = draft.BaggageCount;
+            draft.BaggageValidated = true;
+
+            int remainingBags = draft.BaggageCount;
+            var primaryAllowance = allowanceTasks.First(t => t.TicketNumber == draft.TicketNumber).Task.Result.AllowedBaggageCount;
+            int primaryBags = Math.Min(remainingBags, primaryAllowance);
+            remainingBags -= primaryBags;
+
+            var breakdown = new List<BaggageBreakdown>
+            {
+                new BaggageBreakdown { TicketNumber = draft.TicketNumber, BaggageCount = primaryBags }
+            };
+
+            foreach (var comp in draft.Companions)
+            {
+                var compAllowance = allowanceTasks.FirstOrDefault(t => t.TicketNumber == comp.TicketNumber)?.Task.Result.AllowedBaggageCount ?? 0;
+                int compBags = Math.Min(remainingBags, compAllowance);
+                comp.BaggageCount = compBags;
+                remainingBags -= compBags;
+
+                breakdown.Add(new BaggageBreakdown { TicketNumber = comp.TicketNumber, BaggageCount = compBags });
+            }
+
+            if (remainingBags > 0)
+            {
+                breakdown[0].BaggageCount += remainingBags;
+            }
+
+            await _draftOrderService.SaveCarServiceDraftAsync(draft, TimeSpan.FromMinutes(30), cancellationToken);
+
+            return new ValidateBaggageResponse
+            {
+                IsValid = true,
+                TotalBaggageCount = draft.TotalBaggageCount,
+                Breakdown = breakdown
+            };
         }
-
-        await _draftOrderService.SaveCarServiceDraftAsync(draft, TimeSpan.FromMinutes(30), cancellationToken);
-
-        return new ValidateBaggageResponse
-        {
-            IsValid = true,
-            TotalBaggageCount = totalFromAirline,
-            Breakdown = breakdown
-        };
     }
 
     // ===================================================================
@@ -325,6 +461,7 @@ public class CarServiceOrderService : ICarServiceOrderService
 
         return new ResolveLocationResponse
         {
+            IsValid = true,
             Latitude = request.Latitude,
             Longitude = request.Longitude,
             FormattedAddress = result?.FormattedAddress ?? string.Empty,
@@ -333,6 +470,44 @@ public class CarServiceOrderService : ICarServiceOrderService
             State = result?.State,
             Country = result?.Country,
             PostalCode = result?.PostalCode,
+            LocationType = locationType
+        };
+    }
+
+    // ===================================================================
+    // STEP 3.5 — Update Location (Manual Correction)
+    // ===================================================================
+    public async Task<ResolveLocationResponse> UpdateLocationAsync(
+        int customerId, CarServiceUpdateLocationRequest request, CancellationToken cancellationToken = default)
+    {
+        var draft = await _draftOrderService.GetCarServiceDraftAsync(customerId.ToString(), cancellationToken);
+        if (draft == null)
+            return new ResolveLocationResponse { IsValid = false, ErrorMessage = "Session not found" };
+
+        if (string.IsNullOrEmpty(draft.LocationFormattedAddress))
+            return new ResolveLocationResponse { IsValid = false, ErrorMessage = "Location must be resolved first before updating" };
+
+        if (request.StreetAddress != null) draft.LocationStreetAddress = request.StreetAddress;
+        if (request.City != null) draft.LocationCity = request.City;
+        if (request.State != null) draft.LocationState = request.State;
+        if (request.Country != null) draft.LocationCountry = request.Country;
+        if (request.PostalCode != null) draft.LocationPostalCode = request.PostalCode;
+
+        await _draftOrderService.SaveCarServiceDraftAsync(draft, TimeSpan.FromMinutes(30), cancellationToken);
+
+        string locationType = draft.ServiceType == CarServiceType.DeliveryToAirport ? "pickup" : "delivery";
+
+        return new ResolveLocationResponse
+        {
+            IsValid = true,
+            Latitude = draft.LocationLatitude ?? 0,
+            Longitude = draft.LocationLongitude ?? 0,
+            FormattedAddress = draft.LocationFormattedAddress ?? string.Empty,
+            StreetAddress = draft.LocationStreetAddress,
+            City = draft.LocationCity,
+            State = draft.LocationState,
+            Country = draft.LocationCountry,
+            PostalCode = draft.LocationPostalCode,
             LocationType = locationType
         };
     }
@@ -350,23 +525,42 @@ public class CarServiceOrderService : ICarServiceOrderService
         if (string.IsNullOrEmpty(draft.LocationFormattedAddress))
             return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Location selection step must be completed first" };
 
-        var flightDate = draft.FlightInfo.DepartureTimeUtc.Date;
-        var today = DateTime.UtcNow.Date;
+        var response = new AvailableSlotsResponse { IsValid = true };
+        DateTime? absoluteCutoffUtc = null;
+        TimeSpan? startAfterTimeSpan = null;
 
-        if (date.Date < today)
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Cannot select a day in the past" };
-        if (date.Date > flightDate)
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Cannot book after the flight date" };
-
-        var response = new AvailableSlotsResponse();
-        TimeSpan? cutoffTimeSpan = null;
-
-        if (date.Date == flightDate)
+        if (draft.ServiceType == CarServiceType.DeliveryFromAirport)
         {
-            var cutoffUtc = draft.FlightInfo.DepartureTimeUtc.AddHours(-12);
-            cutoffTimeSpan = cutoffUtc.TimeOfDay;
-            response.CutoffTime = cutoffTimeSpan.Value.ToString(@"hh\:mm");
-            response.Note = $"The last available slot must end before {response.CutoffTime}";
+            var arrivalTime = draft.FlightInfo.ArrivalTimeUtc ?? draft.FlightInfo.DepartureTimeUtc.AddHours(4);
+            var executionStart = arrivalTime.AddHours(4);
+            var executionEnd = arrivalTime.AddDays(4);
+
+            if (date.Date < executionStart.Date || date.Date > executionEnd.Date)
+                return new AvailableSlotsResponse { IsValid = false, ErrorMessage = $"Execution date must be between {executionStart:yyyy-MM-dd} and {executionEnd:yyyy-MM-dd}" };
+
+            if (date.Date == executionStart.Date)
+            {
+                startAfterTimeSpan = executionStart.TimeOfDay;
+            }
+        }
+        else
+        {
+            var earliestPossible = draft.FlightInfo.DepartureTimeUtc.AddDays(-4);
+            var latestPossible = draft.FlightInfo.DepartureTimeUtc.AddHours(-12);
+            var today = DateTime.UtcNow.Date;
+
+            if (date.Date < today)
+                return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Cannot select a day in the past" };
+            
+            if (date.Date < earliestPossible.Date || date.Date > latestPossible.Date)
+                return new AvailableSlotsResponse { IsValid = false, ErrorMessage = $"Execution date must be between {earliestPossible:yyyy-MM-dd} and {latestPossible:yyyy-MM-dd}" };
+
+            absoluteCutoffUtc = latestPossible;
+            if (date.Date == latestPossible.Date)
+            {
+                response.CutoffTime = latestPossible.ToString(@"HH:mm");
+                response.Note = $"The last available slot must end before {response.CutoffTime}";
+            }
         }
 
         var allDrivers = await _context.Employees
@@ -388,8 +582,13 @@ public class CarServiceOrderService : ICarServiceOrderService
             var end = parts[1] == "24:00" ? TimeSpan.FromHours(24) : TimeSpan.Parse(parts[1]);
 
             bool isAvailable = true;
+            var slotEndUtc = date.Date.Add(end);
 
-            if (cutoffTimeSpan.HasValue && end > cutoffTimeSpan.Value)
+            if (absoluteCutoffUtc.HasValue && slotEndUtc > absoluteCutoffUtc.Value)
+            {
+                isAvailable = false;
+            }
+            else if (startAfterTimeSpan.HasValue && start < startAfterTimeSpan.Value)
             {
                 isAvailable = false;
             }
@@ -411,6 +610,61 @@ public class CarServiceOrderService : ICarServiceOrderService
         return response;
     }
 
+    public async Task<AvailableDatesResponse> GetAvailableDatesAsync(int customerId, CancellationToken cancellationToken = default)
+    {
+        var draft = await _draftOrderService.GetCarServiceDraftAsync(customerId.ToString(), cancellationToken);
+        if (draft == null || draft.FlightInfo == null)
+            return new AvailableDatesResponse { IsValid = false, ErrorMessage = "Session not found" };
+
+        if (string.IsNullOrEmpty(draft.LocationFormattedAddress))
+            return new AvailableDatesResponse { IsValid = false, ErrorMessage = "Location selection step must be completed first" };
+
+        var availableDates = new List<DateTime>();
+
+        if (draft.ServiceType == CarServiceType.DeliveryFromAirport)
+        {
+            var arrivalTime = draft.FlightInfo.ArrivalTimeUtc ?? draft.FlightInfo.DepartureTimeUtc.AddHours(4);
+            var executionStart = arrivalTime.AddHours(4);
+            var executionEnd = arrivalTime.AddDays(4);
+
+            var currentDate = executionStart.Date;
+            while (currentDate <= executionEnd.Date)
+            {
+                availableDates.Add(currentDate);
+                currentDate = currentDate.AddDays(1);
+            }
+        }
+        else
+        {
+            var todayUtc = DateTime.UtcNow;
+            var executionStart = draft.FlightInfo.DepartureTimeUtc.AddDays(-4);
+            var executionEnd = draft.FlightInfo.DepartureTimeUtc.AddHours(-12);
+
+            if (todayUtc > executionEnd)
+            {
+                return new AvailableDatesResponse 
+                { 
+                    IsValid = false, 
+                    ErrorMessage = "It is too late to book. All bookings must be completed at least 12 hours before the flight departure." 
+                };
+            }
+
+            var windowStart = executionStart > todayUtc ? executionStart : todayUtc;
+            var currentDate = windowStart.Date;
+            while (currentDate <= executionEnd.Date)
+            {
+                availableDates.Add(currentDate);
+                currentDate = currentDate.AddDays(1);
+            }
+        }
+
+        return new AvailableDatesResponse
+        {
+            IsValid = true,
+            AvailableDates = availableDates
+        };
+    }
+
     // ===================================================================
     // STEP 5 — Bags (delivery_from_airport only) — Real data from baggageTags
     // ===================================================================
@@ -426,11 +680,9 @@ public class CarServiceOrderService : ICarServiceOrderService
         if (draft.ServiceType != CarServiceType.DeliveryFromAirport)
             return new MyBagsResponse { IsValid = false, ErrorMessage = "This step is only available for delivery From Airport service" };
 
-        // Collect all ticketNumbers
         var ticketNumbers = new List<string> { draft.TicketNumber };
         ticketNumbers.AddRange(draft.Companions.Select(c => c.TicketNumber));
 
-        // Call baggage-check in parallel
         var tasks = ticketNumbers.Select(tn => new
         {
             TicketNumber = tn,
@@ -439,35 +691,74 @@ public class CarServiceOrderService : ICarServiceOrderService
 
         await Task.WhenAll(tasks.Select(t => t.Task));
 
-        var allBags = new List<BagItem>();
+        var passengerBagItems = new List<PassengerBagItem>();
+        var nameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        if (draft.PassengerInfo != null)
+        {
+            nameMap[draft.TicketNumber] = $"{draft.PassengerInfo.FirstName} {draft.PassengerInfo.LastName}".Trim();
+        }
+        else
+        {
+            nameMap[draft.TicketNumber] = "Main Passenger";
+        }
+
+        foreach (var comp in draft.Companions)
+        {
+            nameMap[comp.TicketNumber] = $"{comp.FirstName} {comp.LastName}".Trim();
+        }
+
         foreach (var t in tasks)
         {
             var result = t.Task.Result;
-            // Use real baggageTags from the response
-            if (result.Tickets != null)
+            if (result.Tickets != null && result.Tickets.Any())
             {
                 foreach (var ticket in result.Tickets)
                 {
+                    var ticketNum = ticket.TicketNumber ?? t.TicketNumber;
+                    if (!nameMap.TryGetValue(ticketNum, out string? passengerName))
+                    {
+                        passengerName = result.PassengerName ?? "Passenger";
+                    }
+
+                    var bagsForTicket = new List<BagItem>();
                     if (ticket.BaggageTags != null)
                     {
                         foreach (var tag in ticket.BaggageTags)
                         {
-                            allBags.Add(new BagItem
+                            bagsForTicket.Add(new BagItem
                             {
                                 TagNumber = tag.TagNumber,
                                 WeightKg = tag.WeightKg,
                                 Journey = $"{tag.Origin ?? draft.FlightInfo.DepartureAirport} → {tag.Destination ?? draft.FlightInfo.ArrivalAirport}",
                                 Gate = tag.Gate ?? draft.FlightInfo.Gate ?? "N/A",
                                 Terminal = tag.Terminal ?? draft.FlightInfo.Terminal ?? "N/A",
-                                TicketNumber = ticket.TicketNumber
+                                TicketNumber = ticketNum
                             });
                         }
                     }
+
+                    passengerBagItems.Add(new PassengerBagItem
+                    {
+                        PassengerName = passengerName,
+                        TicketNumber = ticketNum,
+                        Bags = bagsForTicket
+                    });
                 }
+            }
+            else
+            {
+                nameMap.TryGetValue(t.TicketNumber, out string? passengerName);
+                passengerBagItems.Add(new PassengerBagItem
+                {
+                    PassengerName = passengerName ?? "Passenger",
+                    TicketNumber = t.TicketNumber,
+                    Bags = new List<BagItem>()
+                });
             }
         }
 
-        return new MyBagsResponse { Bags = allBags };
+        return new MyBagsResponse { IsValid = true, Passengers = passengerBagItems };
     }
 
     // ===================================================================
@@ -488,7 +779,9 @@ public class CarServiceOrderService : ICarServiceOrderService
         if (request.SelectedTagNumbers == null || !request.SelectedTagNumbers.Any())
             throw new Exception("At least one bag must be selected");
 
-        // Prevent customer from selecting same tag twice
+        if (request.SelectedTagNumbers.Count != draft.BaggageCount)
+            throw new Exception($"You must select exactly {draft.BaggageCount} bags, as specified in your initial booking");
+
         if (request.SelectedTagNumbers.Distinct().Count() != request.SelectedTagNumbers.Count)
             throw new Exception("The same bag cannot be selected twice");
 
@@ -542,6 +835,7 @@ public class CarServiceOrderService : ICarServiceOrderService
 
         return new InvoiceResponse
         {
+            IsValid = true,
             InvoiceNumber = $"INV-{DateTime.UtcNow.Year}-{new Random().Next(1000, 9999)}",
             Breakdown = new InvoiceBreakdown
             {
@@ -793,7 +1087,8 @@ public class CarServiceOrderService : ICarServiceOrderService
                             PassportNumber = comp.PassportNumber,
                             Nationality = comp.Nationality,
                             DateOfBirth = comp.DateOfBirth,
-                            PassportExpiryDate = comp.PassportExpiryDate
+                            PassportExpiryDate = comp.PassportExpiryDate,
+                            IsVerified = comp.IsVerified
                         };
                         _context.Companions.Add(companionEntity);
                     }
@@ -804,9 +1099,87 @@ public class CarServiceOrderService : ICarServiceOrderService
                         companionEntity.Nationality = comp.Nationality ?? companionEntity.Nationality;
                         companionEntity.DateOfBirth = comp.DateOfBirth ?? companionEntity.DateOfBirth;
                         companionEntity.PassportExpiryDate = comp.PassportExpiryDate ?? companionEntity.PassportExpiryDate;
+                        companionEntity.IsVerified = comp.IsVerified || companionEntity.IsVerified;
                     }
                     await _context.SaveChangesAsync(cancellationToken);
                     companionIdMap[comp.PassportNumber] = companionEntity.CompanionId;
+
+                    var documentExists = await _context.Documents.AnyAsync(d =>
+                        d.OwnerId == companionEntity.CompanionId &&
+                        d.OwnerType == DocumentOwnerType.Companion &&
+                        d.DocumentType == DocumentType.Passport, cancellationToken);
+
+                    if (!documentExists && !string.IsNullOrEmpty(comp.PassportImageUrl))
+                    {
+                        var document = new Domain.Entities.Document
+                        {
+                            OwnerId = companionEntity.CompanionId,
+                            OwnerType = DocumentOwnerType.Companion,
+                            DocumentType = DocumentType.Passport,
+                            FilePath = comp.PassportImageUrl,
+                            FileSizeKb = comp.PassportFileSizeKb > 0 ? comp.PassportFileSizeKb : 0,
+                            MimeType = !string.IsNullOrEmpty(comp.PassportMimeType) ? comp.PassportMimeType : "image/jpeg",
+                            VerificationStatus = comp.IsVerified ? VerificationStatus.Approved : VerificationStatus.UnderReview,
+                            UploadedAt = DateTime.UtcNow,
+                            IsActive = true,
+                            CreatedAt = DateTime.UtcNow
+                        };
+                        _context.Documents.Add(document);
+                        await _context.SaveChangesAsync(cancellationToken);
+
+                        if (!string.IsNullOrEmpty(comp.PassportOcrResultJson))
+                        {
+                            try
+                            {
+                                var ocrResult = JsonSerializer.Deserialize<PassportOcrResult>(
+                                    comp.PassportOcrResultJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                                
+                                if (ocrResult != null)
+                                {
+                                    DateTime.TryParse(ocrResult.DateOfBirthFormatted, out var extractedDob);
+                                    DateTime.TryParse(ocrResult.ExpirationDateFormatted, out var extractedExpiry);
+
+                                    var validation = new PassportValidation
+                                    {
+                                        DocumentId = document.DocumentId,
+                                        ExpiryCheckPassed = comp.PassportExpiryDate > DateTime.UtcNow,
+                                        FormatCheckPassed = ocrResult.ValidComposite ?? false,
+                                        NameMatchCheck = string.Equals(ocrResult.Surname, comp.LastName, StringComparison.OrdinalIgnoreCase),
+                                        BirthDateMatchCheck = extractedDob.Date == (comp.DateOfBirth?.Date ?? DateTime.MinValue.Date),
+                                        ValidationStatus = comp.IsVerified ? PassportValidationStatus.Passed : PassportValidationStatus.RequiresManualReview,
+                                        OcrConfidenceScore = ocrResult.ValidScore / 100.0m,
+                                        ManualReviewRequired = !comp.IsVerified,
+                                        MrzType = ocrResult.MrzType,
+                                        RawMrzText = ocrResult.RawText,
+                                        ValidScore = ocrResult.ValidScore,
+                                        MrzMethod = ocrResult.Method,
+                                        CheckNumber = ocrResult.CheckNumber,
+                                        CheckDateOfBirth = ocrResult.CheckDateOfBirth,
+                                        CheckExpirationDate = ocrResult.CheckExpirationDate,
+                                        CheckComposite = ocrResult.CheckComposite,
+                                        CheckPersonalNumber = ocrResult.CheckPersonalNumber,
+                                        ValidNumber = ocrResult.ValidNumber,
+                                        ValidDateOfBirth = ocrResult.ValidDateOfBirth,
+                                        ValidExpirationDate = ocrResult.ValidExpirationDate,
+                                        ValidComposite = ocrResult.ValidComposite,
+                                        ValidPersonalNumber = ocrResult.ValidPersonalNumber,
+                                        ExtractedPassportNumber = ocrResult.Number,
+                                        ExtractedSurname = ocrResult.Surname,
+                                        ExtractedGivenNames = ocrResult.Names,
+                                        ExtractedNationality = ocrResult.Nationality,
+                                        ExtractedDateOfBirth = extractedDob != default ? extractedDob : null,
+                                        ExtractedExpiryDate = extractedExpiry != default ? extractedExpiry : null,
+                                        ExtractedGender = ocrResult.SexFormatted,
+                                        ValidatedAt = DateTime.UtcNow,
+                                        CreatedAt = DateTime.UtcNow
+                                    };
+
+                                    _context.Set<PassportValidation>().Add(validation);
+                                }
+                            }
+                            catch { /* Prevent failures in OCR logging from failing the entire checkout */ }
+                        }
+                    }
 
                     _context.OrderCompanions.Add(new Domain.Entities.OrderCompanion
                     {
@@ -955,6 +1328,7 @@ public class CarServiceOrderService : ICarServiceOrderService
 
                 return new ConfirmOrderResponse
                 {
+                    IsValid = true,
                     Success = true,
                     OrderId = order.OrderId,
                     OrderNumber = $"LTS-{DateTime.UtcNow.Year}-{order.OrderId}",

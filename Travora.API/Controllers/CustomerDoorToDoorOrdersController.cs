@@ -112,6 +112,22 @@ public class CustomerDoorToDoorOrdersController : ControllerBase
             return StatusCode(500, new { ErrorMessage = ex.Message });
         }
     }
+
+    [HttpPatch("update-location")]
+    [ProducesResponseType(typeof(ResolveLocationResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> UpdateLocation([FromBody] UpdateLocationRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            int customerId = GetCustomerId();
+            var response = await _orderService.UpdateLocationAsync(customerId, request, cancellationToken);
+            return response.IsValid ? Ok(response) : BadRequest(response);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { IsValid = false, ErrorMessage = ex.Message });
+        }
+    }
     
     [HttpGet("available-slots")]
     [ProducesResponseType(typeof(AvailableSlotsResponse), StatusCodes.Status200OK)]

@@ -303,6 +303,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         
         var response = new ResolveLocationResponse
         {
+            IsValid = true,
             Latitude = request.Latitude,
             Longitude = request.Longitude,
             FormattedAddress = result?.FormattedAddress ?? string.Empty,
@@ -341,6 +342,58 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         return response;
     }
 
+    // ===================================================================
+    // STEP 3.5 — Update Location (Manual Correction)
+    // ===================================================================
+    public async Task<ResolveLocationResponse> UpdateLocationAsync(
+        int customerId, UpdateLocationRequest request, CancellationToken cancellationToken = default)
+    {
+        var draft = await _draftOrderService.GetDraftOrderAsync(customerId.ToString(), cancellationToken);
+        if (draft == null)
+            return new ResolveLocationResponse { IsValid = false, ErrorMessage = "Session not found" };
+
+        bool isDelivery = string.Equals(request.LocationType, "delivery", StringComparison.OrdinalIgnoreCase);
+
+        if (isDelivery)
+        {
+            if (draft.DeliveryFormattedAddress == null)
+                return new ResolveLocationResponse { IsValid = false, ErrorMessage = "Delivery location must be resolved first before updating" };
+
+            if (request.StreetAddress != null) draft.DeliveryStreetAddress = request.StreetAddress;
+            if (request.City != null) draft.DeliveryCity = request.City;
+            if (request.State != null) draft.DeliveryState = request.State;
+            if (request.Country != null) draft.DeliveryCountry = request.Country;
+            if (request.PostalCode != null) draft.DeliveryPostalCode = request.PostalCode;
+        }
+        else
+        {
+            if (draft.PickupFormattedAddress == null)
+                return new ResolveLocationResponse { IsValid = false, ErrorMessage = "Pickup location must be resolved first before updating" };
+
+            if (request.StreetAddress != null) draft.PickupStreetAddress = request.StreetAddress;
+            if (request.City != null) draft.PickupCity = request.City;
+            if (request.State != null) draft.PickupState = request.State;
+            if (request.Country != null) draft.PickupCountry = request.Country;
+            if (request.PostalCode != null) draft.PickupPostalCode = request.PostalCode;
+        }
+
+        await _draftOrderService.SaveDraftOrderAsync(draft, TimeSpan.FromMinutes(30), cancellationToken);
+
+        return new ResolveLocationResponse
+        {
+            IsValid = true,
+            Latitude = isDelivery ? (draft.DeliveryLatitude ?? 0) : (draft.PickupLatitude ?? 0),
+            Longitude = isDelivery ? (draft.DeliveryLongitude ?? 0) : (draft.PickupLongitude ?? 0),
+            FormattedAddress = isDelivery ? (draft.DeliveryFormattedAddress ?? string.Empty) : (draft.PickupFormattedAddress ?? string.Empty),
+            StreetAddress = isDelivery ? draft.DeliveryStreetAddress : draft.PickupStreetAddress,
+            City = isDelivery ? draft.DeliveryCity : draft.PickupCity,
+            State = isDelivery ? draft.DeliveryState : draft.PickupState,
+            Country = isDelivery ? draft.DeliveryCountry : draft.PickupCountry,
+            PostalCode = isDelivery ? draft.DeliveryPostalCode : draft.PickupPostalCode,
+            LocationType = request.LocationType
+        };
+    }
+
     public async Task<AvailableSlotsResponse> GetAvailableSlotsAsync(int customerId, DateTime date, CancellationToken cancellationToken = default)
     {
         var draft = await _draftOrderService.GetDraftOrderAsync(customerId.ToString(), cancellationToken);
@@ -364,7 +417,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         if (date.Date > flightDate)
             return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Booking cannot be made after the flight date" };
 
-        var response = new AvailableSlotsResponse();
+        var response = new AvailableSlotsResponse { IsValid = true };
         TimeSpan? cutoffTimeSpan = null;
 
         if (date.Date == flightDate)
@@ -590,6 +643,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
 
         return new InvoiceResponse
         {
+            IsValid = true,
             InvoiceNumber = $"INV-{DateTime.UtcNow.Year}-{new Random().Next(1000, 9999)}",
             Breakdown = new InvoiceBreakdown
             {
@@ -956,6 +1010,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
 
                 return new ConfirmOrderResponse
                 {
+                    IsValid = true,
                     Success = true,
                     OrderId = order.OrderId,
                     OrderNumber = $"LTS-{DateTime.UtcNow.Year}-{order.OrderId}",

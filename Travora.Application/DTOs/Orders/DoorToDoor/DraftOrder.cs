@@ -64,6 +64,10 @@ public class DraftCompanion
     public DateTime? DateOfBirth { get; set; }
     public DateTime? PassportExpiryDate { get; set; }
     public int BaggageCount { get; set; }
+    public bool IsVerified { get; set; }
+    public int PassportFileSizeKb { get; set; }
+    public string PassportMimeType { get; set; } = string.Empty;
+    public string? PassportOcrResultJson { get; set; }
 }
 
 public class DraftCustomsItem

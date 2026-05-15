@@ -73,7 +73,13 @@ public class CustomerCarServiceOrdersController : ControllerBase
         {
             int customerId = GetCustomerId();
             var response = await _orderService.ValidateBaggageAsync(customerId, cancellationToken);
-            return response.IsValid ? Ok(response) : BadRequest(response);
+            var cleanResponse = new
+            {
+                response.IsValid,
+                response.ErrorCode,
+                response.ErrorMessage
+            };
+            return response.IsValid ? Ok(cleanResponse) : BadRequest(cleanResponse);
         }
         catch (Exception ex)
         {
@@ -95,6 +101,40 @@ public class CustomerCarServiceOrdersController : ControllerBase
         catch (Exception ex)
         {
             return StatusCode(500, new { ErrorMessage = ex.Message });
+        }
+    }
+
+    // ===== STEP 3.5 — Update Location (Manual Correction) =====
+    [HttpPatch("update-location")]
+    [ProducesResponseType(typeof(ResolveLocationResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> UpdateLocation([FromBody] CarServiceUpdateLocationRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            int customerId = GetCustomerId();
+            var response = await _orderService.UpdateLocationAsync(customerId, request, cancellationToken);
+            return response.IsValid ? Ok(response) : BadRequest(response);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { IsValid = false, ErrorMessage = ex.Message });
+        }
+    }
+
+    // ===== STEP 3.8 — Available Dates =====
+    [HttpGet("available-dates")]
+    [ProducesResponseType(typeof(AvailableDatesResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetAvailableDates(CancellationToken cancellationToken)
+    {
+        try
+        {
+            int customerId = GetCustomerId();
+            var response = await _orderService.GetAvailableDatesAsync(customerId, cancellationToken);
+            return response.IsValid ? Ok(response) : BadRequest(response);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { IsValid = false, ErrorMessage = ex.Message });
         }
     }
 
