@@ -41,12 +41,12 @@ public class EmployeeDashboardService : IEmployeeDashboardService
             .Include(os => os.Order).ThenInclude(o => o.PickupLocation)
             .Include(os => os.PackageService).ThenInclude(ps => ps.Service)
             .Select(os => new CurrentTaskItemDto
-            {
-                OrderServiceId = os.OrderServiceId,
-                Status = os.ServiceStatus.ToString(),
-                Type = os.PackageService.Service.ServiceName,
-                Location = os.Order.PickupLocation.City + ", " + os.Order.PickupLocation.StreetAddress,
-                ScheduledTime = os.ScheduledStartTime.ToString("hh:mm tt")
+        {
+            OrderServiceId = os.OrderServiceId,
+            Status = os.ServiceStatus.ToString(),
+            Type = os.PackageService.Service.ServiceName,
+            Location = os.Order.PickupLocation.City + ", " + os.Order.PickupLocation.StreetAddress,
+                ScheduledTime = os.ScheduledStartTime.ToString("yyyy-MM-ddTHH:mm:ssZ")
             })
             .ToListAsync();
 
@@ -59,14 +59,14 @@ public class EmployeeDashboardService : IEmployeeDashboardService
             .OrderBy(os => os.ScheduledStartTime)
             .Take(10)
             .Select(os => new NewAssignedRequestDto
-            {
-                OrderServiceId = os.OrderServiceId,
-                Status = os.ServiceStatus.ToString(),
-                Type = os.PackageService.Service.ServiceName,
-                Location = os.Order.PickupLocation.City + ", " + os.Order.PickupLocation.StreetAddress,
-                ScheduledTime = os.ScheduledStartTime.ToString("hh:mm tt"),
-                ScheduledDate = os.ScheduledStartTime.ToString("dd/MM"),
-                CanStart = os.ScheduledStartTime <= thirtyMinutesFromNow
+        {
+            OrderServiceId = os.OrderServiceId,
+            Status = os.ServiceStatus.ToString(),
+            Type = os.PackageService.Service.ServiceName,
+            Location = os.Order.PickupLocation.City + ", " + os.Order.PickupLocation.StreetAddress,
+                ScheduledTime = os.ScheduledStartTime.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                ScheduledDate = os.ScheduledStartTime.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+            CanStart = os.ScheduledStartTime <= thirtyMinutesFromNow
             })
             .ToListAsync();
 

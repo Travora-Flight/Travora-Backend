@@ -11,6 +11,7 @@ public class EmployeeProfileResponse
     public string Email { get; set; } = string.Empty;
     public string NationalId { get; set; } = string.Empty;
     public string DateOfBirth { get; set; } = string.Empty;
+    public string? Address { get; set; }
     public string? CheckPoint { get; set; }
-    public int? VehicleId { get; set; }
+    public string? PlateNumber { get; set; }
 }

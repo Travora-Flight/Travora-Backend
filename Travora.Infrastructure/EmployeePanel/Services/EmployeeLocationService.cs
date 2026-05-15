@@ -34,6 +34,27 @@ public class EmployeeLocationService : IEmployeeLocationService
         if (employee.JobRole != JobRole.Driver)
             throw new UnauthorizedAccessException("GPS tracking is for Drivers only");
 
+        // Check if employee is within shift hours
+        var now = DateTime.UtcNow.TimeOfDay;
+        var isWithinShift = employee.ShiftType switch
+        {
+            ShiftType.Morning => now >= TimeSpan.FromHours(8) && now <= TimeSpan.FromHours(16),
+            ShiftType.Evening => now >= TimeSpan.FromHours(16) && now <= TimeSpan.FromHours(24),
+            ShiftType.Night => now >= TimeSpan.Zero && now <= TimeSpan.FromHours(8),
+            ShiftType.rotating => true, // Always on
+            _ => true
+        };
+
+        if (!isWithinShift)
+        {
+            return new DriverLocationResponse
+            {
+                Success = true,
+                SavedToDb = false,
+                Status = "off_shift"
+            };
+        }
+
         var status = request.OrderServiceId.HasValue ? "on_service" : "available";
 
         // 1) Save to Redis (TTL: 2 minutes)

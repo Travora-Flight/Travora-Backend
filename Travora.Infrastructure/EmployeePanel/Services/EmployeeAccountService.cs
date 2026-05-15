@@ -22,6 +22,7 @@ public class EmployeeAccountService : IEmployeeAccountService
     {
         var employee = await _db.Employees
             .Include(e => e.Checkpoint)
+            .Include(e => e.Vehicle)
             .FirstOrDefaultAsync(e => e.EmployeeId == employeeId)
             ?? throw new KeyNotFoundException("Employee not found");
 
@@ -36,8 +37,9 @@ public class EmployeeAccountService : IEmployeeAccountService
             Email = employee.Email,
             NationalId = employee.NationalId,
             DateOfBirth = employee.DateOfBirth.ToString("dd/MM/yyyy"),
+            Address = employee.Address,
             CheckPoint = employee.Checkpoint?.CheckpointName,
-            VehicleId = employee.VehicleId
+            PlateNumber = employee.Vehicle?.PlateNumber
         };
     }
 
@@ -48,6 +50,9 @@ public class EmployeeAccountService : IEmployeeAccountService
 
         if (mobileNumber != null)
             employee.PhoneNumber = mobileNumber;
+
+        if (address != null)
+            employee.Address = address;
 
         string? photoUrl = null;
         if (profilePhoto != null)
@@ -65,7 +70,7 @@ public class EmployeeAccountService : IEmployeeAccountService
             Success = true,
             ProfileImageUrl = photoUrl ?? employee.ProfileImagePath,
             MobileNumber = employee.PhoneNumber,
-            Address = address
+            Address = employee.Address
         };
     }
 

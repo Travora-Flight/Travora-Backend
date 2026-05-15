@@ -43,4 +43,13 @@ public class EmployeeTasksController : ControllerBase
         var response = await _taskService.CompleteTaskAsync(employeeId, orderServiceId);
         return Ok(response);
     }
+
+    [HttpGet("completed")]
+    [ProducesResponseType(typeof(Travora.Application.DTOs.Employee.Tasks.CompletedTasksResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetCompletedTasks([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    {
+        var employeeId = int.Parse(User.FindFirstValue("employeeId")!);
+        var response = await _taskService.GetCompletedTasksAsync(employeeId, page, pageSize);
+        return Ok(response);
+    }
 }

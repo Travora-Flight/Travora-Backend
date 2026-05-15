@@ -408,6 +408,41 @@ public class EmployeeTaskService : IEmployeeTaskService
         };
     }
 
+    public async Task<CompletedTasksResponse> GetCompletedTasksAsync(int employeeId, int page, int pageSize)
+    {
+        var query = _db.OrderServices
+            .Where(os => os.AssignedEmployeeId == employeeId && os.ServiceStatus == ServiceStatus.Completed)
+            .Include(os => os.Order).ThenInclude(o => o.Customer)
+            .Include(os => os.Order).ThenInclude(o => o.PickupLocation)
+            .Include(os => os.Order).ThenInclude(o => o.Baggages)
+            .Include(os => os.PackageService).ThenInclude(ps => ps.Service)
+            .OrderByDescending(os => os.ActualEndTime);
+
+        var totalCompleted = await query.CountAsync();
+
+        var tasks = await query
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(os => new CompletedTaskItemDto
+            {
+                OrderServiceId = os.OrderServiceId,
+                Type = os.PackageService.Service.ServiceName,
+                Location = os.Order.PickupLocation.City + ", " + os.Order.PickupLocation.StreetAddress,
+                ClientName = os.Order.Customer.Firstname + " " + os.Order.Customer.Lastname,
+                ScheduledDate = os.ScheduledStartTime.ToString("dd/MM/yyyy"),
+                ScheduledTime = os.ScheduledStartTime.ToString("hh:mm tt"),
+                CompletedAt = os.ActualEndTime != null ? os.ActualEndTime.Value.ToString("dd/MM/yyyy hh:mm tt") : null,
+                BaggageCount = os.Order.Baggages.Count
+            })
+            .ToListAsync();
+
+        return new CompletedTasksResponse
+        {
+            TotalCompleted = totalCompleted,
+            Tasks = tasks
+        };
+    }
+
     // ===== Helper Methods =====
     private bool IsShiftCovering(ShiftType shift, TimeSpan slotStart, TimeSpan slotEnd)
     {
