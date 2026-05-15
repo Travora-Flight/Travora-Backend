@@ -108,7 +108,7 @@ public class AuthService : IAuthService
         {
             AccessToken = accessToken,
             RefreshToken = refreshToken,
-            ExpiresIn = 86400,
+            ExpiresIn = 28800, // 8 hours for employees (shift-based)
             Role = "employee",
             UserData = new
             {
@@ -141,6 +141,12 @@ public class AuthService : IAuthService
         {
             await LogLogin(null, customer.CustomerId, null, UserType.Customer, LoginStatus.Failed, "Account inactive", ipAddress, userAgent);
             throw new UnauthorizedAccessException("Account inactive");
+        }
+
+        if (!customer.EmailVerified)
+        {
+            await LogLogin(null, customer.CustomerId, null, UserType.Customer, LoginStatus.Failed, "Email not verified", ipAddress, userAgent);
+            throw new UnauthorizedAccessException("Please verify your email first.");
         }
 
         await LogLogin(null, customer.CustomerId, null, UserType.Customer, LoginStatus.Success, null, ipAddress, userAgent);
@@ -221,7 +227,7 @@ public class AuthService : IAuthService
         {
             AccessToken = accessToken,
             RefreshToken = newRefreshToken,
-            ExpiresIn = 86400,
+            ExpiresIn = role == "employee" ? 28800 : 86400, // 8h for employees, 24h for others
             Role = role,
             UserData = userData
         };

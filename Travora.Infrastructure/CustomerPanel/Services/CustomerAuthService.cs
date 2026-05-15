@@ -96,7 +96,13 @@ public class CustomerAuthService : ICustomerAuthService
         ValidatePasswordStrength(request.Password);
 
         if (!DateTime.TryParse(request.DateOfBirth, out var dateOfBirth) || dateOfBirth > DateTime.UtcNow)
-            throw new ArgumentException("Invalid date of birth");
+            throw new ArgumentException("Invalid date of birth. Please provide a valid date in YYYY-MM-DD format and ensure it is not in the future.");
+
+        var age = DateTime.UtcNow.Year - dateOfBirth.Year;
+        if (dateOfBirth.Date > DateTime.UtcNow.Date.AddYears(-age)) age--;
+
+        if (age < 16)
+            throw new ArgumentException("You must be at least 16 years old to register.");
 
         if (!DateTime.TryParse(request.PassportExpiryDate, out var passportExpiry) || passportExpiry <= DateTime.UtcNow)
             throw new ArgumentException("Passport is expired");
@@ -281,8 +287,8 @@ public class CustomerAuthService : ICustomerAuthService
             if (accountStatus == CustomerAccountStatus.Verified)
             {
                 // When you stop the Fixed OTP, uncomment this line and delete the one below it
-                // var otp = Random.Shared.Next(100000, 999999).ToString();
-                var otp = !string.IsNullOrEmpty(_fixedOtp) ? _fixedOtp : Random.Shared.Next(100000, 999999).ToString();
+                var otp = Random.Shared.Next(100000, 999999).ToString();
+                // var otp = !string.IsNullOrEmpty(_fixedOtp) ? _fixedOtp : Random.Shared.Next(100000, 999999).ToString();
                 await _redis.SetAsync($"email_verify:{step1.Email}", otp, TimeSpan.FromHours(24));
 
                 _ = Task.Run(async () =>
@@ -339,6 +345,12 @@ public class CustomerAuthService : ICustomerAuthService
         {
             await LogLogin(customer.CustomerId, UserType.Customer, LoginStatus.Failed, "Account suspended", ipAddress, userAgent);
             throw new UnauthorizedAccessException("Account suspended");
+        }
+
+        if (!customer.EmailVerified)
+        {
+            await LogLogin(customer.CustomerId, UserType.Customer, LoginStatus.Failed, "Email not verified", ipAddress, userAgent);
+            throw new UnauthorizedAccessException("Please verify your email first.");
         }
 
         await LogLogin(customer.CustomerId, UserType.Customer, LoginStatus.Success, null, ipAddress, userAgent);
@@ -399,8 +411,8 @@ public class CustomerAuthService : ICustomerAuthService
         }
 
         // TODO: When you stop the Fixed OTP, uncomment this line and delete the one below it
-        // var otp = Random.Shared.Next(100000, 999999).ToString();
-        var otp = !string.IsNullOrEmpty(_fixedOtp) ? _fixedOtp : Random.Shared.Next(100000, 999999).ToString();
+        var otp = Random.Shared.Next(100000, 999999).ToString();
+        // var otp = !string.IsNullOrEmpty(_fixedOtp) ? _fixedOtp : Random.Shared.Next(100000, 999999).ToString();
 
         await _redis.SetAsync($"otp:{email}", otp, TimeSpan.FromMinutes(10));
 
@@ -502,8 +514,8 @@ public class CustomerAuthService : ICustomerAuthService
             throw new InvalidOperationException("Email already activated");
 
         // TODO: When you stop the Fixed OTP, uncomment this line and delete the one below it
-        // var otp = Random.Shared.Next(100000, 999999).ToString();
-        var otp = !string.IsNullOrEmpty(_fixedOtp) ? _fixedOtp : Random.Shared.Next(100000, 999999).ToString();
+        var otp = Random.Shared.Next(100000, 999999).ToString();
+        // var otp = !string.IsNullOrEmpty(_fixedOtp) ? _fixedOtp : Random.Shared.Next(100000, 999999).ToString();
         await _redis.SetAsync($"email_verify:{request.Email}", otp, TimeSpan.FromHours(24));
 
         _ = Task.Run(async () =>

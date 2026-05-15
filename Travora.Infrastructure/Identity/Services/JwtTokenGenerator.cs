@@ -45,7 +45,8 @@ public class JwtTokenGenerator : IJwtTokenGenerator
             new(ClaimTypes.Name, $"{employee.Firstname} {employee.Lastname}")
         };
 
-        return GenerateToken(claims);
+        // Employee tokens expire after 8 hours (shift-based)
+        return GenerateToken(claims, TimeSpan.FromHours(8));
     }
 
     public string GenerateCustomerToken(Customer customer)
@@ -67,16 +68,20 @@ public class JwtTokenGenerator : IJwtTokenGenerator
         return Convert.ToBase64String(RandomNumberGenerator.GetBytes(64));
     }
 
-    private string GenerateToken(List<Claim> claims)
+    private string GenerateToken(List<Claim> claims, TimeSpan? customExpiry = null)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.SecretKey));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+        var expiry = customExpiry.HasValue
+            ? DateTime.UtcNow.Add(customExpiry.Value)
+            : DateTime.UtcNow.AddDays(_jwtSettings.ExpiryDays);
 
         var token = new JwtSecurityToken(
             issuer: _jwtSettings.Issuer,
             audience: _jwtSettings.Audience,
             claims: claims,
-            expires: DateTime.UtcNow.AddDays(_jwtSettings.ExpiryDays),
+            expires: expiry,
             signingCredentials: credentials
         );
 
