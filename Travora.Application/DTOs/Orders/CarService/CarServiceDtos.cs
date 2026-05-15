@@ -32,12 +32,26 @@ public class CarServiceResolveLocationRequest
     public double Longitude { get; set; }
 }
 
+public class AvailableDatesResponse
+{
+    public bool IsValid { get; set; }
+    public List<DateTime> AvailableDates { get; set; } = new();
+    public string? ErrorMessage { get; set; }
+}
+
 // ===== Step 5 — My Bags (delivery_from_airport only) =====
 public class MyBagsResponse
 {
     public bool IsValid { get; set; }
-    public List<BagItem> Bags { get; set; } = new();
+    public List<PassengerBagItem> Passengers { get; set; } = new();
     public string? ErrorMessage { get; set; }
+}
+
+public class PassengerBagItem
+{
+    public string PassengerName { get; set; } = string.Empty;
+    public string TicketNumber { get; set; } = string.Empty;
+    public List<BagItem> Bags { get; set; } = new();
 }
 
 public class BagItem
@@ -53,4 +67,13 @@ public class BagItem
 public class SelectBagsRequest
 {
     public List<string> SelectedTagNumbers { get; set; } = new();
+}
+
+public class CarServiceUpdateLocationRequest
+{
+    public string? StreetAddress { get; set; }
+    public string? City { get; set; }
+    public string? State { get; set; }
+    public string? Country { get; set; }
+    public string? PostalCode { get; set; }
 }

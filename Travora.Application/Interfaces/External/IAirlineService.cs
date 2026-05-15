@@ -9,4 +9,5 @@ public interface IAirlineService
     Task<AirlineCustomsLookupResponse> LookupCustomsProductAsync(string productName, CancellationToken cancellationToken = default);
     Task<AirlineBaggageByTicketResponse> GetBaggageByTicketAsync(string ticketNumber, CancellationToken cancellationToken = default);
     Task<AirlineIssueBoardingPassResponse> IssueBoardingPassAsync(string ticketNumber, CancellationToken cancellationToken = default);
+    Task<AirlineBaggageAllowanceResponse> GetBaggageAllowanceAsync(string ticketNumber, CancellationToken cancellationToken = default);
 }

@@ -9,7 +9,9 @@ public interface ICarServiceOrderService
     Task<ValidateCompanionResponse> ValidateCompanionAsync(int customerId, ValidateCompanionRequest request, CancellationToken cancellationToken = default);
     Task<ValidateBaggageResponse> ValidateBaggageAsync(int customerId, CancellationToken cancellationToken = default);
     Task<ResolveLocationResponse> ResolveLocationAsync(int customerId, CarServiceResolveLocationRequest request, CancellationToken cancellationToken = default);
+    Task<ResolveLocationResponse> UpdateLocationAsync(int customerId, CarServiceUpdateLocationRequest request, CancellationToken cancellationToken = default);
     Task<AvailableSlotsResponse> GetAvailableSlotsAsync(int customerId, DateTime date, CancellationToken cancellationToken = default);
+    Task<AvailableDatesResponse> GetAvailableDatesAsync(int customerId, CancellationToken cancellationToken = default);
     Task<MyBagsResponse> GetMyBagsAsync(int customerId, CancellationToken cancellationToken = default);
     Task SelectBagsAsync(int customerId, SelectBagsRequest request, CancellationToken cancellationToken = default);
     Task<InvoiceResponse> GetInvoiceAsync(int customerId, CancellationToken cancellationToken = default);

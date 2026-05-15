@@ -37,7 +37,6 @@ public class AirlineService : IAirlineService
         if (result != null && (!result.IsValid || flightData == null || passengerData == null))
         {
             result.Errors ??= new List<string>();
-            result.Errors.Add($"Raw Airline API Response: {rawJson}");
         }
         
         return result ?? new AirlineValidateTicketResponse { IsValid = false, Errors = new List<string> { "Empty response from airline." } };
@@ -111,5 +110,21 @@ public class AirlineService : IAirlineService
             result = System.Text.Json.JsonSerializer.Deserialize<AirlineIssueBoardingPassResponse>(json, options);
 
         return result ?? new AirlineIssueBoardingPassResponse();
+    }
+
+    public async Task<AirlineBaggageAllowanceResponse> GetBaggageAllowanceAsync(string ticketNumber, CancellationToken cancellationToken = default)
+    {
+        var response = await _httpClient.GetAsync($"/api/airline/tickets/{Uri.EscapeDataString(ticketNumber)}/baggage-allowance", cancellationToken);
+        
+        if (!response.IsSuccessStatusCode)
+        {
+            return new AirlineBaggageAllowanceResponse { TicketNumber = ticketNumber, AllowedBaggageCount = 0 };
+        }
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        var options = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var result = System.Text.Json.JsonSerializer.Deserialize<AirlineBaggageAllowanceResponse>(json, options);
+
+        return result ?? new AirlineBaggageAllowanceResponse { TicketNumber = ticketNumber, AllowedBaggageCount = 0 };
     }
 }

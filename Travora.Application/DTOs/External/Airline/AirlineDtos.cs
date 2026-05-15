@@ -169,3 +169,10 @@ public class AirlineIssueBoardingPassResponse
     public string? ArrivalTime { get; set; }
     public string? Duration { get; set; }
 }
+
+public class AirlineBaggageAllowanceResponse
+{
+    public string TicketNumber { get; set; } = string.Empty;
+    public int AllowedBaggageCount { get; set; }
+    public decimal MaxAllowedWeight { get; set; }
+}

@@ -430,6 +430,7 @@ public class BagTrackingOrderService : IBagTrackingOrderService
 
         return new InvoiceResponse
         {
+            IsValid = true,
             InvoiceNumber = $"INV-{DateTime.UtcNow.Year}-{new Random().Next(1000, 9999)}",
             Breakdown = new InvoiceBreakdown
             {
@@ -767,6 +768,7 @@ public class BagTrackingOrderService : IBagTrackingOrderService
 
                 return new ConfirmOrderResponse
                 {
+                    IsValid = true,
                     Success = true,
                     OrderId = order.OrderId,
                     OrderNumber = $"LTS-{DateTime.UtcNow.Year}-{order.OrderId}",
