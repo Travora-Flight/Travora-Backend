@@ -152,16 +152,27 @@ public static class ServiceCollectionExtensions
             }
         });
 
-        // Geocoding Http Client
-        services.AddHttpClient("NominatimGeocoding", client =>
+        // Geocoding Http Clients (Google primary + Nominatim fallback)
+        services.AddHttpClient("GoogleGeocoding", client =>
         {
             var geocodingSettings = configuration.GetSection("Geocoding").Get<Travora.Infrastructure.Configurations.GeocodingSettings>();
             if (geocodingSettings != null)
             {
                 client.BaseAddress = new Uri(geocodingSettings.BaseUrl);
-                client.DefaultRequestHeaders.Add("User-Agent", geocodingSettings.UserAgent);
+                client.Timeout = TimeSpan.FromSeconds(10);
             }
         });
+
+        services.AddHttpClient("NominatimGeocoding", client =>
+        {
+            client.BaseAddress = new Uri("https://nominatim.openstreetmap.org");
+            client.DefaultRequestHeaders.Add("User-Agent", "Travora/1.0");
+        });
+
+        // Register both concrete services + Fallback wrapper as the interface
+        services.AddScoped<Travora.Infrastructure.ExternalServices.Communication.GoogleGeocodingService>();
+        services.AddScoped<Travora.Infrastructure.ExternalServices.Communication.NominatimGeocodingService>();
+        services.AddScoped<Travora.Application.Interfaces.External.IGeocodingService, Travora.Infrastructure.ExternalServices.Communication.FallbackGeocodingService>();
 
         // Paymob Http Client
         services.AddHttpClient("Paymob", client =>
@@ -189,7 +200,6 @@ public static class ServiceCollectionExtensions
 
         // Register External Services
         services.AddScoped<Travora.Application.Interfaces.External.IAirlineService, Travora.Infrastructure.ExternalServices.Communication.AirlineService>();
-        services.AddScoped<Travora.Application.Interfaces.External.IGeocodingService, Travora.Infrastructure.ExternalServices.Communication.NominatimGeocodingService>();
 
         // Aviation Weather Services
         services.AddScoped<Travora.Application.Interfaces.External.Weather.IAviationWeatherService, Travora.Infrastructure.ExternalServices.Weather.AviationWeatherApiService>();
