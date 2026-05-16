@@ -72,12 +72,14 @@ public class DraftCompanion
 
 public class DraftCustomsItem
 {
-    public string ItemDescription { get; set; } = string.Empty;
     public string ItemType { get; set; } = "Other";
+    public string ItemDescription { get; set; } = string.Empty;
     public decimal DeclaredValue { get; set; }
     public int Quantity { get; set; }
     public decimal CustomsRatePercentage { get; set; }
     public string PurchaseInvoiceUrl { get; set; } = string.Empty;
+    public string ExternalCategoryId { get; set; } = string.Empty;
+    public string ExternalCategoryName { get; set; } = string.Empty;
 
     public decimal TotalValue => DeclaredValue * Quantity;
     public decimal TotalCustomsValue => TotalValue * CustomsRatePercentage;

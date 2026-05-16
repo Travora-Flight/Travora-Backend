@@ -11,6 +11,13 @@ public class ValidateBaggageResponse
     public string? ErrorMessage { get; set; }
 }
 
+public class DoorToDoorValidateBaggageResponse
+{
+    public bool IsValid { get; set; }
+    public string? ErrorCode { get; set; }
+    public string? ErrorMessage { get; set; }
+}
+
 public class BaggageBreakdown
 {
     public string TicketNumber { get; set; } = string.Empty;
@@ -47,4 +54,11 @@ public class UpdateLocationRequest
     public string? State { get; set; }
     public string? Country { get; set; }
     public string? PostalCode { get; set; }
+}
+
+public class AvailableDatesResponse
+{
+    public bool IsValid { get; set; }
+    public List<DateTime> AvailableDates { get; set; } = new();
+    public string? ErrorMessage { get; set; }
 }

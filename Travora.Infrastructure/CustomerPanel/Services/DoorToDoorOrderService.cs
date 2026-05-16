@@ -221,64 +221,69 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         };
     }
 
-    public async Task<ValidateBaggageResponse> ValidateBaggageAsync(int customerId, CancellationToken cancellationToken = default)
+    public async Task<DoorToDoorValidateBaggageResponse> ValidateBaggageAsync(int customerId, CancellationToken cancellationToken = default)
     {
         var draft = await _draftOrderService.GetDraftOrderAsync(customerId.ToString(), cancellationToken);
         if (draft == null || draft.FlightInfo == null)
-            return new ValidateBaggageResponse { IsValid = false, ErrorMessage = "Draft order not found" };
+            return new DoorToDoorValidateBaggageResponse { IsValid = false, ErrorMessage = "Draft order not found" };
 
-        var tasks = new List<(string TicketNumber, Task<AirlineBaggageCheckResponse> Task)>();
+        var allTicketNumbers = new List<string> { draft.TicketNumber };
+        allTicketNumbers.AddRange(draft.Companions.Select(c => c.TicketNumber));
 
-        // Primary customer
-        tasks.Add((draft.TicketNumber, _airlineService.GetBaggageCountAsync(draft.TicketNumber, cancellationToken)));
-
-        // Companions
-        foreach (var comp in draft.Companions)
+        // 1. Baggage Allowance Check
+        var allowanceTasks = allTicketNumbers.Select(tn => new
         {
-            tasks.Add((comp.TicketNumber, _airlineService.GetBaggageCountAsync(comp.TicketNumber, cancellationToken)));
-        }
-
-        await Task.WhenAll(tasks.Select(t => t.Task));
-
-        var breakdown = tasks.Select(t => new BaggageBreakdown
-        {
-            TicketNumber = t.TicketNumber,
-            BaggageCount = t.Task.Result.TotalBaggageCount
+            TicketNumber = tn,
+            Task = _airlineService.GetBaggageAllowanceAsync(tn, cancellationToken)
         }).ToList();
 
-        int totalFromAirline = breakdown.Sum(b => b.BaggageCount);
+        await Task.WhenAll(allowanceTasks.Select(t => t.Task));
+        int summedAllowance = allowanceTasks.Sum(t => t.Task.Result.AllowedBaggageCount);
 
-        if (draft.BaggageCount != totalFromAirline)
+        // 2. Compare input vs Allowance
+        if (draft.BaggageCount > summedAllowance)
         {
-            return new ValidateBaggageResponse
+            return new DoorToDoorValidateBaggageResponse
             {
                 IsValid = false,
-                ErrorCode = "BaggageCountMismatch",
-                ErrorMessage = "The entered number of bags does not match the airline records",
-                Expected = totalFromAirline,
-                Actual = draft.BaggageCount,
-                TotalBaggageCount = totalFromAirline,
-                Breakdown = breakdown
+                ErrorMessage = "The total number of bags entered exceeds the baggage allowance limit for these tickets"
             };
         }
 
-        draft.TotalBaggageCount = totalFromAirline;
+        draft.TotalBaggageCount = draft.BaggageCount;
         draft.BaggageValidated = true;
 
-        // Distributing bags to companions
+        // 3. Distribute Bags among Main Passenger and Companions for invoice breakdown
+        int remainingBags = draft.BaggageCount;
+        var primaryAllowance = allowanceTasks.First(t => t.TicketNumber == draft.TicketNumber).Task.Result.AllowedBaggageCount;
+        int primaryBags = Math.Min(remainingBags, primaryAllowance);
+        remainingBags -= primaryBags;
+
+        var breakdown = new List<BaggageBreakdown>
+        {
+            new BaggageBreakdown { TicketNumber = draft.TicketNumber, BaggageCount = primaryBags }
+        };
+
         foreach (var comp in draft.Companions)
         {
-            var companionBags = breakdown.FirstOrDefault(b => b.TicketNumber == comp.TicketNumber);
-            comp.BaggageCount = companionBags?.BaggageCount ?? 0;
+            var compAllowance = allowanceTasks.FirstOrDefault(t => t.TicketNumber == comp.TicketNumber)?.Task.Result.AllowedBaggageCount ?? 0;
+            int compBags = Math.Min(remainingBags, compAllowance);
+            comp.BaggageCount = compBags;
+            remainingBags -= compBags;
+
+            breakdown.Add(new BaggageBreakdown { TicketNumber = comp.TicketNumber, BaggageCount = compBags });
+        }
+
+        if (remainingBags > 0)
+        {
+            breakdown[0].BaggageCount += remainingBags;
         }
 
         await _draftOrderService.SaveDraftOrderAsync(draft, TimeSpan.FromMinutes(30), cancellationToken);
 
-        return new ValidateBaggageResponse
+        return new DoorToDoorValidateBaggageResponse
         {
-            IsValid = true,
-            TotalBaggageCount = totalFromAirline,
-            Breakdown = breakdown
+            IsValid = true
         };
     }
 
@@ -394,6 +399,47 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         };
     }
 
+    public async Task<AvailableDatesResponse> GetAvailablePickupDatesAsync(int customerId, CancellationToken cancellationToken = default)
+    {
+        var draft = await _draftOrderService.GetDraftOrderAsync(customerId.ToString(), cancellationToken);
+        if (draft == null || draft.FlightInfo == null)
+            return new AvailableDatesResponse { IsValid = false, ErrorMessage = "Session not found" };
+
+        if (string.IsNullOrEmpty(draft.PickupFormattedAddress))
+            return new AvailableDatesResponse { IsValid = false, ErrorMessage = "Pickup location must be specified first" };
+
+        if (string.IsNullOrEmpty(draft.DeliveryFormattedAddress))
+            return new AvailableDatesResponse { IsValid = false, ErrorMessage = "Delivery location must be specified first" };
+
+        var departure = draft.FlightInfo.DepartureTimeUtc;
+        var earliestPossible = departure.AddDays(-4);
+        var latestPossible = departure.AddHours(-12);
+
+        if (DateTime.UtcNow >= latestPossible)
+        {
+            return new AvailableDatesResponse
+            {
+                IsValid = false,
+                ErrorMessage = "Booking deadline has passed. You must book at least 12 hours before departure."
+            };
+        }
+
+        var availableDates = new List<DateTime>();
+        var today = DateTime.UtcNow.Date;
+        var startPoint = earliestPossible.Date < today ? today : earliestPossible.Date;
+
+        for (var day = startPoint; day <= latestPossible.Date; day = day.AddDays(1))
+        {
+            availableDates.Add(day);
+        }
+
+        return new AvailableDatesResponse
+        {
+            IsValid = true,
+            AvailableDates = availableDates
+        };
+    }
+
     public async Task<AvailableSlotsResponse> GetAvailableSlotsAsync(int customerId, DateTime date, CancellationToken cancellationToken = default)
     {
         var draft = await _draftOrderService.GetDraftOrderAsync(customerId.ToString(), cancellationToken);
@@ -406,25 +452,22 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         if (string.IsNullOrEmpty(draft.DeliveryFormattedAddress))
             return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Delivery location must be specified first" };
 
-        var flightDate = draft.FlightInfo.DepartureTimeUtc.Date;
+        var earliestPossible = draft.FlightInfo.DepartureTimeUtc.AddDays(-4);
+        var latestPossible = draft.FlightInfo.DepartureTimeUtc.AddHours(-12);
         var today = DateTime.UtcNow.Date;
-        if (date.Date == null)
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Please select a date" };
 
         if (date.Date < today)
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Cannot select a date in the past" };
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Cannot select a day in the past" };
 
-        if (date.Date > flightDate)
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Booking cannot be made after the flight date" };
+        if (date.Date < earliestPossible.Date || date.Date > latestPossible.Date)
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = $"Execution date must be between {earliestPossible:yyyy-MM-dd} and {latestPossible:yyyy-MM-dd}" };
 
         var response = new AvailableSlotsResponse { IsValid = true };
-        TimeSpan? cutoffTimeSpan = null;
+        DateTime? absoluteCutoffUtc = latestPossible;
 
-        if (date.Date == flightDate)
+        if (date.Date == latestPossible.Date)
         {
-            var cutoffUtc = draft.FlightInfo.DepartureTimeUtc.AddHours(-12);
-            cutoffTimeSpan = cutoffUtc.TimeOfDay;
-            response.CutoffTime = cutoffTimeSpan.Value.ToString(@"hh\:mm");
+            response.CutoffTime = latestPossible.ToString(@"HH:mm");
             response.Note = $"The last available slot must end before {response.CutoffTime}";
         }
 
@@ -446,16 +489,15 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
             var start = TimeSpan.Parse(parts[0]);
             var end = parts[1] == "24:00" ? TimeSpan.FromHours(24) : TimeSpan.Parse(parts[1]);
 
+            var slotEndUtc = date.Date.Add(end);
             bool isAvailable = true;
 
-            // Cutoff check
-            if (cutoffTimeSpan.HasValue && end > cutoffTimeSpan.Value)
+            if (absoluteCutoffUtc.HasValue && slotEndUtc > absoluteCutoffUtc.Value)
             {
                 isAvailable = false;
             }
             else
             {
-                // Driver availability check
                 var availableDrivers = allDrivers.Where(d => 
                     IsShiftCovering(d.ShiftType, start, end) &&
                     !HasConflict(d, date.Date, start, end)
@@ -542,6 +584,16 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         }
     }
 
+    public async Task<List<CustomsCategoryDto>> GetCustomsCategoriesAsync(CancellationToken cancellationToken = default)
+    {
+        var externalCategories = await _airlineService.GetCustomsCategoriesAsync(cancellationToken);
+        return externalCategories.Select(c => new CustomsCategoryDto
+        {
+            CategoryId = c.CategoryId,
+            Name = c.Name
+        }).ToList();
+    }
+
     public async Task<CustomsLookupResponse> LookupCustomsProductAsync(string productName, CancellationToken cancellationToken = default)
     {
         var result = await _airlineService.LookupCustomsProductAsync(productName, cancellationToken);
@@ -569,8 +621,8 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         if (draft.CustomsType != "RedField")
             return new AddCustomsItemResponse { Success = false, ErrorMessage = "Cannot add items to the Green line" };
 
-        // Get the rate automatically from the API
-        var lookupResult = await _airlineService.LookupCustomsProductAsync(request.ItemDescription, cancellationToken);
+        // Get the rate automatically from the CategoryName + ItemDescription
+        var lookupResult = await _airlineService.GetCustomsRateAsync(request.ExternalCategoryName, request.ItemDescription, cancellationToken);
         decimal customsRate = lookupResult.Found && lookupResult.Product != null
             ? lookupResult.Product.CustomsRate
             : 0m;
@@ -591,7 +643,9 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
             DeclaredValue = request.DeclaredValue,
             Quantity = request.Quantity,
             CustomsRatePercentage = customsRate,
-            PurchaseInvoiceUrl = invoiceUrl
+            PurchaseInvoiceUrl = invoiceUrl,
+            ExternalCategoryId = request.ExternalCategoryId,
+            ExternalCategoryName = request.ExternalCategoryName
         };
 
         draft.CustomsItems.Add(item);
@@ -927,7 +981,10 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
                             Quantity = item.Quantity,
                             TotalValue = item.TotalValue,
                             CustomsRatePercentage = item.CustomsRatePercentage,
-                            TotalCustomsValue = item.TotalCustomsValue
+                            TotalCustomsValue = item.TotalCustomsValue,
+                            PurchaseInvoicePath = item.PurchaseInvoiceUrl,
+                            ExternalCategoryId = item.ExternalCategoryId,
+                            ExternalCategoryName = item.ExternalCategoryName
                         });
                     }
                 }
@@ -1028,33 +1085,70 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         });
     }
 
+    public async Task<AvailableDatesResponse> GetAvailableDeliveryDatesAsync(int customerId, CancellationToken cancellationToken = default)
+    {
+        var draft = await _draftOrderService.GetDraftOrderAsync(customerId.ToString(), cancellationToken);
+        if (draft == null || draft.FlightInfo == null)
+            return new AvailableDatesResponse { IsValid = false, ErrorMessage = "Session not found" };
+
+        if (string.IsNullOrEmpty(draft.PickupFormattedAddress))
+            return new AvailableDatesResponse { IsValid = false, ErrorMessage = "Pickup location must be specified first" };
+
+        if (string.IsNullOrEmpty(draft.DeliveryFormattedAddress))
+            return new AvailableDatesResponse { IsValid = false, ErrorMessage = "Delivery location must be specified first" };
+
+        var arrivalTimeUtc = draft.FlightInfo.ArrivalTimeUtc ?? draft.FlightInfo.DepartureTimeUtc.AddHours(4);
+        var earliestDelivery = arrivalTimeUtc.AddHours(4);
+        var latestDelivery = earliestDelivery.AddDays(4);
+
+        var availableDates = new List<DateTime>();
+        var today = DateTime.UtcNow.Date;
+        var startPoint = earliestDelivery.Date < today ? today : earliestDelivery.Date;
+
+        for (var day = startPoint; day <= latestDelivery.Date; day = day.AddDays(1))
+        {
+            availableDates.Add(day);
+        }
+
+        return new AvailableDatesResponse
+        {
+            IsValid = true,
+            AvailableDates = availableDates
+        };
+    }
+
     public async Task<AvailableSlotsResponse> GetAvailableDeliverySlotsAsync(int customerId, DateTime date, CancellationToken cancellationToken = default)
     {
         var draft = await _draftOrderService.GetDraftOrderAsync(customerId.ToString(), cancellationToken);
         if (draft == null || draft.FlightInfo == null)
-            throw new Exception("Draft order not found. Please start from Step 1.");
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Draft order not found. Please start from Step 1." };
+
+        if (string.IsNullOrEmpty(draft.PickupFormattedAddress))
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Pickup location must be specified first" };
+
+        if (string.IsNullOrEmpty(draft.DeliveryFormattedAddress))
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Delivery location must be specified first" };
 
         if (string.IsNullOrEmpty(draft.SelectedSlot))
-            throw new Exception("Pickup slot must be selected first");
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Pickup slot must be selected first" };
 
         var arrivalTimeUtc = draft.FlightInfo.ArrivalTimeUtc ?? draft.FlightInfo.DepartureTimeUtc.AddHours(4);
-        var arrivalDate = arrivalTimeUtc.Date;
-        var maxDeliveryDate = arrivalDate.AddDays(2);
-        var earliestDelivery = arrivalTimeUtc.AddHours(1);
+        var earliestDelivery = arrivalTimeUtc.AddHours(4);
+        var latestDelivery = earliestDelivery.AddDays(4);
 
-        if (date.Date < arrivalDate)
-            throw new Exception("Cannot select a date before the arrival date");
+        if (date.Date < earliestDelivery.Date)
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = $"Cannot select a date before the earliest arrival-based window ({earliestDelivery:yyyy-MM-dd})" };
 
-        if (date.Date > maxDeliveryDate)
-            throw new Exception("Cannot book more than two days after arrival");
+        if (date.Date > latestDelivery.Date)
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = $"Cannot book more than 4 days after delivery start window ({latestDelivery:yyyy-MM-dd})" };
 
-        var response = new AvailableSlotsResponse();
-        TimeSpan? earliestTimeSpan = null;
+        var response = new AvailableSlotsResponse { IsValid = true };
+        TimeSpan? startAfterTimeSpan = null;
 
-        if (date.Date == arrivalDate)
+        if (date.Date == earliestDelivery.Date)
         {
-            earliestTimeSpan = earliestDelivery.TimeOfDay;
-            response.Note = $"Nearest available delivery after {earliestTimeSpan.Value.ToString(@"hh\:mm")}";
+            startAfterTimeSpan = earliestDelivery.TimeOfDay;
+            response.Note = $"Nearest available delivery after {startAfterTimeSpan.Value:hh\\:mm}";
         }
 
         var allDrivers = await _context.Employees
@@ -1077,8 +1171,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
 
             bool isAvailable = true;
 
-            // If same day as arrival — slot must start one hour after arrival
-            if (earliestTimeSpan.HasValue && start < earliestTimeSpan.Value)
+            if (startAfterTimeSpan.HasValue && start < startAfterTimeSpan.Value)
             {
                 isAvailable = false;
             }

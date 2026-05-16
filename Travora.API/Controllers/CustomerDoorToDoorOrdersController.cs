@@ -76,7 +76,7 @@ public class CustomerDoorToDoorOrdersController : ControllerBase
     }
 
     [HttpPost("validate-baggage")]
-    [ProducesResponseType(typeof(ValidateBaggageResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(DoorToDoorValidateBaggageResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> ValidateBaggage(CancellationToken cancellationToken)
     {
         try
@@ -129,6 +129,22 @@ public class CustomerDoorToDoorOrdersController : ControllerBase
         }
     }
     
+    [HttpGet("available-pickup-dates")]
+    [ProducesResponseType(typeof(AvailableDatesResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetAvailablePickupDates(CancellationToken cancellationToken)
+    {
+        try
+        {
+            int customerId = GetCustomerId();
+            var response = await _orderService.GetAvailablePickupDatesAsync(customerId, cancellationToken);
+            return Ok(response);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { IsValid = false, ErrorMessage = ex.Message });
+        }
+    }
+
     [HttpGet("available-slots")]
     [ProducesResponseType(typeof(AvailableSlotsResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAvailableSlots(
@@ -179,6 +195,22 @@ public class CustomerDoorToDoorOrdersController : ControllerBase
         catch (Exception ex)
         {
             return StatusCode(500, new { errorMessage = ex.Message });
+        }
+    }
+
+    [HttpGet("available-delivery-dates")]
+    [ProducesResponseType(typeof(AvailableDatesResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetAvailableDeliveryDates(CancellationToken cancellationToken)
+    {
+        try
+        {
+            int customerId = GetCustomerId();
+            var response = await _orderService.GetAvailableDeliveryDatesAsync(customerId, cancellationToken);
+            return Ok(response);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { IsValid = false, ErrorMessage = ex.Message });
         }
     }
 
@@ -244,6 +276,21 @@ public class CustomerDoorToDoorOrdersController : ControllerBase
             int customerId = GetCustomerId();
             var response = await _orderService.SetCustomsTypeAsync(customerId, request, cancellationToken);
             return response.Success ? Ok(response) : BadRequest(response);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { ErrorMessage = ex.Message });
+        }
+    }
+
+    [HttpGet("customs/categories")]
+    [ProducesResponseType(typeof(List<CustomsCategoryDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetCustomsCategories(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await _orderService.GetCustomsCategoriesAsync(cancellationToken);
+            return Ok(response);
         }
         catch (Exception ex)
         {

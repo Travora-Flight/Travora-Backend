@@ -59,7 +59,7 @@ public class CustomerBagTrackingOrdersController : ControllerBase
     }
 
     [HttpPost("validate-baggage")]
-    [ProducesResponseType(typeof(ValidateBaggageResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(BagTrackingValidateBaggageResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> ValidateBaggage(CancellationToken cancellationToken)
     {
         try

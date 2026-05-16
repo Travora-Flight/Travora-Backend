@@ -32,13 +32,6 @@ public class CarServiceResolveLocationRequest
     public double Longitude { get; set; }
 }
 
-public class AvailableDatesResponse
-{
-    public bool IsValid { get; set; }
-    public List<DateTime> AvailableDates { get; set; } = new();
-    public string? ErrorMessage { get; set; }
-}
-
 // ===== Step 5 — My Bags (delivery_from_airport only) =====
 public class MyBagsResponse
 {

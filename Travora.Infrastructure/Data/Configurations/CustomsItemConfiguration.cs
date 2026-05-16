@@ -15,6 +15,8 @@ public class CustomsItemConfiguration : IEntityTypeConfiguration<CustomsItem>
         builder.Property(c => c.CustomsRatePercentage).HasPrecision(5, 2);
         builder.Property(c => c.TotalCustomsValue).HasPrecision(18, 2);
         builder.Property(c => c.PurchaseInvoicePath).HasMaxLength(500);
+        builder.Property(c => c.ExternalCategoryId).HasMaxLength(100);
+        builder.Property(c => c.ExternalCategoryName).HasMaxLength(200);
 
         builder.HasOne(c => c.CustomsDeclaration)
             .WithMany(cd => cd.CustomsItems)

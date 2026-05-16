@@ -11,6 +11,9 @@ using Travora.Domain.Constants;
 using Travora.Domain.Entities;
 using Travora.Domain.Enums;
 using Travora.Infrastructure.Data;
+using System.IO;
+using System.Text.Json;
+using Travora.Application.DTOs.Customer.Auth;
 
 namespace Travora.Infrastructure.CustomerPanel.Services;
 
@@ -21,19 +24,22 @@ public class BagTrackingOrderService : IBagTrackingOrderService
     private readonly ICloudinaryService _cloudinaryService;
     private readonly IDraftOrderService _draftOrderService;
     private readonly INotificationPusher _pusher;
+    private readonly IPassportOcrService _ocrService;
 
     public BagTrackingOrderService(
         ApplicationDbContext context,
         IAirlineService airlineService,
         ICloudinaryService cloudinaryService,
         IDraftOrderService draftOrderService,
-        INotificationPusher pusher)
+        INotificationPusher pusher,
+        IPassportOcrService ocrService)
     {
         _context = context;
         _airlineService = airlineService;
         _cloudinaryService = cloudinaryService;
         _draftOrderService = draftOrderService;
         _pusher = pusher;
+        _ocrService = ocrService;
     }
 
     // ===================================================================
@@ -94,12 +100,7 @@ public class BagTrackingOrderService : IBagTrackingOrderService
         passengerData.TravelClass = airlineRes.Ticket?.TravelClass ?? passengerData.TravelClass;
         passengerData.BoardingStatus = airlineRes.Ticket?.BoardingStatus ?? passengerData.BoardingStatus;
 
-        var departure = flightData.DepartureTimeUtc;
-        var diff = departure - DateTime.UtcNow;
-        if (diff.TotalHours < 12)
-            return new ValidateFlightResponse { IsValid = false, ErrorMessage = "Booking must be made at least 12 hours before departure" };
-
-        var bookingDeadlineUtc = departure.AddHours(-12);
+        var bookingDeadlineUtc = flightData.DepartureTimeUtc.AddHours(-2);
 
         var draft = new BagTrackingDraftOrder
         {
@@ -133,136 +134,169 @@ public class BagTrackingOrderService : IBagTrackingOrderService
         if (draft == null || draft.FlightInfo == null)
             return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Session expired or not found, please restart the process" };
 
-        if (request.PassportNumber == draft.PassengerInfo?.PassportNumber)
-            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "You cannot add yourself as a companion" };
+        if (request.PassportImage == null || request.PassportImage.Length == 0)
+            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Passport image is required for OCR validation" };
 
-        var airlineReq = new AirlineValidateTicketRequest
+        // 1) Save passport image to temporary location for OCR processing
+        var tempDir = Path.Combine(Path.GetTempPath(), "travora_ocr_companion");
+        Directory.CreateDirectory(tempDir);
+        var tempPath = Path.Combine(tempDir, $"{Guid.NewGuid()}{Path.GetExtension(request.PassportImage.FileName)}");
+
+        try
         {
-            PassportNumber = request.PassportNumber,
-            TicketNumber = request.TicketNumber,
-            FlightNumber = draft.FlightInfo.FlightNumber,
-            FlightDate = draft.FlightInfo.FlightDate ?? string.Empty
-        };
+            await using (var fileStream = File.Create(tempPath))
+            {
+                await request.PassportImage.CopyToAsync(fileStream);
+            }
 
-        var airlineRes = await _airlineService.ValidateTicketAsync(airlineReq, cancellationToken);
-        var flightData = airlineRes.Flight ?? airlineRes.Ticket?.Flight ?? airlineRes.FlightInfo;
-        var passengerData = airlineRes.Passenger ?? airlineRes.Ticket?.Passenger ?? airlineRes.PassengerInfo;
+            // 2) OCR Extract Data
+            var ocrResult = await _ocrService.ExtractPassportDataAsync(tempPath);
+            if (ocrResult == null || ocrResult.ValidScore < 65)
+            {
+                return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Passport image is unclear. Please upload a clearer photo" };
+            }
 
-        if (!airlineRes.IsValid || flightData == null || passengerData == null)
-        {
-            var errorMsg = airlineRes.Errors != null && airlineRes.Errors.Any()
-                ? string.Join(", ", airlineRes.Errors)
-                : "Companion data is invalid";
-            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = errorMsg };
-        }
+            // Parse dates extracted from OCR
+            DateTime.TryParse(ocrResult.DateOfBirthFormatted, out var dob);
+            DateTime.TryParse(ocrResult.ExpirationDateFormatted, out var expiry);
 
-        if (flightData.FlightNumber != draft.FlightInfo.FlightNumber)
-            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Companion is not on the same flight" };
+            bool ocrPassed = ocrResult.Error == null && ocrResult.ValidScore >= 85;
+            if (ocrPassed && expiry <= DateTime.UtcNow)
+            {
+                return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "The companion's passport is expired" };
+            }
 
-        string imageUrl = "https://res.cloudinary.com/travora/image/upload/vdefault/companion.jpg";
-        if (request.PassportImage != null && request.PassportImage.Length > 0)
-        {
-            using var stream = request.PassportImage.OpenReadStream();
-            var uploadResult = await _cloudinaryService.UploadFileAsync(stream, request.PassportImage.FileName, "travora/companions");
-            if (!string.IsNullOrEmpty(uploadResult))
-                imageUrl = uploadResult;
-        }
+            // Use OCR extracted data primarily
+            string extractedPassportNum = !string.IsNullOrWhiteSpace(ocrResult.Number) ? ocrResult.Number : request.PassportNumber;
+            string extFirstname = !string.IsNullOrWhiteSpace(ocrResult.Names) ? ocrResult.Names : "";
+            string extLastname = !string.IsNullOrWhiteSpace(ocrResult.Surname) ? ocrResult.Surname : "";
+            string extNationality = ocrResult.Nationality ?? "";
 
-        var newCompanion = new DraftCompanion
-        {
-            FirstName = passengerData.FirstName ?? string.Empty,
-            LastName = passengerData.LastName ?? string.Empty,
-            PassportNumber = request.PassportNumber,
-            TicketNumber = request.TicketNumber,
-            SeatNumber = airlineRes.Ticket?.SeatNumber ?? passengerData.SeatNumber ?? string.Empty,
-            PassportImageUrl = imageUrl,
-            Nationality = passengerData.Nationality,
-            DateOfBirth = DateTime.TryParse(passengerData.DateOfBirth, out var dob) ? dob : null,
-            PassportExpiryDate = DateTime.TryParse(passengerData.PassportExpiryDate, out var expiry) ? expiry : null
-        };
+            if (extractedPassportNum == draft.PassengerInfo?.PassportNumber)
+                return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "You cannot add yourself as a companion" };
 
-        if (!draft.Companions.Any(c => c.PassportNumber == request.PassportNumber))
-        {
+            // 3) Upload to Cloudinary
+            string cloudinaryUrl;
+            await using (var uploadStream = File.OpenRead(tempPath))
+            {
+                cloudinaryUrl = await _cloudinaryService.UploadFileAsync(
+                    uploadStream, request.PassportImage.FileName, "travora/companions");
+            }
+
+            // 4) Validate Ticket with Airline Service using OCR extracted passport number
+            var airlineReq = new AirlineValidateTicketRequest
+            {
+                PassportNumber = extractedPassportNum,
+                TicketNumber = request.TicketNumber,
+                FlightNumber = draft.FlightInfo.FlightNumber,
+                FlightDate = draft.FlightInfo.FlightDate ?? string.Empty
+            };
+
+            var airlineRes = await _airlineService.ValidateTicketAsync(airlineReq, cancellationToken);
+            var flightData = airlineRes.Flight ?? airlineRes.Ticket?.Flight ?? airlineRes.FlightInfo;
+            var passengerData = airlineRes.Passenger ?? airlineRes.Ticket?.Passenger ?? airlineRes.PassengerInfo;
+
+            if (!airlineRes.IsValid || flightData == null || passengerData == null)
+            {
+                var errorMsg = airlineRes.Errors != null && airlineRes.Errors.Any()
+                    ? string.Join(", ", airlineRes.Errors)
+                    : "Companion ticket or passenger record could not be validated with the airline";
+                return new ValidateCompanionResponse { IsValid = false, ErrorMessage = errorMsg };
+            }
+
+            if (flightData.FlightNumber != draft.FlightInfo.FlightNumber)
+                return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Companion is not on the same flight" };
+
+            // 5) Save companion data to Redis
+            var newCompanion = new DraftCompanion
+            {
+                FirstName = !string.IsNullOrWhiteSpace(extFirstname) ? extFirstname : (passengerData.FirstName ?? string.Empty),
+                LastName = !string.IsNullOrWhiteSpace(extLastname) ? extLastname : (passengerData.LastName ?? string.Empty),
+                PassportNumber = extractedPassportNum,
+                TicketNumber = request.TicketNumber,
+                SeatNumber = airlineRes.Ticket?.SeatNumber ?? passengerData.SeatNumber ?? string.Empty,
+                PassportImageUrl = cloudinaryUrl,
+                Nationality = !string.IsNullOrWhiteSpace(extNationality) ? extNationality : passengerData.Nationality,
+                DateOfBirth = dob != default ? dob : (DateTime.TryParse(passengerData.DateOfBirth, out var pdob) ? pdob : null),
+                PassportExpiryDate = expiry != default ? expiry : (DateTime.TryParse(passengerData.PassportExpiryDate, out var pexp) ? pexp : null),
+                IsVerified = ocrPassed,
+                PassportFileSizeKb = (int)(request.PassportImage.Length / 1024),
+                PassportMimeType = request.PassportImage.ContentType,
+                PassportOcrResultJson = JsonSerializer.Serialize(ocrResult)
+            };
+
+            // Ensure no duplicates in draft list
+            draft.Companions.RemoveAll(c => c.PassportNumber == extractedPassportNum);
             draft.Companions.Add(newCompanion);
             await _draftOrderService.SaveBagTrackingDraftAsync(draft, TimeSpan.FromMinutes(30), cancellationToken);
-        }
 
-        return new ValidateCompanionResponse
-        {
-            IsValid = true,
-            Companion = new CompanionDetails
+            return new ValidateCompanionResponse
             {
-                FirstName = newCompanion.FirstName,
-                LastName = newCompanion.LastName,
-                SeatNumber = newCompanion.SeatNumber,
-                TravelClass = airlineRes.Ticket?.TravelClass ?? passengerData.TravelClass ?? "Economy",
-                PassportNumber = newCompanion.PassportNumber,
-                PassportImageUrl = newCompanion.PassportImageUrl,
-                Nationality = newCompanion.Nationality,
-                DateOfBirth = newCompanion.DateOfBirth,
-                PassportExpiryDate = newCompanion.PassportExpiryDate
-            },
-            TotalCompanions = draft.Companions.Count
-        };
+                IsValid = true,
+                Companion = new CompanionDetails
+                {
+                    FirstName = newCompanion.FirstName,
+                    LastName = newCompanion.LastName,
+                    SeatNumber = newCompanion.SeatNumber,
+                    TravelClass = airlineRes.Ticket?.TravelClass ?? passengerData.TravelClass ?? "Economy",
+                    PassportNumber = newCompanion.PassportNumber,
+                    PassportImageUrl = newCompanion.PassportImageUrl,
+                    Nationality = newCompanion.Nationality,
+                    DateOfBirth = newCompanion.DateOfBirth,
+                    PassportExpiryDate = newCompanion.PassportExpiryDate,
+                    IsVerified = newCompanion.IsVerified
+                },
+                TotalCompanions = draft.Companions.Count
+            };
+        }
+        finally
+        {
+            // Cleanup temp file
+            if (File.Exists(tempPath))
+            {
+                try { File.Delete(tempPath); } catch { }
+            }
+        }
     }
 
     // ===================================================================
     // STEP 2.5 — validate-baggage
     // ===================================================================
-    public async Task<ValidateBaggageResponse> ValidateBaggageAsync(int customerId, CancellationToken cancellationToken = default)
+    public async Task<BagTrackingValidateBaggageResponse> ValidateBaggageAsync(int customerId, CancellationToken cancellationToken = default)
     {
         var draft = await _draftOrderService.GetBagTrackingDraftAsync(customerId.ToString(), cancellationToken);
         if (draft == null || draft.FlightInfo == null)
-            return new ValidateBaggageResponse { IsValid = false, ErrorMessage = "Session not found" };
+            return new BagTrackingValidateBaggageResponse { IsValid = false, ErrorMessage = "Session not found" };
 
-        var tasks = new List<(string TicketNumber, Task<AirlineBaggageCheckResponse> Task)>
+        var allTicketNumbers = new List<string> { draft.TicketNumber };
+        allTicketNumbers.AddRange(draft.Companions.Select(c => c.TicketNumber));
+
+        var allowanceTasks = allTicketNumbers.Select(tn => new
         {
-            (draft.TicketNumber, _airlineService.GetBaggageCountAsync(draft.TicketNumber, cancellationToken))
-        };
-
-        foreach (var comp in draft.Companions)
-            tasks.Add((comp.TicketNumber, _airlineService.GetBaggageCountAsync(comp.TicketNumber, cancellationToken)));
-
-        await Task.WhenAll(tasks.Select(t => t.Task));
-
-        var breakdown = tasks.Select(t => new BaggageBreakdown
-        {
-            TicketNumber = t.TicketNumber,
-            BaggageCount = t.Task.Result.TotalBaggageCount
+            TicketNumber = tn,
+            Task = _airlineService.GetBaggageAllowanceAsync(tn, cancellationToken)
         }).ToList();
 
-        int totalFromAirline = breakdown.Sum(b => b.BaggageCount);
+        await Task.WhenAll(allowanceTasks.Select(t => t.Task));
+        int summedAllowance = allowanceTasks.Sum(t => t.Task.Result.AllowedBaggageCount);
 
-        if (draft.BaggageCount != totalFromAirline)
+        if (draft.BaggageCount > summedAllowance)
         {
-            return new ValidateBaggageResponse
+            return new BagTrackingValidateBaggageResponse
             {
                 IsValid = false,
-                ErrorCode = "BaggageCountMismatch",
-                ErrorMessage = "The number of bags entered does not match the airline records",
-                Expected = totalFromAirline,
-                Actual = draft.BaggageCount,
-                TotalBaggageCount = totalFromAirline,
-                Breakdown = breakdown
+                ErrorMessage = "The total number of bags entered exceeds the baggage allowance limit for these tickets"
             };
         }
 
-        draft.TotalBaggageCount = totalFromAirline;
+        draft.TotalBaggageCount = draft.BaggageCount;
         draft.BaggageValidated = true;
-
-        foreach (var comp in draft.Companions)
-        {
-            var companionBags = breakdown.FirstOrDefault(b => b.TicketNumber == comp.TicketNumber);
-            comp.BaggageCount = companionBags?.BaggageCount ?? 0;
-        }
 
         await _draftOrderService.SaveBagTrackingDraftAsync(draft, TimeSpan.FromMinutes(30), cancellationToken);
 
-        return new ValidateBaggageResponse
+        return new BagTrackingValidateBaggageResponse
         {
-            IsValid = true,
-            TotalBaggageCount = totalFromAirline,
-            Breakdown = breakdown
+            IsValid = true
         };
     }
 
@@ -311,6 +345,10 @@ public class BagTrackingOrderService : IBagTrackingOrderService
         if (draft.ScannedBags.Any(sb => sb.TagNumber == request.QrData))
             return new ScanBagResponse { Found = false, ErrorMessage = "This bag has already been scanned" };
 
+        // Check if the baggage limit has been reached
+        if (draft.ScannedBags.Count >= draft.TotalBaggageCount)
+            return new ScanBagResponse { Found = false, ErrorMessage = $"You have already scanned the maximum allowed number of bags ({draft.TotalBaggageCount})" };
+
         // Save to draft
         var scannedBag = new DraftScannedBag
         {
@@ -326,12 +364,9 @@ public class BagTrackingOrderService : IBagTrackingOrderService
         return new ScanBagResponse
         {
             Found = true,
-            Bag = new ScannedBagDto
+            Bag = new ScannedBagMinimalDto
             {
-                TagNumber = scannedBag.TagNumber,
-                WeightKg = scannedBag.WeightKg,
-                Destination = scannedBag.Destination,
-                ScannedAt = scannedBag.ScannedAt
+                TagNumber = scannedBag.TagNumber
             },
             TotalScanned = draft.ScannedBags.Count,
             TotalRequired = draft.TotalBaggageCount
@@ -387,7 +422,14 @@ public class BagTrackingOrderService : IBagTrackingOrderService
         {
             TagNumber = tagNumber,
             Photos = bag.Photos,
-            Saved = true
+            Saved = true,
+            Bag = new ScannedBagDto
+            {
+                TagNumber = bag.TagNumber,
+                WeightKg = bag.WeightKg,
+                Destination = bag.Destination,
+                ScannedAt = bag.ScannedAt
+            }
         };
     }
 
@@ -470,8 +512,16 @@ public class BagTrackingOrderService : IBagTrackingOrderService
 
         if (!draft.BaggageValidated)
             return new ConfirmOrderResponse { Success = false, ErrorMessage = "Baggage validation step must be completed first" };
-        if (!draft.ScannedBags.Any())
-            return new ConfirmOrderResponse { Success = false, ErrorMessage = "At least one bag must be scanned" };
+        
+        if (draft.ScannedBags.Count != draft.TotalBaggageCount)
+            return new ConfirmOrderResponse { Success = false, ErrorMessage = $"You must scan all registered bags ({draft.TotalBaggageCount} required, you scanned {draft.ScannedBags.Count})" };
+
+        var incompleteBags = draft.ScannedBags.Where(sb => sb.Photos.Count < 3).ToList();
+        if (incompleteBags.Any())
+        {
+            var exampleTag = incompleteBags.First().TagNumber;
+            return new ConfirmOrderResponse { Success = false, ErrorMessage = $"Luggage tag {exampleTag} must have at least 3 photos uploaded before confirmation" };
+        }
 
         var strategy = _context.Database.CreateExecutionStrategy();
 
@@ -631,7 +681,8 @@ public class BagTrackingOrderService : IBagTrackingOrderService
                             PassportNumber = comp.PassportNumber,
                             Nationality = comp.Nationality,
                             DateOfBirth = comp.DateOfBirth,
-                            PassportExpiryDate = comp.PassportExpiryDate
+                            PassportExpiryDate = comp.PassportExpiryDate,
+                            IsVerified = comp.IsVerified
                         };
                         _context.Companions.Add(companionEntity);
                     }
@@ -642,9 +693,87 @@ public class BagTrackingOrderService : IBagTrackingOrderService
                         companionEntity.Nationality = comp.Nationality ?? companionEntity.Nationality;
                         companionEntity.DateOfBirth = comp.DateOfBirth ?? companionEntity.DateOfBirth;
                         companionEntity.PassportExpiryDate = comp.PassportExpiryDate ?? companionEntity.PassportExpiryDate;
+                        companionEntity.IsVerified = comp.IsVerified || companionEntity.IsVerified;
                     }
                     await _context.SaveChangesAsync(cancellationToken);
                     companionIdMap[comp.PassportNumber] = companionEntity.CompanionId;
+
+                    var documentExists = await _context.Documents.AnyAsync(d =>
+                        d.OwnerId == companionEntity.CompanionId &&
+                        d.OwnerType == DocumentOwnerType.Companion &&
+                        d.DocumentType == DocumentType.Passport, cancellationToken);
+
+                    if (!documentExists && !string.IsNullOrEmpty(comp.PassportImageUrl))
+                    {
+                        var document = new Domain.Entities.Document
+                        {
+                            OwnerId = companionEntity.CompanionId,
+                            OwnerType = DocumentOwnerType.Companion,
+                            DocumentType = DocumentType.Passport,
+                            FilePath = comp.PassportImageUrl,
+                            FileSizeKb = comp.PassportFileSizeKb > 0 ? comp.PassportFileSizeKb : 0,
+                            MimeType = !string.IsNullOrEmpty(comp.PassportMimeType) ? comp.PassportMimeType : "image/jpeg",
+                            VerificationStatus = comp.IsVerified ? VerificationStatus.Approved : VerificationStatus.UnderReview,
+                            UploadedAt = DateTime.UtcNow,
+                            IsActive = true,
+                            CreatedAt = DateTime.UtcNow
+                        };
+                        _context.Documents.Add(document);
+                        await _context.SaveChangesAsync(cancellationToken);
+
+                        if (!string.IsNullOrEmpty(comp.PassportOcrResultJson))
+                        {
+                            try
+                            {
+                                var ocrResult = JsonSerializer.Deserialize<PassportOcrResult>(
+                                    comp.PassportOcrResultJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                                
+                                if (ocrResult != null)
+                                {
+                                    DateTime.TryParse(ocrResult.DateOfBirthFormatted, out var extractedDob);
+                                    DateTime.TryParse(ocrResult.ExpirationDateFormatted, out var extractedExpiry);
+
+                                    var validation = new PassportValidation
+                                    {
+                                        DocumentId = document.DocumentId,
+                                        ExpiryCheckPassed = comp.PassportExpiryDate > DateTime.UtcNow,
+                                        FormatCheckPassed = ocrResult.ValidComposite ?? false,
+                                        NameMatchCheck = string.Equals(ocrResult.Surname, comp.LastName, StringComparison.OrdinalIgnoreCase),
+                                        BirthDateMatchCheck = extractedDob.Date == (comp.DateOfBirth?.Date ?? DateTime.MinValue.Date),
+                                        ValidationStatus = comp.IsVerified ? PassportValidationStatus.Passed : PassportValidationStatus.RequiresManualReview,
+                                        OcrConfidenceScore = ocrResult.ValidScore / 100.0m,
+                                        ManualReviewRequired = !comp.IsVerified,
+                                        MrzType = ocrResult.MrzType,
+                                        RawMrzText = ocrResult.RawText,
+                                        ValidScore = ocrResult.ValidScore,
+                                        MrzMethod = ocrResult.Method,
+                                        CheckNumber = ocrResult.CheckNumber,
+                                        CheckDateOfBirth = ocrResult.CheckDateOfBirth,
+                                        CheckExpirationDate = ocrResult.CheckExpirationDate,
+                                        CheckComposite = ocrResult.CheckComposite,
+                                        CheckPersonalNumber = ocrResult.CheckPersonalNumber,
+                                        ValidNumber = ocrResult.ValidNumber,
+                                        ValidDateOfBirth = ocrResult.ValidDateOfBirth,
+                                        ValidExpirationDate = ocrResult.ValidExpirationDate,
+                                        ValidComposite = ocrResult.ValidComposite,
+                                        ValidPersonalNumber = ocrResult.ValidPersonalNumber,
+                                        ExtractedPassportNumber = ocrResult.Number,
+                                        ExtractedSurname = ocrResult.Surname,
+                                        ExtractedGivenNames = ocrResult.Names,
+                                        ExtractedNationality = ocrResult.Nationality,
+                                        ExtractedDateOfBirth = extractedDob != default ? extractedDob : null,
+                                        ExtractedExpiryDate = extractedExpiry != default ? extractedExpiry : null,
+                                        ExtractedGender = ocrResult.SexFormatted,
+                                        ValidatedAt = DateTime.UtcNow,
+                                        CreatedAt = DateTime.UtcNow
+                                    };
+
+                                    _context.Set<PassportValidation>().Add(validation);
+                                }
+                            }
+                            catch { /* Prevent failure from stopping transaction */ }
+                        }
+                    }
 
                     _context.OrderCompanions.Add(new Domain.Entities.OrderCompanion
                     {

@@ -11,6 +11,14 @@ public class BagTrackingValidateFlightRequest
     public int BaggageCount { get; set; }
 }
 
+// ===== STEP 2.5 — validate-baggage =====
+public class BagTrackingValidateBaggageResponse
+{
+    public bool IsValid { get; set; }
+    public string? ErrorCode { get; set; }
+    public string? ErrorMessage { get; set; }
+}
+
 // ===== STEP 3 — scan-bag =====
 public class ScanBagRequest
 {
@@ -21,10 +29,15 @@ public class ScanBagRequest
 public class ScanBagResponse
 {
     public bool Found { get; set; }
-    public ScannedBagDto? Bag { get; set; }
+    public ScannedBagMinimalDto? Bag { get; set; }
     public int TotalScanned { get; set; }
     public int TotalRequired { get; set; }
     public string? ErrorMessage { get; set; }
+}
+
+public class ScannedBagMinimalDto
+{
+    public string TagNumber { get; set; } = string.Empty;
 }
 
 public class ScannedBagDto
@@ -40,6 +53,7 @@ public class UploadBagPhotosResponse
 {
     public string TagNumber { get; set; } = string.Empty;
     public List<string> Photos { get; set; } = new();
+    public ScannedBagDto? Bag { get; set; }
     public bool Saved { get; set; }
     public string? ErrorMessage { get; set; }
 }

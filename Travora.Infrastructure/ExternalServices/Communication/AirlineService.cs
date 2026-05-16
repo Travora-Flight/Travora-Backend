@@ -70,8 +70,76 @@ public class AirlineService : IAirlineService
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
         var options = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
         var result = System.Text.Json.JsonSerializer.Deserialize<AirlineCustomsLookupResponse>(json, options);
+        
+        if (result != null)
+        {
+            if (result.Product == null && (result.Rate.HasValue || !string.IsNullOrEmpty(result.ProductName)))
+            {
+                result.Found = true;
+                result.Product = new AirlineCustomsProduct
+                {
+                    Name = result.ProductName ?? string.Empty,
+                    CustomsRate = result.Rate ?? 0,
+                    Category = result.CategoryName
+                };
+            }
+            else if (result.Product != null)
+            {
+                result.Found = true;
+            }
+        }
 
         return result ?? new AirlineCustomsLookupResponse { Found = false };
+    }
+
+    public async Task<AirlineCustomsLookupResponse> GetCustomsRateAsync(string categoryName, string productName, CancellationToken cancellationToken = default)
+    {
+        var response = await _httpClient.GetAsync($"/api/customs/rate?categoryName={Uri.EscapeDataString(categoryName)}&productName={Uri.EscapeDataString(productName)}", cancellationToken);
+        
+        if (!response.IsSuccessStatusCode)
+        {
+            return new AirlineCustomsLookupResponse { Found = false };
+        }
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        var options = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var result = System.Text.Json.JsonSerializer.Deserialize<AirlineCustomsLookupResponse>(json, options);
+
+        if (result != null)
+        {
+            if (result.Product == null && (result.Rate.HasValue || !string.IsNullOrEmpty(result.ProductName)))
+            {
+                result.Found = true;
+                result.Product = new AirlineCustomsProduct
+                {
+                    Name = result.ProductName ?? string.Empty,
+                    CustomsRate = result.Rate ?? 0,
+                    Category = result.CategoryName
+                };
+            }
+            else if (result.Product != null)
+            {
+                result.Found = true;
+            }
+        }
+
+        return result ?? new AirlineCustomsLookupResponse { Found = false };
+    }
+
+    public async Task<List<AirlineCustomsCategoryResponse>> GetCustomsCategoriesAsync(CancellationToken cancellationToken = default)
+    {
+        var response = await _httpClient.GetAsync("/api/customs/categories", cancellationToken);
+        
+        if (!response.IsSuccessStatusCode)
+        {
+            return new List<AirlineCustomsCategoryResponse>();
+        }
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        var options = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var result = System.Text.Json.JsonSerializer.Deserialize<List<AirlineCustomsCategoryResponse>>(json, options);
+
+        return result ?? new List<AirlineCustomsCategoryResponse>();
     }
 
     public async Task<AirlineBaggageByTicketResponse> GetBaggageByTicketAsync(string ticketNumber, CancellationToken cancellationToken = default)

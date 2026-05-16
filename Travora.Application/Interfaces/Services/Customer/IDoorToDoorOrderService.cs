@@ -6,12 +6,15 @@ public interface IDoorToDoorOrderService
 {
     Task<ValidateFlightResponse> ValidateFlightAsync(int customerId, ValidateFlightRequest request, CancellationToken cancellationToken = default);
     Task<ValidateCompanionResponse> ValidateCompanionAsync(int customerId, ValidateCompanionRequest request, CancellationToken cancellationToken = default);
-    Task<ValidateBaggageResponse> ValidateBaggageAsync(int customerId, CancellationToken cancellationToken = default);
+    Task<DoorToDoorValidateBaggageResponse> ValidateBaggageAsync(int customerId, CancellationToken cancellationToken = default);
     Task<ResolveLocationResponse> ResolveLocationAsync(int customerId, ResolveLocationRequest request, CancellationToken cancellationToken = default);
     Task<ResolveLocationResponse> UpdateLocationAsync(int customerId, UpdateLocationRequest request, CancellationToken cancellationToken = default);
     Task<AvailableSlotsResponse> GetAvailableSlotsAsync(int customerId, DateTime date, CancellationToken cancellationToken = default);
+    Task<AvailableDatesResponse> GetAvailablePickupDatesAsync(int customerId, CancellationToken cancellationToken = default);
     Task<AvailableSlotsResponse> GetAvailableDeliverySlotsAsync(int customerId, DateTime date, CancellationToken cancellationToken = default);
+    Task<AvailableDatesResponse> GetAvailableDeliveryDatesAsync(int customerId, CancellationToken cancellationToken = default);
     Task<SetCustomsTypeResponse> SetCustomsTypeAsync(int customerId, SetCustomsTypeRequest request, CancellationToken cancellationToken = default);
+    Task<List<CustomsCategoryDto>> GetCustomsCategoriesAsync(CancellationToken cancellationToken = default);
     Task<CustomsLookupResponse> LookupCustomsProductAsync(string productName, CancellationToken cancellationToken = default);
     Task<AddCustomsItemResponse> AddCustomsItemAsync(int customerId, AddCustomsItemRequest request, CancellationToken cancellationToken = default);
     Task<InvoiceResponse> GetInvoiceAsync(int customerId, CancellationToken cancellationToken = default);

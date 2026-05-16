@@ -113,6 +113,11 @@ public class AirlineCustomsLookupResponse
 {
     public bool Found { get; set; }
     public AirlineCustomsProduct? Product { get; set; }
+
+    // Support flat response from Airline API
+    public string? ProductName { get; set; }
+    public string? CategoryName { get; set; }
+    public decimal? Rate { get; set; }
 }
 
 public class AirlineCustomsProduct
@@ -121,6 +126,18 @@ public class AirlineCustomsProduct
     public decimal CustomsRate { get; set; }
     public string? Category { get; set; }
     public string? SubCategory { get; set; }
+
+    // Support common API field names
+    public string? ProductName { get; set; }
+    public string? CategoryName { get; set; }
+    public decimal? Rate { get; set; }
+}
+
+public class AirlineCustomsCategoryResponse
+{
+    public int CategoryId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public int SubCategoriesCount { get; set; }
 }
 
 // ===== Baggage By Ticket (GET /api/airline/baggage/by-ticket/{ticketNumber}) =====

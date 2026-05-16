@@ -27,10 +27,18 @@ public class CustomsLookupResponse
 
 public class AddCustomsItemRequest
 {
+    public string ExternalCategoryId { get; set; } = string.Empty;
+    public string ExternalCategoryName { get; set; } = string.Empty;
     public string ItemDescription { get; set; } = string.Empty;
     public decimal DeclaredValue { get; set; }
     public int Quantity { get; set; }
     public IFormFile? PurchaseInvoice { get; set; }
+}
+
+public class CustomsCategoryDto
+{
+    public int CategoryId { get; set; }
+    public string Name { get; set; } = string.Empty;
 }
 
 public class AddCustomsItemResponse

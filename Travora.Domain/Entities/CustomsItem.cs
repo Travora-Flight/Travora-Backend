@@ -14,6 +14,8 @@ public class CustomsItem : IHasTimestamps
     public decimal CustomsRatePercentage { get; set; }
     public decimal TotalCustomsValue { get; set; }
     public string PurchaseInvoicePath { get; set; } = string.Empty;
+    public string ExternalCategoryId { get; set; } = string.Empty;
+    public string ExternalCategoryName { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
 
