@@ -12,11 +12,6 @@ public class Checkpoint
     public decimal? GpsLatitude { get; set; }
     public decimal? GpsLongitude { get; set; }
 
-    // Foreign keys
-    public int? AirportId { get; set; }
-
-    // Navigation properties
-    public Airport? Airport { get; set; }
     public ICollection<Employee> Employees { get; set; } = new List<Employee>();
     public ICollection<QrScan> QrScans { get; set; } = new List<QrScan>();
     public ICollection<BaggagePhoto> BaggagePhotos { get; set; } = new List<BaggagePhoto>();

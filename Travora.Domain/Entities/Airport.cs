@@ -24,6 +24,5 @@ public class Airport : IHasTimestamps
     public Country Country { get; set; } = null!;
     public ICollection<Flight> DepartureFlights { get; set; } = new List<Flight>();
     public ICollection<Flight> ArrivalFlights { get; set; } = new List<Flight>();
-    public ICollection<Checkpoint> Checkpoints { get; set; } = new List<Checkpoint>();
     public ICollection<WeatherSnapshot> WeatherSnapshots { get; set; } = new List<WeatherSnapshot>();
 }

@@ -74,8 +74,7 @@ public class AdminCheckpointService : IAdminCheckpointService
             Description = request.Description ?? string.Empty,
             SequenceOrder = request.SequenceOrder,
             GpsLatitude = request.GpsLatitude,
-            GpsLongitude = request.GpsLongitude,
-            AirportId = request.AirportId
+            GpsLongitude = request.GpsLongitude
         };
 
         _db.Checkpoints.Add(checkpoint);
@@ -102,7 +101,6 @@ public class AdminCheckpointService : IAdminCheckpointService
         if (request.SequenceOrder.HasValue) c.SequenceOrder = request.SequenceOrder.Value;
         if (request.GpsLatitude.HasValue) c.GpsLatitude = request.GpsLatitude.Value;
         if (request.GpsLongitude.HasValue) c.GpsLongitude = request.GpsLongitude.Value;
-        if (request.AirportId.HasValue) c.AirportId = request.AirportId.Value;
 
         if (!string.IsNullOrEmpty(request.CheckpointType))
         {

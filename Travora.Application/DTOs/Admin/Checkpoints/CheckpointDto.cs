@@ -35,7 +35,6 @@ public class CreateCheckpointRequest
     public int SequenceOrder { get; set; }
     public decimal? GpsLatitude { get; set; }
     public decimal? GpsLongitude { get; set; }
-    public int? AirportId { get; set; }
 }
 
 public class UpdateCheckpointRequest
@@ -46,5 +45,4 @@ public class UpdateCheckpointRequest
     public int? SequenceOrder { get; set; }
     public decimal? GpsLatitude { get; set; }
     public decimal? GpsLongitude { get; set; }
-    public int? AirportId { get; set; }
 }
