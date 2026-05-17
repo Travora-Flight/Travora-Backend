@@ -77,7 +77,16 @@ public class DraftCustomsItem
     public decimal DeclaredValue { get; set; }
     public int Quantity { get; set; }
     public decimal CustomsRatePercentage { get; set; }
-    public string PurchaseInvoiceUrl { get; set; } = string.Empty;
+    public List<string> PurchaseInvoiceUrls { get; set; } = new();
+    public string PurchaseInvoiceUrl 
+    { 
+        get => PurchaseInvoiceUrls.FirstOrDefault() ?? string.Empty;
+        set 
+        {
+            if (!string.IsNullOrEmpty(value) && !PurchaseInvoiceUrls.Contains(value))
+                PurchaseInvoiceUrls.Add(value);
+        }
+    }
     public string ExternalCategoryId { get; set; } = string.Empty;
     public string ExternalCategoryName { get; set; } = string.Empty;
 

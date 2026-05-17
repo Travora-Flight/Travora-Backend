@@ -33,12 +33,14 @@ public class AddCustomsItemRequest
     public decimal DeclaredValue { get; set; }
     public int Quantity { get; set; }
     public IFormFile? PurchaseInvoice { get; set; }
+    public List<IFormFile> PurchaseInvoices { get; set; } = new();
 }
 
 public class CustomsCategoryDto
 {
     public int CategoryId { get; set; }
     public string Name { get; set; } = string.Empty;
+    public int SubCategoriesCount { get; set; }
 }
 
 public class AddCustomsItemResponse

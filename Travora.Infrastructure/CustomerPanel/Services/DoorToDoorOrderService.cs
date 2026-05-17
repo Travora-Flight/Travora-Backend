@@ -7,7 +7,10 @@ using Travora.Application.Interfaces.Services;
 using Travora.Application.Interfaces.Services.Customer;
 using Travora.Domain.Constants;
 using Travora.Domain.Enums;
+using Travora.Domain.Entities;
 using Travora.Infrastructure.Data;
+using System.Text.Json;
+using Travora.Application.DTOs.Customer.Auth;
 
 namespace Travora.Infrastructure.CustomerPanel.Services;
 
@@ -19,6 +22,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
     private readonly IDraftOrderService _draftOrderService;
     private readonly IGeocodingService _geocodingService;
     private readonly INotificationPusher _pusher;
+    private readonly IPassportOcrService _ocrService;
 
     public DoorToDoorOrderService(
         ApplicationDbContext context,
@@ -26,7 +30,8 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         ICloudinaryService cloudinaryService,
         IDraftOrderService draftOrderService,
         IGeocodingService geocodingService,
-        INotificationPusher pusher)
+        INotificationPusher pusher,
+        IPassportOcrService ocrService)
     {
         _context = context;
         _airlineService = airlineService;
@@ -34,6 +39,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         _draftOrderService = draftOrderService;
         _geocodingService = geocodingService;
         _pusher = pusher;
+        _ocrService = ocrService;
     }
 
     public async Task<ValidateFlightResponse> ValidateFlightAsync(int customerId, ValidateFlightRequest request, CancellationToken cancellationToken = default)
@@ -52,10 +58,13 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         if (customer.AccountStatus != Domain.Enums.CustomerAccountStatus.Verified)
             return new ValidateFlightResponse { IsValid = false, ErrorMessage = "Your account must be verified to use this service." };
 
+        if (request.BaggageCount <= 0)
+            return new ValidateFlightResponse { IsValid = false, ErrorMessage = "Please enter the number of bags." };
+
         // 1.5 Prevent duplicate ticket usage for Door To Door
         try
         {
-            await ValidateTicketNotUsedAsync(request.TicketNumber, "Door To Door", cancellationToken);
+            await ValidateTicketNotUsedAsync(request.TicketNumber, PackageCodes.DoorToDoor, PackageNames.DoorToDoor, cancellationToken);
         }
         catch (InvalidOperationException ex)
         {
@@ -167,16 +176,61 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
             return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "The companion is not on the same flight" };
         }
 
-        // 4. Upload passport image
-        string defaultImageUrl = "https://res.cloudinary.com/travora/image/upload/vdefault/companion.jpg";
-        string imageUrl = defaultImageUrl;
-        if (request.PassportImage != null && request.PassportImage.Length > 0)
+        // 4. Validate passport image via OCR + Upload
+        if (request.PassportImage == null || request.PassportImage.Length == 0)
         {
-            using var stream = request.PassportImage.OpenReadStream();
-            var uploadResult = await _cloudinaryService.UploadFileAsync(stream, request.PassportImage.FileName, "travora/companions");
-            if (!string.IsNullOrEmpty(uploadResult))
+            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Passport image is required for companion validation" };
+        }
+
+        var tempDir = Path.Combine(Path.GetTempPath(), "travora_ocr");
+        Directory.CreateDirectory(tempDir);
+        var tempPath = Path.Combine(tempDir, $"{Guid.NewGuid()}{Path.GetExtension(request.PassportImage.FileName)}");
+
+        string imageUrl = "https://res.cloudinary.com/travora/image/upload/vdefault/companion.jpg";
+        bool passportVerified = false;
+        string finalPassportNumber = request.PassportNumber;
+        string? ocrResultJson = null;
+
+        try
+        {
+            await using (var fileStream = System.IO.File.Create(tempPath))
             {
-                imageUrl = uploadResult;
+                await request.PassportImage.CopyToAsync(fileStream, cancellationToken);
+            }
+
+            await using (var uploadStream = System.IO.File.OpenRead(tempPath))
+            {
+                var uploadResult = await _cloudinaryService.UploadFileAsync(
+                    uploadStream, request.PassportImage.FileName, "travora/companions");
+                if (!string.IsNullOrEmpty(uploadResult))
+                    imageUrl = uploadResult;
+            }
+
+            var ocrResult = await _ocrService.ExtractPassportDataAsync(tempPath);
+
+            if (ocrResult == null || ocrResult.ValidScore < 85)
+            {
+                return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Passport image is unclear or invalid. Please upload a clearer image." };
+            }
+
+            passportVerified = true;
+            
+            if (!string.IsNullOrWhiteSpace(ocrResult.Number))
+            {
+                finalPassportNumber = ocrResult.Number;
+            }
+
+            ocrResultJson = System.Text.Json.JsonSerializer.Serialize(ocrResult);
+        }
+        catch (Exception ex)
+        {
+            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = $"OCR Verification failed: {ex.Message}" };
+        }
+        finally
+        {
+            if (System.IO.File.Exists(tempPath))
+            {
+                try { System.IO.File.Delete(tempPath); } catch { }
             }
         }
 
@@ -185,17 +239,21 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         {
             FirstName = passengerData.FirstName ?? string.Empty,
             LastName = passengerData.LastName ?? string.Empty,
-            PassportNumber = request.PassportNumber,
+            PassportNumber = finalPassportNumber,
             TicketNumber = request.TicketNumber,
             SeatNumber = airlineRes.Ticket?.SeatNumber ?? passengerData.SeatNumber ?? string.Empty,
             PassportImageUrl = imageUrl,
             Nationality = passengerData.Nationality,
             DateOfBirth = DateTime.TryParse(passengerData.DateOfBirth, out var dob) ? dob : null,
-            PassportExpiryDate = DateTime.TryParse(passengerData.PassportExpiryDate, out var expiry) ? expiry : null
+            PassportExpiryDate = DateTime.TryParse(passengerData.PassportExpiryDate, out var expiry) ? expiry : null,
+            IsVerified = passportVerified,
+            PassportFileSizeKb = (int)(request.PassportImage.Length / 1024),
+            PassportMimeType = request.PassportImage.ContentType,
+            PassportOcrResultJson = ocrResultJson
         };
 
         // Ensure we don't add the same companion twice (by passport)
-        if (!draft.Companions.Any(c => c.PassportNumber == request.PassportNumber))
+        if (!draft.Companions.Any(c => c.PassportNumber == finalPassportNumber))
         {
             draft.Companions.Add(newCompanion);
             // Reset TTL when modifying
@@ -551,6 +609,9 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         if (draft == null)
             return new SetCustomsTypeResponse { Success = false, ErrorMessage = "No active draft order found." };
 
+        if (string.IsNullOrEmpty(draft.SelectedSlot))
+            return new SetCustomsTypeResponse { Success = false, ErrorMessage = "Pickup slot must be selected first" };
+
         if (string.IsNullOrEmpty(draft.SelectedDeliverySlot))
             return new SetCustomsTypeResponse { Success = false, ErrorMessage = "Delivery slot must be selected first" };
 
@@ -627,13 +688,39 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
             ? lookupResult.Product.CustomsRate
             : 0m;
 
-        string invoiceUrl = string.Empty;
+        int uploadedCount = (request.PurchaseInvoice != null && request.PurchaseInvoice.Length > 0 ? 1 : 0) +
+                            (request.PurchaseInvoices != null ? request.PurchaseInvoices.Count(f => f.Length > 0) : 0);
+
+        if (request.Quantity <= 1 && uploadedCount > 1)
+        {
+            return new AddCustomsItemResponse
+            {
+                Success = false,
+                ErrorMessage = "Cannot upload multiple invoices when the item quantity is 1 or less."
+            };
+        }
+
+        List<string> invoiceUrls = new List<string>();
         if (request.PurchaseInvoice != null && request.PurchaseInvoice.Length > 0)
         {
             using var stream = request.PurchaseInvoice.OpenReadStream();
             var uploadResult = await _cloudinaryService.UploadFileAsync(stream, request.PurchaseInvoice.FileName, "travora/customs-invoices");
             if (!string.IsNullOrEmpty(uploadResult))
-                invoiceUrl = uploadResult;
+                invoiceUrls.Add(uploadResult);
+        }
+
+        if (request.PurchaseInvoices != null && request.PurchaseInvoices.Any())
+        {
+            foreach (var file in request.PurchaseInvoices)
+            {
+                if (file.Length > 0)
+                {
+                    using var stream = file.OpenReadStream();
+                    var uploadResult = await _cloudinaryService.UploadFileAsync(stream, file.FileName, "travora/customs-invoices");
+                    if (!string.IsNullOrEmpty(uploadResult))
+                        invoiceUrls.Add(uploadResult);
+                }
+            }
         }
 
         var item = new DraftCustomsItem
@@ -643,7 +730,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
             DeclaredValue = request.DeclaredValue,
             Quantity = request.Quantity,
             CustomsRatePercentage = customsRate,
-            PurchaseInvoiceUrl = invoiceUrl,
+            PurchaseInvoiceUrls = invoiceUrls,
             ExternalCategoryId = request.ExternalCategoryId,
             ExternalCategoryName = request.ExternalCategoryName
         };
@@ -666,10 +753,13 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         if (draft == null)
             return new InvoiceResponse { IsValid = false, ErrorMessage = "Draft order not found." };
 
+        if (string.IsNullOrEmpty(draft.SelectedSlot))
+            return new InvoiceResponse { IsValid = false, ErrorMessage = "Pickup slot must be selected first" };
+
         if (string.IsNullOrEmpty(draft.SelectedDeliverySlot))
             return new InvoiceResponse { IsValid = false, ErrorMessage = "Delivery slot must be selected first" };
 
-        var pkg = await _context.Packages.FirstOrDefaultAsync(p => p.PackageName == PackageNames.DoorToDoor, cancellationToken);
+        var pkg = await _context.Packages.FirstOrDefaultAsync(p => p.PackageCode == PackageCodes.DoorToDoor, cancellationToken);
         
         // If no package found, fallback to defaults based on spec to prevent crash
         decimal basePrice = pkg?.TotalBasePrice ?? 80m;
@@ -752,7 +842,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
             {
                 var invoiceDto = await GetInvoiceAsync(customerId, cancellationToken);
                 var pkg = await _context.Packages.FirstOrDefaultAsync(p => 
-                    p.PackageName == PackageNames.DoorToDoor, cancellationToken);
+                    p.PackageCode == PackageCodes.DoorToDoor, cancellationToken);
 
                 string flightNo = draft.FlightInfo.FlightNumber;
 
@@ -916,6 +1006,76 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
                     await _context.SaveChangesAsync(cancellationToken);
                     companionIdMap[comp.PassportNumber] = companionEntity.CompanionId;
 
+                    // Save document & OCR validation in DB just like CarService
+                    var document = new Domain.Entities.Document
+                    {
+                        OwnerId = companionEntity.CompanionId,
+                        OwnerType = DocumentOwnerType.Companion,
+                        DocumentType = DocumentType.Passport,
+                        FilePath = comp.PassportImageUrl,
+                        FileSizeKb = comp.PassportFileSizeKb > 0 ? comp.PassportFileSizeKb : 0,
+                        MimeType = !string.IsNullOrEmpty(comp.PassportMimeType) ? comp.PassportMimeType : "image/jpeg",
+                        VerificationStatus = comp.IsVerified ? VerificationStatus.Approved : VerificationStatus.UnderReview,
+                        UploadedAt = DateTime.UtcNow,
+                        IsActive = true,
+                        CreatedAt = DateTime.UtcNow
+                    };
+                    _context.Documents.Add(document);
+                    await _context.SaveChangesAsync(cancellationToken);
+
+                    if (!string.IsNullOrEmpty(comp.PassportOcrResultJson))
+                    {
+                        try
+                        {
+                            var ocrResult = JsonSerializer.Deserialize<PassportOcrResult>(
+                                comp.PassportOcrResultJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            
+                            if (ocrResult != null)
+                            {
+                                DateTime.TryParse(ocrResult.DateOfBirthFormatted, out var extractedDob);
+                                DateTime.TryParse(ocrResult.ExpirationDateFormatted, out var extractedExpiry);
+
+                                var validation = new PassportValidation
+                                {
+                                    DocumentId = document.DocumentId,
+                                    ExpiryCheckPassed = comp.PassportExpiryDate > DateTime.UtcNow,
+                                    FormatCheckPassed = ocrResult.ValidComposite ?? false,
+                                    NameMatchCheck = string.Equals(ocrResult.Surname, comp.LastName, StringComparison.OrdinalIgnoreCase),
+                                    BirthDateMatchCheck = extractedDob.Date == (comp.DateOfBirth?.Date ?? DateTime.MinValue.Date),
+                                    ValidationStatus = comp.IsVerified ? PassportValidationStatus.Passed : PassportValidationStatus.RequiresManualReview,
+                                    OcrConfidenceScore = ocrResult.ValidScore / 100.0m,
+                                    ManualReviewRequired = !comp.IsVerified,
+                                    MrzType = ocrResult.MrzType,
+                                    RawMrzText = ocrResult.RawText,
+                                    ValidScore = ocrResult.ValidScore,
+                                    MrzMethod = ocrResult.Method,
+                                    CheckNumber = ocrResult.CheckNumber,
+                                    CheckDateOfBirth = ocrResult.CheckDateOfBirth,
+                                    CheckExpirationDate = ocrResult.CheckExpirationDate,
+                                    CheckComposite = ocrResult.CheckComposite,
+                                    CheckPersonalNumber = ocrResult.CheckPersonalNumber,
+                                    ValidNumber = ocrResult.ValidNumber,
+                                    ValidDateOfBirth = ocrResult.ValidDateOfBirth,
+                                    ValidExpirationDate = ocrResult.ValidExpirationDate,
+                                    ValidComposite = ocrResult.ValidComposite,
+                                    ValidPersonalNumber = ocrResult.ValidPersonalNumber,
+                                    ExtractedPassportNumber = ocrResult.Number,
+                                    ExtractedSurname = ocrResult.Surname,
+                                    ExtractedGivenNames = ocrResult.Names,
+                                    ExtractedNationality = ocrResult.Nationality,
+                                    ExtractedDateOfBirth = extractedDob != default ? extractedDob : null,
+                                    ExtractedExpiryDate = extractedExpiry != default ? extractedExpiry : null,
+                                    ExtractedGender = ocrResult.SexFormatted,
+                                    ValidatedAt = DateTime.UtcNow,
+                                    CreatedAt = DateTime.UtcNow
+                                };
+
+                                _context.Set<PassportValidation>().Add(validation);
+                            }
+                        }
+                        catch { /* Prevent failures in OCR logging from failing the entire checkout */ }
+                    }
+
                     _context.OrderCompanions.Add(new Domain.Entities.OrderCompanion
                     {
                         OrderId = order.OrderId,
@@ -972,7 +1132,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
                         if (!Enum.TryParse<Domain.Enums.ItemType>(item.ItemType, true, out var parsedItemType))
                             parsedItemType = Domain.Enums.ItemType.Other;
 
-                        _context.CustomsItems.Add(new Domain.Entities.CustomsItem
+                        var customsItem = new Domain.Entities.CustomsItem
                         {
                             CustomsId = declaration.CustomsId,
                             ItemDescription = item.ItemDescription,
@@ -982,10 +1142,22 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
                             TotalValue = item.TotalValue,
                             CustomsRatePercentage = item.CustomsRatePercentage,
                             TotalCustomsValue = item.TotalCustomsValue,
-                            PurchaseInvoicePath = item.PurchaseInvoiceUrl,
                             ExternalCategoryId = item.ExternalCategoryId,
                             ExternalCategoryName = item.ExternalCategoryName
-                        });
+                        };
+
+                        if (item.PurchaseInvoiceUrls != null && item.PurchaseInvoiceUrls.Any())
+                        {
+                            foreach (var url in item.PurchaseInvoiceUrls)
+                            {
+                                customsItem.Invoices.Add(new Domain.Entities.CustomsItemInvoice
+                                {
+                                    InvoicePath = url
+                                });
+                            }
+                        }
+
+                        _context.CustomsItems.Add(customsItem);
                     }
                 }
 
@@ -1045,14 +1217,14 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
                 await transaction.CommitAsync(cancellationToken);
                 await _draftOrderService.RemoveDraftOrderAsync(customerId.ToString(), cancellationToken);
 
-                // Customer Notification — Order Confirmed
+                // Customer Notification — Order Confirmed (Awaiting Payment)
                 _context.Notifications.Add(new Domain.Entities.Notification
                 {
                     UserId = customerId,
                     UserType = Domain.Enums.UserType.Customer,
                     NotificationType = Domain.Enums.NotificationType.OrderUpdated,
-                    Title = "Your order has been confirmed",
-                    Message = $"Order #{order.OrderId} for Door To Door has been placed successfully",
+                    Title = "Order Placed — Awaiting Payment",
+                    Message = $"Order #{order.OrderId} for Door To Door has been placed successfully. Please complete your payment to activate the service.",
                     NotificationChannel = Domain.Enums.NotificationChannel.InApp,
                     OrderId = order.OrderId
                 });
@@ -1060,8 +1232,8 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
 
                 await _pusher.PushToCustomerAsync(
                     customerId,
-                    "Your order has been confirmed",
-                    $"Order #{order.OrderId} for Door To Door has been placed successfully",
+                    "Order Placed — Awaiting Payment",
+                    $"Order #{order.OrderId} for Door To Door has been placed successfully. Please complete your payment to proceed.",
                     "OrderConfirmed",
                     order.OrderId);
 
@@ -1071,7 +1243,8 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
                     Success = true,
                     OrderId = order.OrderId,
                     OrderNumber = $"LTS-{DateTime.UtcNow.Year}-{order.OrderId}",
-                    TotalPaid = invoiceDto.Breakdown.TotalAmount
+                    TotalPaid = invoiceDto.Breakdown.TotalAmount,
+                    Message = "Order created successfully. Please proceed to payment to finalize your booking."
                 };
             }
             catch (Exception ex)
@@ -1129,8 +1302,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         if (string.IsNullOrEmpty(draft.DeliveryFormattedAddress))
             return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Delivery location must be specified first" };
 
-        if (string.IsNullOrEmpty(draft.SelectedSlot))
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Pickup slot must be selected first" };
+
 
         var arrivalTimeUtc = draft.FlightInfo.ArrivalTimeUtc ?? draft.FlightInfo.DepartureTimeUtc.AddHours(4);
         var earliestDelivery = arrivalTimeUtc.AddHours(4);
@@ -1276,11 +1448,11 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         }
     }
 
-    private async Task ValidateTicketNotUsedAsync(string ticketNumber, string packageName, CancellationToken cancellationToken)
+    private async Task ValidateTicketNotUsedAsync(string ticketNumber, string packageCode, string packageName, CancellationToken cancellationToken)
     {
         var package = await _context.Packages
-            .FirstOrDefaultAsync(p => p.PackageName == packageName, cancellationToken)
-            ?? throw new InvalidOperationException($"Package {packageName} not found in DB");
+            .FirstOrDefaultAsync(p => p.PackageCode == packageCode, cancellationToken)
+            ?? throw new InvalidOperationException($"Package {packageName} ({packageCode}) not found in DB");
 
         var isTicketUsed = await _context.Orders
             .AnyAsync(o => o.TicketNumber == ticketNumber 
