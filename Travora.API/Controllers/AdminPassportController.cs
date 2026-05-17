@@ -28,9 +28,31 @@ public class AdminPassportController : ControllerBase
 
     [HttpGet]
     [ProducesResponseType(typeof(PassportVerificationListResponse), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetPassportVerificationsAsync([FromQuery] string? status)
+    public async Task<IActionResult> GetPassportVerificationsAsync(
+        [FromQuery] Travora.Domain.Enums.PassportVerificationStatusFilter status = Travora.Domain.Enums.PassportVerificationStatusFilter.Pending,
+        [FromQuery] int pageNumber = 1,
+        [FromQuery] int pageSize = 10,
+        [FromQuery] string? searchTerm = null)
     {
-        var result = await _passportService.GetPassportVerificationsAsync(status);
+        var result = await _passportService.GetPassportVerificationsAsync(status, pageNumber, pageSize, searchTerm);
+        return Ok(result);
+    }
+
+    [HttpGet("counts")]
+    [ProducesResponseType(typeof(PassportVerificationCountsResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetPassportVerificationCountsAsync()
+    {
+        var result = await _passportService.GetPassportVerificationCountsAsync();
+        return Ok(result);
+    }
+
+    [HttpGet("{documentId}")]
+    [ProducesResponseType(typeof(PassportVerificationDetailsResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetPassportVerificationDetailsAsync(int documentId)
+    {
+        var result = await _passportService.GetPassportVerificationDetailsAsync(documentId);
+        if (result == null) return NotFound(new { message = "Passport verification request not found." });
         return Ok(result);
     }
 

@@ -19,7 +19,8 @@ public class AdminPassportService : IAdminPassportService
         _emailService = emailService;
     }
 
-    public async Task<PassportVerificationListResponse> GetPassportVerificationsAsync(string? status)
+    public async Task<PassportVerificationListResponse> GetPassportVerificationsAsync(
+        PassportVerificationStatusFilter status = PassportVerificationStatusFilter.Pending, int pageNumber = 1, int pageSize = 10, string? searchTerm = null)
     {
         var query = from d in _db.Documents
                     join c in _db.Customers on d.OwnerId equals c.CustomerId
@@ -28,23 +29,46 @@ public class AdminPassportService : IAdminPassportService
                        && p.ManualReviewRequired == true
                     select new { d, c, p };
 
-        var allItems = await query.ToListAsync();
-
-        var pendingCount = allItems.Count(x => x.d.VerificationStatus == VerificationStatus.Pending || x.d.VerificationStatus == VerificationStatus.UnderReview);
-        var approvedCount = allItems.Count(x => x.d.VerificationStatus == VerificationStatus.Approved);
-        var rejectedCount = allItems.Count(x => x.d.VerificationStatus == VerificationStatus.Rejected);
-
-        if (!string.IsNullOrWhiteSpace(status))
+        // 1. Apply status filter
+        if (status != PassportVerificationStatusFilter.All)
         {
-            if (status.Equals("pending", StringComparison.OrdinalIgnoreCase))
-                allItems = allItems.Where(x => x.d.VerificationStatus == VerificationStatus.Pending || x.d.VerificationStatus == VerificationStatus.UnderReview).ToList();
-            else if (status.Equals("approved", StringComparison.OrdinalIgnoreCase))
-                allItems = allItems.Where(x => x.d.VerificationStatus == VerificationStatus.Approved).ToList();
-            else if (status.Equals("rejected", StringComparison.OrdinalIgnoreCase))
-                allItems = allItems.Where(x => x.d.VerificationStatus == VerificationStatus.Rejected).ToList();
+            if (status == PassportVerificationStatusFilter.Pending)
+            {
+                query = query.Where(x => x.d.VerificationStatus == VerificationStatus.Pending || x.d.VerificationStatus == VerificationStatus.UnderReview);
+            }
+            else if (status == PassportVerificationStatusFilter.Approved)
+            {
+                query = query.Where(x => x.d.VerificationStatus == VerificationStatus.Approved);
+            }
+            else if (status == PassportVerificationStatusFilter.Rejected)
+            {
+                query = query.Where(x => x.d.VerificationStatus == VerificationStatus.Rejected);
+            }
         }
 
-        var passports = allItems.Select(x => new PassportVerificationItem
+        // 2. Apply search filter
+        if (!string.IsNullOrWhiteSpace(searchTerm))
+        {
+            var searchLower = searchTerm.ToLower();
+            query = query.Where(x => x.c.Firstname.ToLower().Contains(searchLower) ||
+                                     x.c.Lastname.ToLower().Contains(searchLower) ||
+                                     x.c.Email.ToLower().Contains(searchLower) ||
+                                     x.c.PhoneNumber.Contains(searchLower) ||
+                                     x.c.PassportNumber.Contains(searchLower));
+        }
+
+        // 3. Get overall counts
+        var counts = await GetPassportVerificationCountsAsync();
+
+        // 4. Apply pagination & ordering
+        query = query.OrderByDescending(x => x.d.CreatedAt);
+        
+        var pagedItems = await query
+            .Skip((pageNumber - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync();
+
+        var passports = pagedItems.Select(x => new PassportVerificationItem
         {
             DocumentId = x.d.DocumentId,
             CustomerName = $"{x.c.Firstname} {x.c.Lastname}",
@@ -59,7 +83,6 @@ public class AdminPassportService : IAdminPassportService
                 Nationality = x.c.Nationality,
                 DateOfBirth = x.c.DateOfBirth.ToString("dd/MM/yyyy"),
                 ExpiryDate = x.c.PassportExpiryDate.ToString("dd/MM/yyyy")
-                // Issue Date might not be in Customer entity, omitted if not available
             },
             Status = x.d.VerificationStatus.ToString().ToLower(),
             OcrConfidenceScore = Math.Round(x.p.OcrConfidenceScore, 2),
@@ -68,10 +91,63 @@ public class AdminPassportService : IAdminPassportService
 
         return new PassportVerificationListResponse
         {
-            PendingCount = pendingCount,
-            ApprovedCount = approvedCount,
-            RejectedCount = rejectedCount,
+            PendingCount = counts.PendingCount,
+            ApprovedCount = counts.ApprovedCount,
+            RejectedCount = counts.RejectedCount,
             Passports = passports
+        };
+    }
+
+    public async Task<PassportVerificationCountsResponse> GetPassportVerificationCountsAsync()
+    {
+        var baseQuery = from d in _db.Documents
+                        join c in _db.Customers on d.OwnerId equals c.CustomerId
+                        join p in _db.PassportValidations on d.DocumentId equals p.DocumentId
+                        where d.OwnerType == DocumentOwnerType.Customer && d.DocumentType == DocumentType.Passport
+                           && p.ManualReviewRequired == true
+                        select d.VerificationStatus;
+
+        var statuses = await baseQuery.ToListAsync();
+
+        return new PassportVerificationCountsResponse
+        {
+            PendingCount = statuses.Count(s => s == VerificationStatus.Pending || s == VerificationStatus.UnderReview),
+            ApprovedCount = statuses.Count(s => s == VerificationStatus.Approved),
+            RejectedCount = statuses.Count(s => s == VerificationStatus.Rejected)
+        };
+    }
+
+    public async Task<PassportVerificationDetailsResponse?> GetPassportVerificationDetailsAsync(int documentId)
+    {
+        var query = from d in _db.Documents
+                    join c in _db.Customers on d.OwnerId equals c.CustomerId
+                    join p in _db.PassportValidations on d.DocumentId equals p.DocumentId
+                    where d.DocumentId == documentId && d.OwnerType == DocumentOwnerType.Customer && d.DocumentType == DocumentType.Passport
+                    select new { d, c, p };
+
+        var item = await query.FirstOrDefaultAsync();
+        if (item == null) return null;
+
+        return new PassportVerificationDetailsResponse
+        {
+            DocumentId = item.d.DocumentId,
+            CustomerId = item.c.CustomerId,
+            CustomerName = $"{item.c.Firstname} {item.c.Lastname}",
+            RequestNumber = item.d.DocumentId.ToString(),
+            RequestDate = item.d.CreatedAt.ToString("dd/MM/yyyy"),
+            Mobile = item.c.PhoneNumber,
+            Email = item.c.Email,
+            PassportImageUrl = item.d.FilePath,
+            Status = item.d.VerificationStatus.ToString().ToLower(),
+            OcrConfidenceScore = Math.Round(item.p.OcrConfidenceScore, 2),
+            ManualReviewRequired = item.p.ManualReviewRequired,
+            PassportInfo = new PassportInfoDetails
+            {
+                PassportNumber = item.c.PassportNumber,
+                Nationality = item.c.Nationality,
+                DateOfBirth = item.c.DateOfBirth.ToString("dd/MM/yyyy"),
+                ExpiryDate = item.c.PassportExpiryDate.ToString("dd/MM/yyyy")
+            }
         };
     }
 
