@@ -32,14 +32,6 @@ public class AdminRefundController : ControllerBase
         return Ok(result);
     }
 
-    [HttpGet("{refundId}")]
-    [ProducesResponseType(typeof(AdminRefundDetail), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetRefundDetail(int refundId)
-    {
-        var result = await _refundService.GetRefundDetailAsync(refundId);
-        return Ok(result);
-    }
-
     [HttpPost("{refundId}/approve")]
     [ProducesResponseType(typeof(RefundResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> ApproveRefund(int refundId)

@@ -27,10 +27,14 @@ public class RefundStatusResponse
 public class AdminRefundListItem
 {
     public int RefundId { get; set; }
-    public string CustomerName { get; set; } = string.Empty;
     public int OrderId { get; set; }
-    public decimal Amount { get; set; }
+    public string CustomerName { get; set; } = string.Empty;
+    public string CustomerEmail { get; set; } = string.Empty;
+    public string CustomerPhone { get; set; } = string.Empty;
+    public decimal OrderAmount { get; set; }
+    public decimal RefundAmount { get; set; }
     public string Status { get; set; } = string.Empty;
+    public string Reason { get; set; } = string.Empty;
     public DateTime RequestedAt { get; set; }
 }
 

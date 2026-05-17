@@ -197,42 +197,18 @@ public class RefundService : IRefundService
             .Select(r => new AdminRefundListItem
             {
                 RefundId = r.RefundId,
-                CustomerName = r.Order.Customer.Firstname + " " + r.Order.Customer.Lastname,
                 OrderId = r.OrderId,
-                Amount = r.RefundAmount,
+                CustomerName = r.Order.Customer.Firstname + " " + r.Order.Customer.Lastname,
+                CustomerEmail = r.Order.Customer.Email,
+                CustomerPhone = r.Order.Customer.PhoneNumber,
+                OrderAmount = r.Order.TotalAmount,
+                RefundAmount = r.RefundAmount,
                 Status = r.RefundStatus.ToString(),
+                Reason = r.Reason,
                 RequestedAt = r.RequestedAt
             })
             .ToListAsync();
     }
-
-    public async Task<AdminRefundDetail> GetRefundDetailAsync(int refundId)
-    {
-        var refund = await _db.Refunds
-            .Include(r => r.Order)
-                .ThenInclude(o => o.Customer)
-            .Include(r => r.ProcessedByAdmin)
-            .FirstOrDefaultAsync(r => r.RefundId == refundId)
-            ?? throw new KeyNotFoundException("Refund request not found");
-
-        return new AdminRefundDetail
-        {
-            RefundId = refund.RefundId,
-            OrderId = refund.OrderId,
-            CustomerName = refund.Order.Customer.Firstname + " " + refund.Order.Customer.Lastname,
-            CustomerEmail = refund.Order.Customer.Email,
-            CustomerPhone = refund.Order.Customer.PhoneNumber,
-            OrderAmount = refund.Order.TotalAmount,
-            RefundAmount = refund.RefundAmount,
-            Status = refund.RefundStatus.ToString(),
-            Reason = refund.Reason,
-            AdminNotes = refund.AdminNotes,
-            RequestedAt = refund.RequestedAt,
-            ProcessedAt = refund.ProcessedAt,
-            ProcessedByAdmin = refund.ProcessedByAdmin?.FullName
-        };
-    }
-
     public async Task<RefundResponse> ApproveRefundAsync(int adminId, int refundId)
     {
         var refund = await _db.Refunds
