@@ -73,7 +73,7 @@ public class AdminPricingService : IAdminPricingService
 
     public async Task<List<ServiceDetailResponse>> GetServicesAsync(Travora.Domain.Enums.ActivationFilterStatus status)
     {
-        var query = _db.Services.IgnoreQueryFilters().AsQueryable();
+        var query = _db.Services.AsQueryable();
 
         if (status == Travora.Domain.Enums.ActivationFilterStatus.Active)
             query = query.Where(s => s.IsActive);
@@ -95,7 +95,7 @@ public class AdminPricingService : IAdminPricingService
 
     public async Task<List<PackageDetailResponse>> GetPackagesAsync(Travora.Domain.Enums.ActivationFilterStatus status)
     {
-        var query = _db.Packages.IgnoreQueryFilters().AsQueryable();
+        var query = _db.Packages.AsQueryable();
 
         if (status == Travora.Domain.Enums.ActivationFilterStatus.Active)
             query = query.Where(p => p.IsActive);
@@ -161,24 +161,45 @@ public class AdminPricingService : IAdminPricingService
         if (request.BasePrice.HasValue) service.BasePrice = request.BasePrice.Value;
         if (request.Description != null) service.Description = request.Description;
         if (request.Type != null) service.ServiceType = MapServiceType(request.Type);
-        if (request.IsActive.HasValue) 
-        {
-            service.IsActive = request.IsActive.Value;
-            
-            if (service.IsActive == false)
-            {
-                var affectedPackages = await _db.Packages
-                    .Include(p => p.PackageServices)
-                        .ThenInclude(ps => ps.Service)
-                    .Where(p => p.PackageServices.Any(ps => ps.ServiceId == serviceId))
-                    .ToListAsync();
 
-                foreach (var pkg in affectedPackages)
+        service.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        return true;
+    }
+
+    public async Task<bool> UpdateServiceStatusAsync(int serviceId, UpdateStatusRequest request)
+    {
+        var service = await _db.Services.FindAsync(serviceId)
+            ?? throw new KeyNotFoundException("Service not found");
+
+        if (request.IsActive == false)
+        {
+            // Check if this service is used in any active packages
+            var activeLinkedPackage = await _db.Packages
+                .Where(p => p.IsActive && p.PackageServices.Any(ps => ps.ServiceId == serviceId))
+                .FirstOrDefaultAsync();
+
+            if (activeLinkedPackage != null)
+            {
+                throw new InvalidOperationException($"Cannot deactivate service '{service.ServiceName}' because it is currently used in the active package '{activeLinkedPackage.PackageName}'. Please deactivate or update the package first.");
+            }
+        }
+
+        service.IsActive = request.IsActive;
+
+        if (service.IsActive == false)
+        {
+            var affectedPackages = await _db.Packages
+                .Include(p => p.PackageServices)
+                    .ThenInclude(ps => ps.Service)
+                .Where(p => p.PackageServices.Any(ps => ps.ServiceId == serviceId))
+                .ToListAsync();
+
+            foreach (var pkg in affectedPackages)
+            {
+                if (pkg.PackageServices.All(ps => !ps.Service.IsActive))
                 {
-                    if (pkg.PackageServices.All(ps => !ps.Service.IsActive))
-                    {
-                        pkg.IsActive = false;
-                    }
+                    pkg.IsActive = false;
                 }
             }
         }
@@ -192,6 +213,16 @@ public class AdminPricingService : IAdminPricingService
     {
         var service = await _db.Services.FindAsync(serviceId)
             ?? throw new KeyNotFoundException("Service not found");
+
+        // Check if this service is used in any packages (active or inactive)
+        var linkedPackage = await _db.Packages
+            .Where(p => p.PackageServices.Any(ps => ps.ServiceId == serviceId))
+            .FirstOrDefaultAsync();
+
+        if (linkedPackage != null)
+        {
+            throw new InvalidOperationException($"Cannot delete service '{service.ServiceName}' because it is currently used in package '{linkedPackage.PackageName}'. Please remove it from the package first.");
+        }
 
         service.IsDeleted = true;
         await _db.SaveChangesAsync();
@@ -275,7 +306,6 @@ public class AdminPricingService : IAdminPricingService
 
         if (request.PackageName != null) package.PackageName = request.PackageName;
         if (request.Discount != null) package.Discount = request.Discount; // Can be null, but request.Discount is decimal?
-        if (request.IsActive.HasValue) package.IsActive = request.IsActive.Value;
 
         if (request.IncludedCompanions.HasValue) package.IncludedCompanionsCount = request.IncludedCompanions.Value;
         if (request.ExtraCompanionPrice.HasValue) package.ExtraCompanionPrice = request.ExtraCompanionPrice.Value;
@@ -311,6 +341,17 @@ public class AdminPricingService : IAdminPricingService
             package.TotalBasePrice = newTotalPrice;
         }
 
+        package.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        return true;
+    }
+
+    public async Task<bool> UpdatePackageStatusAsync(int packageId, UpdateStatusRequest request)
+    {
+        var package = await _db.Packages.FindAsync(packageId)
+            ?? throw new KeyNotFoundException("Package not found");
+
+        package.IsActive = request.IsActive;
         package.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
         return true;

@@ -31,14 +31,20 @@ public class GoogleGeocodingService : IGeocodingService
         if (result == null || result.Status != "OK" || result.Results == null || result.Results.Count == 0)
             return null;
 
-        var firstResult = result.Results[0];
-        var components = firstResult.AddressComponents ?? new List<GoogleAddressComponent>();
+        // Try to find the most "human-readable" result. 
+        // In many regions (like Egypt), the first result might be a 'premise' with a plus code.
+        // We prefer a result that has a 'route' (street) component.
+        var selectedResult = result.Results.FirstOrDefault(r => 
+            r.AddressComponents?.Any(c => c.Types != null && c.Types.Contains("route")) == true) 
+            ?? result.Results[0];
+
+        var components = selectedResult.AddressComponents ?? new List<GoogleAddressComponent>();
 
         return new ReverseGeocodingResponse
         {
             Latitude = latitude,
             Longitude = longitude,
-            FormattedAddress = firstResult.FormattedAddress ?? string.Empty,
+            FormattedAddress = selectedResult.FormattedAddress ?? string.Empty,
             StreetAddress = BuildStreetAddress(components),
             Suburb = GetComponent(components, "sublocality", "sublocality_level_1", "neighborhood"),
             City = GetComponent(components, "locality", "administrative_area_level_2"),
@@ -94,6 +100,9 @@ public class GoogleGeocodingService : IGeocodingService
 
         [JsonPropertyName("address_components")]
         public List<GoogleAddressComponent>? AddressComponents { get; set; }
+
+        [JsonPropertyName("types")]
+        public List<string>? Types { get; set; }
     }
 
     private class GoogleAddressComponent

@@ -23,38 +23,40 @@ public class AdminCheckpointService : IAdminCheckpointService
             {
                 CheckpointId = c.CheckpointId,
                 CheckpointName = c.CheckpointName,
-                CheckpointType = c.CheckpointType.ToString(),
-                SequenceOrder = c.SequenceOrder,
                 GpsLatitude = c.GpsLatitude,
                 GpsLongitude = c.GpsLongitude,
-                IsAssigned = c.Employees.Any(e => e.IsActive && !e.IsDeleted),
-                AssignedToEmployeeId = c.Employees.Where(e => e.IsActive && !e.IsDeleted).Select(e => (int?)e.EmployeeId).FirstOrDefault(),
-                AssignedToEmployeeName = c.Employees.Where(e => e.IsActive && !e.IsDeleted).Select(e => e.Firstname + " " + e.Lastname).FirstOrDefault()
+                IsAssigned = c.Employees.Any(e => e.IsActive && !e.IsDeleted)
             })
             .ToListAsync();
     }
 
-    public async Task<CheckpointResponse> GetCheckpointByIdAsync(int id)
+    public async Task<IEnumerable<CheckpointEmployeeResponse>> GetCheckpointEmployeesAsync(int checkpointId)
     {
-        var c = await _db.Checkpoints
-            .Include(x => x.Employees)
-            .FirstOrDefaultAsync(x => x.CheckpointId == id)
+        var checkpoint = await _db.Checkpoints
+            .Include(c => c.Employees)
+            .FirstOrDefaultAsync(c => c.CheckpointId == checkpointId)
             ?? throw new KeyNotFoundException("Checkpoint not found");
 
-        var activeEmployee = c.Employees.FirstOrDefault(e => e.IsActive && !e.IsDeleted);
+        var activeEmployees = checkpoint.Employees
+            .Where(e => !e.IsDeleted)
+            .ToList();
 
-        return new CheckpointResponse
+        if (!activeEmployees.Any())
         {
-            CheckpointId = c.CheckpointId,
-            CheckpointName = c.CheckpointName,
-            CheckpointType = c.CheckpointType.ToString(),
-            SequenceOrder = c.SequenceOrder,
-            GpsLatitude = c.GpsLatitude,
-            GpsLongitude = c.GpsLongitude,
-            IsAssigned = activeEmployee != null,
-            AssignedToEmployeeId = activeEmployee?.EmployeeId,
-            AssignedToEmployeeName = activeEmployee != null ? $"{activeEmployee.Firstname} {activeEmployee.Lastname}" : null
-        };
+            throw new InvalidOperationException($"No employees are currently assigned to the checkpoint: {checkpoint.CheckpointName}");
+        }
+
+        return activeEmployees.Select(e => new CheckpointEmployeeResponse
+        {
+            EmployeeId = e.EmployeeId,
+            Firstname = e.Firstname,
+            Lastname = e.Lastname,
+            Email = e.Email,
+            PhoneNumber = e.PhoneNumber,
+            ProfileImagePath = e.ProfileImagePath,
+            ShiftType = e.ShiftType.ToString(),
+            IsActive = e.IsActive
+        }).ToList();
     }
 
     public async Task<CheckpointResponse> CreateCheckpointAsync(CreateCheckpointRequest request)
@@ -78,7 +80,14 @@ public class AdminCheckpointService : IAdminCheckpointService
         _db.Checkpoints.Add(checkpoint);
         await _db.SaveChangesAsync();
 
-        return await GetCheckpointByIdAsync(checkpoint.CheckpointId);
+        return new CheckpointResponse
+        {
+            CheckpointId = checkpoint.CheckpointId,
+            CheckpointName = checkpoint.CheckpointName,
+            GpsLatitude = checkpoint.GpsLatitude,
+            GpsLongitude = checkpoint.GpsLongitude,
+            IsAssigned = false
+        };
     }
 
     public async Task<CheckpointResponse> UpdateCheckpointAsync(int id, UpdateCheckpointRequest request)
@@ -103,7 +112,15 @@ public class AdminCheckpointService : IAdminCheckpointService
         }
 
         await _db.SaveChangesAsync();
-        return await GetCheckpointByIdAsync(c.CheckpointId);
+
+        return new CheckpointResponse
+        {
+            CheckpointId = c.CheckpointId,
+            CheckpointName = c.CheckpointName,
+            GpsLatitude = c.GpsLatitude,
+            GpsLongitude = c.GpsLongitude,
+            IsAssigned = await _db.Employees.AnyAsync(e => e.CheckpointId == c.CheckpointId && e.IsActive && !e.IsDeleted)
+        };
     }
 
     public async Task<bool> DeleteCheckpointAsync(int id)

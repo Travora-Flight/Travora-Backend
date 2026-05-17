@@ -59,10 +59,13 @@ public class BagTrackingOrderService : IBagTrackingOrderService
         if (customer.AccountStatus != CustomerAccountStatus.Verified)
             return new ValidateFlightResponse { IsValid = false, ErrorMessage = "Your account must be verified to use this service" };
 
+        if (request.BaggageCount <= 0)
+            return new ValidateFlightResponse { IsValid = false, ErrorMessage = "Please enter the number of bags." };
+
         // Check if ticket is used in the same package
         try
         {
-            await ValidateTicketNotUsedAsync(request.TicketNumber, PackageNames.TrackingBaggage, cancellationToken);
+            await ValidateTicketNotUsedAsync(request.TicketNumber, PackageCodes.TrackingBaggage, PackageNames.TrackingBaggage, cancellationToken);
         }
         catch (InvalidOperationException ex)
         {
@@ -151,7 +154,7 @@ public class BagTrackingOrderService : IBagTrackingOrderService
 
             // 2) OCR Extract Data
             var ocrResult = await _ocrService.ExtractPassportDataAsync(tempPath);
-            if (ocrResult == null || ocrResult.ValidScore < 65)
+            if (ocrResult == null || ocrResult.ValidScore < 85)
             {
                 return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Passport image is unclear. Please upload a clearer photo" };
             }
@@ -160,7 +163,7 @@ public class BagTrackingOrderService : IBagTrackingOrderService
             DateTime.TryParse(ocrResult.DateOfBirthFormatted, out var dob);
             DateTime.TryParse(ocrResult.ExpirationDateFormatted, out var expiry);
 
-            bool ocrPassed = ocrResult.Error == null && ocrResult.ValidScore >= 85;
+            bool ocrPassed = true;
             if (ocrPassed && expiry <= DateTime.UtcNow)
             {
                 return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "The companion's passport is expired" };
@@ -448,7 +451,7 @@ public class BagTrackingOrderService : IBagTrackingOrderService
             return new InvoiceResponse { IsValid = false, ErrorMessage = "At least one photo must be added for each bag before review" };
 
         var pkg = await _context.Packages.FirstOrDefaultAsync(
-            p => p.PackageName == PackageNames.TrackingBaggage, cancellationToken);
+            p => p.PackageCode == PackageCodes.TrackingBaggage, cancellationToken);
 
         decimal basePrice = pkg?.TotalBasePrice ?? 80m;
         decimal discountAmount = pkg != null ? (pkg.TotalBasePrice * (pkg.Discount ?? 0) / 100) : 0m;
@@ -533,7 +536,7 @@ public class BagTrackingOrderService : IBagTrackingOrderService
                 var invoiceDto = await GetInvoiceAsync(customerId, cancellationToken);
 
                 var pkg = await _context.Packages.FirstOrDefaultAsync(
-                    p => p.PackageName == PackageNames.TrackingBaggage, cancellationToken);
+                    p => p.PackageCode == PackageCodes.TrackingBaggage, cancellationToken);
 
                 string flightNo = draft.FlightInfo.FlightNumber;
 
@@ -875,14 +878,14 @@ public class BagTrackingOrderService : IBagTrackingOrderService
                 await transaction.CommitAsync(cancellationToken);
                 await _draftOrderService.RemoveBagTrackingDraftAsync(customerId.ToString(), cancellationToken);
 
-                // Customer Notification — Order Confirmed
+                // Customer Notification — Order Confirmed (Awaiting Payment)
                 _context.Notifications.Add(new Notification
                 {
                     UserId = customerId,
                     UserType = UserType.Customer,
                     NotificationType = NotificationType.OrderUpdated,
-                    Title = "Your order has been confirmed",
-                    Message = $"Order #{order.OrderId} for Bag Tracking has been placed successfully",
+                    Title = "Order Placed — Awaiting Payment",
+                    Message = $"Order #{order.OrderId} for Bag Tracking has been placed successfully. Please complete your payment to activate the service.",
                     NotificationChannel = NotificationChannel.InApp,
                     OrderId = order.OrderId
                 });
@@ -890,8 +893,8 @@ public class BagTrackingOrderService : IBagTrackingOrderService
 
                 await _pusher.PushToCustomerAsync(
                     customerId,
-                    "Your order has been confirmed",
-                    $"Order #{order.OrderId} for Bag Tracking has been placed successfully",
+                    "Order Placed — Awaiting Payment",
+                    $"Order #{order.OrderId} for Bag Tracking has been placed successfully. Please complete your payment to proceed.",
                     "OrderConfirmed",
                     order.OrderId);
 
@@ -901,7 +904,8 @@ public class BagTrackingOrderService : IBagTrackingOrderService
                     Success = true,
                     OrderId = order.OrderId,
                     OrderNumber = $"LTS-{DateTime.UtcNow.Year}-{order.OrderId}",
-                    TotalPaid = invoiceDto.Breakdown.TotalAmount
+                    TotalPaid = invoiceDto.Breakdown.TotalAmount,
+                    Message = "Order created successfully. Please proceed to payment to finalize your booking."
                 };
             }
             catch (Exception ex)
@@ -918,11 +922,11 @@ public class BagTrackingOrderService : IBagTrackingOrderService
     // ===================================================================
     // HELPERS
     // ===================================================================
-    private async Task ValidateTicketNotUsedAsync(string ticketNumber, string packageName, CancellationToken cancellationToken)
+    private async Task ValidateTicketNotUsedAsync(string ticketNumber, string packageCode, string packageName, CancellationToken cancellationToken)
     {
         var package = await _context.Packages
-            .FirstOrDefaultAsync(p => p.PackageName == packageName, cancellationToken)
-            ?? throw new InvalidOperationException($"Package {packageName} not found in DB");
+            .FirstOrDefaultAsync(p => p.PackageCode == packageCode, cancellationToken)
+            ?? throw new InvalidOperationException($"Package {packageName} ({packageCode}) not found in DB");
 
         var isTicketUsed = await _context.Orders
             .AnyAsync(o => o.TicketNumber == ticketNumber

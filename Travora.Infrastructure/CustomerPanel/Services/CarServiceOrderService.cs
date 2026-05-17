@@ -60,13 +60,20 @@ public class CarServiceOrderService : ICarServiceOrderService
         if (customer.AccountStatus != CustomerAccountStatus.Verified)
             return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = "Your account must be verified to use this service" };
 
+        if (request.BaggageCount <= 0)
+            return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = "Please enter the number of bags." };
+
         // Check if ticket is used in the same package
+        var packageCode = request.ServiceType == CarServiceType.DeliveryToAirport
+            ? PackageCodes.CarServiceToAirport
+            : PackageCodes.CarServiceFromAirport;
         var packageName = request.ServiceType == CarServiceType.DeliveryToAirport
             ? PackageNames.CarServiceToAirport
             : PackageNames.CarServiceFromAirport;
+
         try
         {
-            await ValidateTicketNotUsedAsync(request.TicketNumber, packageName, cancellationToken);
+            await ValidateTicketNotUsedAsync(request.TicketNumber, packageCode, packageName, cancellationToken);
         }
         catch (InvalidOperationException ex)
         {
@@ -207,14 +214,14 @@ public class CarServiceOrderService : ICarServiceOrderService
 
             var ocrResult = await _ocrService.ExtractPassportDataAsync(tempPath);
 
-            if (ocrResult.ValidScore < 65)
+            if (ocrResult == null || ocrResult.ValidScore < 85)
             {
                 return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Passport image is unclear or invalid. Please upload a clearer image." };
             }
 
-            passportVerified = ocrResult.Error == null && ocrResult.ValidScore >= 85;
+            passportVerified = true;
             
-            if (passportVerified && !string.IsNullOrWhiteSpace(ocrResult.Number))
+            if (!string.IsNullOrWhiteSpace(ocrResult.Number))
             {
                 finalPassportNumber = ocrResult.Number;
             }
@@ -804,11 +811,11 @@ public class CarServiceOrderService : ICarServiceOrderService
         if (draft.ServiceType == CarServiceType.DeliveryFromAirport && !draft.SelectedBagTags.Any())
             return new InvoiceResponse { IsValid = false, ErrorMessage = "Baggage selection step must be completed first" };
 
-        var packageName = draft.ServiceType == CarServiceType.DeliveryToAirport
-            ? PackageNames.CarServiceToAirport
-            : PackageNames.CarServiceFromAirport;
+        var packageCode = draft.ServiceType == CarServiceType.DeliveryToAirport
+            ? PackageCodes.CarServiceToAirport
+            : PackageCodes.CarServiceFromAirport;
         var pkg = await _context.Packages.FirstOrDefaultAsync(
-            p => p.PackageName == packageName, cancellationToken);
+            p => p.PackageCode == packageCode, cancellationToken);
 
         decimal basePrice = pkg?.TotalBasePrice ?? 80m;
         decimal discountAmount = pkg != null ? (pkg.TotalBasePrice * (pkg.Discount ?? 0) / 100) : 0m;
@@ -891,11 +898,11 @@ public class CarServiceOrderService : ICarServiceOrderService
             {
                 var invoiceDto = await GetInvoiceAsync(customerId, cancellationToken);
 
-                var packageName = draft.ServiceType == CarServiceType.DeliveryToAirport
-                    ? PackageNames.CarServiceToAirport
-                    : PackageNames.CarServiceFromAirport;
+                var packageCode = draft.ServiceType == CarServiceType.DeliveryToAirport
+                    ? PackageCodes.CarServiceToAirport
+                    : PackageCodes.CarServiceFromAirport;
                 var pkg = await _context.Packages.FirstOrDefaultAsync(
-                    p => p.PackageName == packageName, cancellationToken);
+                    p => p.PackageCode == packageCode, cancellationToken);
 
                 string flightNo = draft.FlightInfo.FlightNumber;
 
@@ -1303,7 +1310,7 @@ public class CarServiceOrderService : ICarServiceOrderService
                 await transaction.CommitAsync(cancellationToken);
                 await _draftOrderService.RemoveCarServiceDraftAsync(customerId.ToString(), cancellationToken);
 
-                // Customer Notification — Order Confirmed
+                // Customer Notification — Order Confirmed (Awaiting Payment)
                 var serviceLabel = draft.ServiceType == CarServiceType.DeliveryToAirport
                     ? "Car Service (To Airport)"
                     : "Car Service (From Airport)";
@@ -1312,8 +1319,8 @@ public class CarServiceOrderService : ICarServiceOrderService
                     UserId = customerId,
                     UserType = UserType.Customer,
                     NotificationType = NotificationType.OrderUpdated,
-                    Title = "Your order has been confirmed",
-                    Message = $"Order #{order.OrderId} for {serviceLabel} has been placed successfully",
+                    Title = "Order Placed — Awaiting Payment",
+                    Message = $"Order #{order.OrderId} for {serviceLabel} has been placed successfully. Please complete your payment to activate the service.",
                     NotificationChannel = NotificationChannel.InApp,
                     OrderId = order.OrderId
                 });
@@ -1321,8 +1328,8 @@ public class CarServiceOrderService : ICarServiceOrderService
 
                 await _pusher.PushToCustomerAsync(
                     customerId,
-                    "Your order has been confirmed",
-                    $"Order #{order.OrderId} for {serviceLabel} has been placed successfully",
+                    "Order Placed — Awaiting Payment",
+                    $"Order #{order.OrderId} for {serviceLabel} has been placed successfully. Please complete your payment to proceed.",
                     "OrderConfirmed",
                     order.OrderId);
 
@@ -1332,7 +1339,8 @@ public class CarServiceOrderService : ICarServiceOrderService
                     Success = true,
                     OrderId = order.OrderId,
                     OrderNumber = $"LTS-{DateTime.UtcNow.Year}-{order.OrderId}",
-                    TotalPaid = invoiceDto.Breakdown.TotalAmount
+                    TotalPaid = invoiceDto.Breakdown.TotalAmount,
+                    Message = $"Order created successfully. Please proceed to payment to finalize your booking."
                 };
             }
             catch (Exception ex)
@@ -1446,11 +1454,11 @@ public class CarServiceOrderService : ICarServiceOrderService
             !HasConflict(d, date, slotStart, slotEnd));
     }
 
-    private async Task ValidateTicketNotUsedAsync(string ticketNumber, string packageName, CancellationToken cancellationToken)
+    private async Task ValidateTicketNotUsedAsync(string ticketNumber, string packageCode, string packageName, CancellationToken cancellationToken)
     {
         var package = await _context.Packages
-            .FirstOrDefaultAsync(p => p.PackageName == packageName, cancellationToken)
-            ?? throw new InvalidOperationException($"Package {packageName} not found in DB");
+            .FirstOrDefaultAsync(p => p.PackageCode == packageCode, cancellationToken)
+            ?? throw new InvalidOperationException($"Package {packageName} ({packageCode}) not found in DB");
 
         var isTicketUsed = await _context.Orders
             .AnyAsync(o => o.TicketNumber == ticketNumber

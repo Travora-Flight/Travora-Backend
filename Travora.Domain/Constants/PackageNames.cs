@@ -7,3 +7,11 @@ public static class PackageNames
     public const string CarServiceFromAirport = "Car Service From Airport";
     public const string TrackingBaggage = "Track My Bags";
 }
+
+public static class PackageCodes
+{
+    public const string DoorToDoor = "PKG001";
+    public const string CarServiceToAirport = "PKG002";
+    public const string CarServiceFromAirport = "PKG003";
+    public const string TrackingBaggage = "PKG004";
+}

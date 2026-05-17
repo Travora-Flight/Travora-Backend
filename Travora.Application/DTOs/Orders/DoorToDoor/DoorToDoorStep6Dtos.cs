@@ -44,5 +44,6 @@ public class ConfirmOrderResponse
     public int OrderId { get; set; }
     public string OrderNumber { get; set; } = string.Empty;
     public decimal TotalPaid { get; set; }
+    public string? Message { get; set; }
     public string? ErrorMessage { get; set; }
 }

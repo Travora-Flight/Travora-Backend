@@ -34,10 +34,17 @@ public class AdminServicesController : ControllerBase
         return Ok(result);
     }
 
-    [HttpPut("{serviceId}")]
+    [HttpPatch("{serviceId}")]
     public async Task<IActionResult> UpdateServiceAsync(int serviceId, [FromBody] UpdateServiceRequest request)
     {
         await _pricingService.UpdateServiceAsync(serviceId, request);
+        return Ok(new { success = true });
+    }
+
+    [HttpPatch("{serviceId}/status")]
+    public async Task<IActionResult> UpdateServiceStatusAsync(int serviceId, [FromBody] UpdateStatusRequest request)
+    {
+        await _pricingService.UpdateServiceStatusAsync(serviceId, request);
         return Ok(new { success = true });
     }
 

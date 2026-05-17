@@ -34,10 +34,17 @@ public class AdminPackagesController : ControllerBase
         return Ok(result);
     }
 
-    [HttpPut("{packageId}")]
+    [HttpPatch("{packageId}")]
     public async Task<IActionResult> UpdatePackageAsync(int packageId, [FromBody] UpdatePackageRequest request)
     {
         await _pricingService.UpdatePackageAsync(packageId, request);
+        return Ok(new { success = true });
+    }
+
+    [HttpPatch("{packageId}/status")]
+    public async Task<IActionResult> UpdatePackageStatusAsync(int packageId, [FromBody] UpdateStatusRequest request)
+    {
+        await _pricingService.UpdatePackageStatusAsync(packageId, request);
         return Ok(new { success = true });
     }
 

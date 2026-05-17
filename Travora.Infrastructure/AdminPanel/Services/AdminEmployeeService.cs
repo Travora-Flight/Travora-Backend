@@ -107,29 +107,81 @@ public class AdminEmployeeService : IAdminEmployeeService
         };
     }
 
-    public async Task<EmployeeFormDataResponse> GetFormDataAsync()
+    public async Task<VehiclesShiftsAvailabilityResponse> GetAvailableVehiclesWithShiftsAsync()
     {
-        var activeVehicles = await _db.Vehicles
-            .Where(v => !v.Employees.Any(e => e.IsActive && !e.IsDeleted))
-            .Select(v => new IdNamePair { Id = v.VehicleId, DisplayName = $"{v.Brand} {v.Model} - {v.PlateNumber} ({v.Year})" })
+        var vehicles = await _db.Vehicles
+            .Include(v => v.Employees.Where(e => e.IsActive && !e.IsDeleted))
             .ToListAsync();
 
-        var activeCheckpoints = await _db.Checkpoints
-            .Where(c => !c.Employees.Any(e => e.IsActive && !e.IsDeleted))
-            .Select(c => new IdNamePair { Id = c.CheckpointId, DisplayName = c.CheckpointName })
-            .ToListAsync();
+        var availableVehicles = new List<AvailableVehicleDto>();
 
-        var jobRoles = Enum.GetNames(typeof(JobRole)).ToList();
+        foreach (var v in vehicles)
+        {
+            var activeDrivers = v.Employees.ToList();
+
+            // If there's a rotating driver, this vehicle is not available at all
+            if (activeDrivers.Any(d => d.ShiftType == ShiftType.rotating))
+            {
+                continue;
+            }
+
+            var occupiedShifts = activeDrivers.Select(d => d.ShiftType).ToHashSet();
+            var freeShifts = new List<string>();
+
+            if (occupiedShifts.Count == 0)
+            {
+                freeShifts.Add(ShiftType.Morning.ToString());
+                freeShifts.Add(ShiftType.Evening.ToString());
+                freeShifts.Add(ShiftType.Night.ToString());
+                freeShifts.Add(ShiftType.rotating.ToString());
+            }
+            else
+            {
+                // Rotating is not free since there are other drivers
+                if (!occupiedShifts.Contains(ShiftType.Morning))
+                    freeShifts.Add(ShiftType.Morning.ToString());
+                if (!occupiedShifts.Contains(ShiftType.Evening))
+                    freeShifts.Add(ShiftType.Evening.ToString());
+                if (!occupiedShifts.Contains(ShiftType.Night))
+                    freeShifts.Add(ShiftType.Night.ToString());
+            }
+
+            if (freeShifts.Count > 0)
+            {
+                availableVehicles.Add(new AvailableVehicleDto
+                {
+                    Id = v.VehicleId,
+                    DisplayName = $"{v.Brand} {v.Model} - {v.PlateNumber} ({v.Year})",
+                    FreeShifts = freeShifts
+                });
+            }
+        }
+
         var shiftTypes = Enum.GetNames(typeof(ShiftType)).ToList();
 
-        return new EmployeeFormDataResponse
+        return new VehiclesShiftsAvailabilityResponse
         {
-            AvailableVehicles = activeVehicles,
-            AvailableCheckpoints = activeCheckpoints,
-            JobRoles = jobRoles,
+            AvailableVehicles = availableVehicles,
             ShiftTypes = shiftTypes
         };
     }
+
+    public async Task<List<string>> GetJobRolesAsync()
+    {
+        return await Task.FromResult(Enum.GetNames(typeof(JobRole)).ToList());
+    }
+
+    public async Task<List<CheckpointLookupDto>> GetCheckpointsLookupAsync()
+    {
+        return await _db.Checkpoints
+            .Select(c => new CheckpointLookupDto
+            {
+                Id = c.CheckpointId,
+                Name = c.CheckpointName
+            })
+            .ToListAsync();
+    }
+
 
     public async Task<CreateEmployeeResponse> CreateEmployeeAsync(int adminId, CreateEmployeeRequest request)
     {
@@ -144,11 +196,7 @@ public class AdminEmployeeService : IAdminEmployeeService
 
         if (request.JobRole == JobRole.Driver && request.VehicleId.HasValue)
         {
-            var vehicleExists = await _db.Vehicles.AnyAsync(v => v.VehicleId == request.VehicleId);
-            if (!vehicleExists) throw new KeyNotFoundException("Vehicle not found");
-
-            var vehicleInUse = await _db.Employees.AnyAsync(e => e.VehicleId == request.VehicleId && e.IsActive && !e.IsDeleted);
-            if (vehicleInUse) throw new InvalidOperationException("This vehicle is already assigned to another employee");
+            await ValidateVehicleAssignmentAsync(null, request.VehicleId.Value, request.ShiftType);
         }
         else if (request.JobRole == JobRole.BaggageHandler && request.CheckpointId.HasValue)
         {
@@ -232,6 +280,29 @@ public class AdminEmployeeService : IAdminEmployeeService
         var e = await _db.Employees.FindAsync(employeeId)
             ?? throw new KeyNotFoundException("Employee not found");
 
+        // Role Transition Validation Rules
+        if (request.JobRole.HasValue && request.JobRole.Value != e.JobRole)
+        {
+            if (request.JobRole.Value == JobRole.Driver)
+            {
+                if (!request.VehicleId.HasValue)
+                {
+                    throw new InvalidOperationException("Please select a vehicle when changing the job role to Driver.");
+                }
+                if (string.IsNullOrEmpty(e.DriverLicensePath) && request.DriverLicense == null)
+                {
+                    throw new InvalidOperationException("Please upload the driver's license when changing the job role to Driver.");
+                }
+            }
+            else if (request.JobRole.Value == JobRole.BaggageHandler)
+            {
+                if (!request.CheckpointId.HasValue)
+                {
+                    throw new InvalidOperationException("Please select a checkpoint when changing the job role to Baggage Handler.");
+                }
+            }
+        }
+
         if (request.FirstName != null) e.Firstname = request.FirstName;
         if (request.LastName != null) e.Lastname = request.LastName;
         if (request.MobileNumber != null) e.PhoneNumber = request.MobileNumber;
@@ -240,15 +311,19 @@ public class AdminEmployeeService : IAdminEmployeeService
         if (request.JobRole.HasValue) e.JobRole = request.JobRole.Value;
         if (request.ShiftType.HasValue) e.ShiftType = request.ShiftType.Value;
 
-        if (e.JobRole == JobRole.Driver && request.VehicleId.HasValue && request.VehicleId != e.VehicleId)
-        {
-            var vehicleExists = await _db.Vehicles.AnyAsync(v => v.VehicleId == request.VehicleId);
-            if (!vehicleExists) throw new KeyNotFoundException("Vehicle not found");
+        var finalRole = request.JobRole ?? e.JobRole;
+        var finalVehicleId = request.VehicleId ?? e.VehicleId;
+        var finalShiftType = request.ShiftType ?? e.ShiftType;
 
-            var vehicleInUse = await _db.Employees.AnyAsync(emp => emp.VehicleId == request.VehicleId && emp.IsActive && !emp.IsDeleted && emp.EmployeeId != employeeId);
-            if (vehicleInUse) throw new InvalidOperationException("This vehicle is already assigned to another employee");
+        if (finalRole == JobRole.Driver && finalVehicleId.HasValue)
+        {
+            bool needsValidation = request.VehicleId.HasValue || request.ShiftType.HasValue || request.JobRole.HasValue;
+            if (needsValidation)
+            {
+                await ValidateVehicleAssignmentAsync(employeeId, finalVehicleId.Value, finalShiftType);
+            }
         }
-        else if (e.JobRole == JobRole.BaggageHandler && request.CheckpointId.HasValue && request.CheckpointId != e.CheckpointId)
+        else if (finalRole == JobRole.BaggageHandler && request.CheckpointId.HasValue && request.CheckpointId != e.CheckpointId)
         {
             var checkpointExists = await _db.Checkpoints.AnyAsync(c => c.CheckpointId == request.CheckpointId);
             if (!checkpointExists) throw new KeyNotFoundException("Checkpoint not found");
@@ -283,7 +358,7 @@ public class AdminEmployeeService : IAdminEmployeeService
         {
             if (request.CheckpointId.HasValue) e.CheckpointId = request.CheckpointId;
             e.VehicleId = null;
-            e.DriverLicensePath = null;
+            // Notice: e.DriverLicensePath is NOT nullified! It is left intact in the database!
         }
 
         await _db.SaveChangesAsync();
@@ -295,6 +370,11 @@ public class AdminEmployeeService : IAdminEmployeeService
     {
         var e = await _db.Employees.FindAsync(employeeId)
             ?? throw new KeyNotFoundException("Employee not found");
+
+        if (request.IsActive && e.JobRole == JobRole.Driver && e.VehicleId.HasValue)
+        {
+            await ValidateVehicleAssignmentAsync(employeeId, e.VehicleId.Value, e.ShiftType);
+        }
 
         e.IsActive = request.IsActive;
         await _db.SaveChangesAsync();
@@ -309,6 +389,29 @@ public class AdminEmployeeService : IAdminEmployeeService
         e.IsDeleted = true;
         await _db.SaveChangesAsync();
         return true;
+    }
+
+    private async Task ValidateVehicleAssignmentAsync(int? employeeId, int vehicleId, ShiftType shiftType, CancellationToken cancellationToken = default)
+    {
+        var vehicleExists = await _db.Vehicles.AnyAsync(v => v.VehicleId == vehicleId, cancellationToken);
+        if (!vehicleExists) throw new KeyNotFoundException("Vehicle not found");
+
+        var conflictingDrivers = await _db.Employees
+            .Where(e => e.VehicleId == vehicleId && e.IsActive && !e.IsDeleted && e.EmployeeId != employeeId)
+            .ToListAsync(cancellationToken);
+
+        foreach (var driver in conflictingDrivers)
+        {
+            bool hasConflict = driver.ShiftType == ShiftType.rotating 
+                               || shiftType == ShiftType.rotating 
+                               || driver.ShiftType == shiftType;
+
+            if (hasConflict)
+            {
+                throw new InvalidOperationException(
+                    $"This vehicle is already assigned to driver ({driver.Firstname} {driver.Lastname}) in a conflicting shift ({driver.ShiftType}).");
+            }
+        }
     }
 
     private async Task<string> GenerateUniqueEmailAsync(string firstName, string lastName)

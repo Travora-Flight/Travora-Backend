@@ -25,13 +25,13 @@ public class AdminCheckpointController : ControllerBase
         return Ok(result);
     }
 
-    [HttpGet("{id}")]
-    [ProducesResponseType(typeof(CheckpointResponse), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetCheckpointByIdAsync(int id)
+    [HttpGet("{id}/employees")]
+    [ProducesResponseType(typeof(IEnumerable<CheckpointEmployeeResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetCheckpointEmployeesAsync(int id)
     {
         try
         {
-            var result = await _checkpointService.GetCheckpointByIdAsync(id);
+            var result = await _checkpointService.GetCheckpointEmployeesAsync(id);
             return Ok(result);
         }
         catch (KeyNotFoundException ex)

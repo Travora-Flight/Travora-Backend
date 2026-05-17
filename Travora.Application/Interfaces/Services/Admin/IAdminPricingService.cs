@@ -10,10 +10,12 @@ public interface IAdminPricingService
     Task<List<ServiceDetailResponse>> GetServicesAsync(ActivationFilterStatus status);
     Task<object> CreateServiceAsync(CreateServiceRequest request);
     Task<bool> UpdateServiceAsync(int serviceId, UpdateServiceRequest request);
+    Task<bool> UpdateServiceStatusAsync(int serviceId, UpdateStatusRequest request);
     Task<bool> DeleteServiceAsync(int serviceId);
 
     Task<List<PackageDetailResponse>> GetPackagesAsync(ActivationFilterStatus status);
     Task<object> CreatePackageAsync(CreatePackageRequest request);
     Task<bool> UpdatePackageAsync(int packageId, UpdatePackageRequest request);
+    Task<bool> UpdatePackageStatusAsync(int packageId, UpdateStatusRequest request);
     Task<bool> DeletePackageAsync(int packageId);
 }

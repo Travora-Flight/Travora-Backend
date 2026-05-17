@@ -7,14 +7,21 @@ public class CheckpointResponse
 {
     public int CheckpointId { get; set; }
     public string CheckpointName { get; set; } = string.Empty;
-    public string CheckpointType { get; set; } = string.Empty;
-    public int SequenceOrder { get; set; }
     public decimal? GpsLatitude { get; set; }
     public decimal? GpsLongitude { get; set; }
-    
     public bool IsAssigned { get; set; }
-    public int? AssignedToEmployeeId { get; set; }
-    public string? AssignedToEmployeeName { get; set; }
+}
+
+public class CheckpointEmployeeResponse
+{
+    public int EmployeeId { get; set; }
+    public string Firstname { get; set; } = string.Empty;
+    public string Lastname { get; set; } = string.Empty;
+    public string Email { get; set; } = string.Empty;
+    public string PhoneNumber { get; set; } = string.Empty;
+    public string? ProfileImagePath { get; set; }
+    public string ShiftType { get; set; } = string.Empty;
+    public bool IsActive { get; set; }
 }
 
 public class CreateCheckpointRequest

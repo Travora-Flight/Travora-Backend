@@ -42,11 +42,27 @@ public class AdminEmployeesController : ControllerBase
         return Ok(result);
     }
 
-    [HttpGet("form-data")]
-    [ProducesResponseType(typeof(EmployeeFormDataResponse), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetFormDataAsync()
+    [HttpGet("vehicles-shifts-availability")]
+    [ProducesResponseType(typeof(VehiclesShiftsAvailabilityResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetAvailableVehiclesWithShiftsAsync()
     {
-        var result = await _employeeService.GetFormDataAsync();
+        var result = await _employeeService.GetAvailableVehiclesWithShiftsAsync();
+        return Ok(result);
+    }
+
+    [HttpGet("job-roles")]
+    [ProducesResponseType(typeof(List<string>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetJobRolesAsync()
+    {
+        var result = await _employeeService.GetJobRolesAsync();
+        return Ok(result);
+    }
+
+    [HttpGet("checkpoints")]
+    [ProducesResponseType(typeof(List<CheckpointLookupDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetCheckpointsLookupAsync()
+    {
+        var result = await _employeeService.GetCheckpointsLookupAsync();
         return Ok(result);
     }
 
@@ -61,13 +77,14 @@ public class AdminEmployeesController : ControllerBase
         return Ok(result);
     }
 
-    [HttpPut("{id}")]
+    [HttpPatch("{id}")]
     [ProducesResponseType(typeof(EmployeeProfileResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> UpdateEmployeeAsync(int id, [FromForm] UpdateEmployeeRequest request)
     {
         var result = await _employeeService.UpdateEmployeeAsync(id, request);
         return Ok(result);
     }
+
 
     [HttpPatch("{id}/status")]
     public async Task<IActionResult> UpdateStatusAsync(int id, [FromBody] EmployeeStatusRequest request)

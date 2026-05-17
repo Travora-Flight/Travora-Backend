@@ -57,6 +57,6 @@ public class AdminSettingsController : ControllerBase
         if (adminId == 0) return Unauthorized();
 
         await _settingsService.ChangePasswordAsync(adminId, request);
-        return Ok(new { success = true });
+        return Ok(new { success = true, message = "Password changed successfully" });
     }
 }

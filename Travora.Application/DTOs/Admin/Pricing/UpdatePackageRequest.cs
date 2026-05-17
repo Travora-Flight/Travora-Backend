@@ -4,8 +4,6 @@ public class UpdatePackageRequest
 {
     public string? PackageName { get; set; }
     public decimal? Discount { get; set; }
-    public bool? IsActive { get; set; }
-
     public int? IncludedCompanions { get; set; }
     public decimal? ExtraCompanionPrice { get; set; }
     public int? MaxCompanionsLimit { get; set; }
