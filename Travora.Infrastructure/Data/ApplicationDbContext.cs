@@ -50,6 +50,7 @@ public class ApplicationDbContext : DbContext
     // ===== Customs =====
     public DbSet<CustomsDeclaration> CustomsDeclarations => Set<CustomsDeclaration>();
     public DbSet<CustomsItem> CustomsItems => Set<CustomsItem>();
+    public DbSet<CustomsItemInvoice> CustomsItemInvoices => Set<CustomsItemInvoice>();
 
     // ===== Documents =====
     public DbSet<Document> Documents => Set<Document>();
