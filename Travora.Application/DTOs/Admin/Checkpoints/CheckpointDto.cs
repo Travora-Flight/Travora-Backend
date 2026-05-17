@@ -7,6 +7,7 @@ public class CheckpointResponse
 {
     public int CheckpointId { get; set; }
     public string CheckpointName { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
     public decimal? GpsLatitude { get; set; }
     public decimal? GpsLongitude { get; set; }
     public bool IsAssigned { get; set; }

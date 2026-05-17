@@ -23,6 +23,7 @@ public class AdminCheckpointService : IAdminCheckpointService
             {
                 CheckpointId = c.CheckpointId,
                 CheckpointName = c.CheckpointName,
+                Description = c.Description ?? string.Empty,
                 GpsLatitude = c.GpsLatitude,
                 GpsLongitude = c.GpsLongitude,
                 IsAssigned = c.Employees.Any(e => e.IsActive && !e.IsDeleted)
@@ -84,6 +85,7 @@ public class AdminCheckpointService : IAdminCheckpointService
         {
             CheckpointId = checkpoint.CheckpointId,
             CheckpointName = checkpoint.CheckpointName,
+            Description = checkpoint.Description ?? string.Empty,
             GpsLatitude = checkpoint.GpsLatitude,
             GpsLongitude = checkpoint.GpsLongitude,
             IsAssigned = false
@@ -117,6 +119,7 @@ public class AdminCheckpointService : IAdminCheckpointService
         {
             CheckpointId = c.CheckpointId,
             CheckpointName = c.CheckpointName,
+            Description = c.Description ?? string.Empty,
             GpsLatitude = c.GpsLatitude,
             GpsLongitude = c.GpsLongitude,
             IsAssigned = await _db.Employees.AnyAsync(e => e.CheckpointId == c.CheckpointId && e.IsActive && !e.IsDeleted)
