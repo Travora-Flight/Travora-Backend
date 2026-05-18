@@ -157,32 +157,6 @@ public class CarServiceOrderService : ICarServiceOrderService
         if (draft == null || draft.FlightInfo == null)
             return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Session expired or not found, please restart the process" };
 
-        if (request.PassportNumber == draft.PassengerInfo?.PassportNumber)
-            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "You cannot add yourself as a companion" };
-
-        var airlineReq = new AirlineValidateTicketRequest
-        {
-            PassportNumber = request.PassportNumber,
-            TicketNumber = request.TicketNumber,
-            FlightNumber = draft.FlightInfo.FlightNumber,
-            FlightDate = draft.FlightInfo.FlightDate ?? string.Empty
-        };
-
-        var airlineRes = await _airlineService.ValidateTicketAsync(airlineReq, cancellationToken);
-        var flightData = airlineRes.Flight ?? airlineRes.Ticket?.Flight ?? airlineRes.FlightInfo;
-        var passengerData = airlineRes.Passenger ?? airlineRes.Ticket?.Passenger ?? airlineRes.PassengerInfo;
-
-        if (!airlineRes.IsValid || flightData == null || passengerData == null)
-        {
-            var errorMsg = airlineRes.Errors != null && airlineRes.Errors.Any()
-                ? string.Join(", ", airlineRes.Errors)
-                : "Companion data is invalid";
-            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = errorMsg };
-        }
-
-        if (flightData.FlightNumber != draft.FlightInfo.FlightNumber)
-            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Companion is not on the same flight" };
-
         if (request.PassportImage == null || request.PassportImage.Length == 0)
         {
             return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Passport image is required for companion validation" };
@@ -194,7 +168,7 @@ public class CarServiceOrderService : ICarServiceOrderService
 
         string imageUrl = "https://res.cloudinary.com/travora/image/upload/vdefault/companion.jpg";
         bool passportVerified = false;
-        string finalPassportNumber = request.PassportNumber;
+        string finalPassportNumber = string.Empty;
         string? ocrResultJson = null;
 
         try
@@ -220,12 +194,7 @@ public class CarServiceOrderService : ICarServiceOrderService
             }
 
             passportVerified = true;
-            
-            if (!string.IsNullOrWhiteSpace(ocrResult.Number))
-            {
-                finalPassportNumber = ocrResult.Number;
-            }
-
+            finalPassportNumber = ocrResult.Number ?? string.Empty;
             ocrResultJson = JsonSerializer.Serialize(ocrResult);
         }
         catch (Exception ex)
@@ -239,6 +208,37 @@ public class CarServiceOrderService : ICarServiceOrderService
                 try { System.IO.File.Delete(tempPath); } catch { }
             }
         }
+
+        if (string.IsNullOrWhiteSpace(finalPassportNumber))
+        {
+            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Could not extract passport number from image. Please try again with a clearer photo." };
+        }
+
+        if (finalPassportNumber == draft.PassengerInfo?.PassportNumber)
+            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "You cannot add yourself as a companion" };
+
+        var airlineReq = new AirlineValidateTicketRequest
+        {
+            PassportNumber = finalPassportNumber,
+            TicketNumber = request.TicketNumber,
+            FlightNumber = draft.FlightInfo.FlightNumber,
+            FlightDate = draft.FlightInfo.FlightDate ?? string.Empty
+        };
+
+        var airlineRes = await _airlineService.ValidateTicketAsync(airlineReq, cancellationToken);
+        var flightData = airlineRes.Flight ?? airlineRes.Ticket?.Flight ?? airlineRes.FlightInfo;
+        var passengerData = airlineRes.Passenger ?? airlineRes.Ticket?.Passenger ?? airlineRes.PassengerInfo;
+
+        if (!airlineRes.IsValid || flightData == null || passengerData == null)
+        {
+            var errorMsg = airlineRes.Errors != null && airlineRes.Errors.Any()
+                ? string.Join(", ", airlineRes.Errors)
+                : "Companion data is invalid";
+            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = errorMsg };
+        }
+
+        if (flightData.FlightNumber != draft.FlightInfo.FlightNumber)
+            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Companion is not on the same flight" };
 
         var newCompanion = new DraftCompanion
         {
@@ -571,7 +571,13 @@ public class CarServiceOrderService : ICarServiceOrderService
         }
 
         var allDrivers = await _context.Employees
-            .Where(e => e.JobRole == JobRole.Driver && e.IsActive && !e.IsDeleted)
+            .Include(e => e.Vehicle)
+            .Where(e => e.JobRole == JobRole.Driver 
+                     && e.IsActive 
+                     && !e.IsDeleted
+                     && e.VehicleId != null
+                     && e.Vehicle!.IsActive
+                     && !e.Vehicle.IsDeleted)
             .Include(e => e.AssignedOrderServices)
             .ToListAsync(cancellationToken);
 
@@ -1445,7 +1451,13 @@ public class CarServiceOrderService : ICarServiceOrderService
         var date = scheduledStart.Date;
 
         var drivers = await _context.Employees
-            .Where(e => e.JobRole == JobRole.Driver && e.IsActive && !e.IsDeleted)
+            .Include(e => e.Vehicle)
+            .Where(e => e.JobRole == JobRole.Driver 
+                     && e.IsActive 
+                     && !e.IsDeleted
+                     && e.VehicleId != null
+                     && e.Vehicle!.IsActive
+                     && !e.Vehicle.IsDeleted)
             .Include(e => e.AssignedOrderServices)
             .ToListAsync(cancellationToken);
 

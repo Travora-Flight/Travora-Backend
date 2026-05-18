@@ -646,7 +646,13 @@ public class CustomerOrderService : ICustomerOrderService
         }
 
         var allDrivers = await _context.Employees
-            .Where(e => e.JobRole == JobRole.Driver && e.IsActive && !e.IsDeleted)
+            .Include(e => e.Vehicle)
+            .Where(e => e.JobRole == JobRole.Driver 
+                     && e.IsActive 
+                     && !e.IsDeleted
+                     && e.VehicleId != null
+                     && e.Vehicle!.IsActive
+                     && !e.Vehicle.IsDeleted)
             .Include(e => e.AssignedOrderServices)
             .ToListAsync(cancellationToken);
 
