@@ -169,8 +169,8 @@ public class BagTrackingOrderService : IBagTrackingOrderService
                 return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "The companion's passport is expired" };
             }
 
-            // Use OCR extracted data primarily
-            string extractedPassportNum = !string.IsNullOrWhiteSpace(ocrResult.Number) ? ocrResult.Number : request.PassportNumber;
+            // Use OCR extracted data
+            string extractedPassportNum = ocrResult.Number ?? string.Empty;
             string extFirstname = !string.IsNullOrWhiteSpace(ocrResult.Names) ? ocrResult.Names : "";
             string extLastname = !string.IsNullOrWhiteSpace(ocrResult.Surname) ? ocrResult.Surname : "";
             string extNationality = ocrResult.Nationality ?? "";

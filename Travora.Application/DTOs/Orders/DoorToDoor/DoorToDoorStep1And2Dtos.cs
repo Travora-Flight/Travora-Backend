@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using System.ComponentModel.DataAnnotations;
 using Travora.Application.DTOs.External.Airline;
 
 namespace Travora.Application.DTOs.Orders.DoorToDoor;
@@ -26,8 +27,9 @@ public class ValidateFlightResponse
 
 public class ValidateCompanionRequest
 {
-    public string PassportNumber { get; set; } = string.Empty;
+    [Required(ErrorMessage = "Ticket number is required")]
     public string TicketNumber { get; set; } = string.Empty;
+    [Required(ErrorMessage = "Passport image is required")]
     public IFormFile? PassportImage { get; set; }
 }
 
