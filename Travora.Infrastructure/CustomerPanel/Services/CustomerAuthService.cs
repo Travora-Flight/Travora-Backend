@@ -52,11 +52,18 @@ public class CustomerAuthService : ICustomerAuthService
         if (emailExists)
             throw new InvalidOperationException("Email already registered");
 
+        if (request.Password != request.ConfirmPassword)
+            throw new ArgumentException("Passwords do not match");
+
+        ValidatePasswordStrength(request.Password);
+
         var normalizedPhone = request.PhoneNumber.Replace("+", "").Replace(" ", "").Replace("-", "");
 
         if (normalizedPhone.Length < 10 || normalizedPhone.Length > 15 || !normalizedPhone.All(char.IsDigit))
             throw new ArgumentException("Invalid phone number");
         var sessionId = Guid.NewGuid().ToString();
+
+        var passwordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
 
         var sessionData = JsonSerializer.Serialize(new
         {
@@ -64,8 +71,7 @@ public class CustomerAuthService : ICustomerAuthService
             request.LastName,
             request.Email,
             PhoneNumber = normalizedPhone,
-            request.Nationality,
-            request.Gender
+            PasswordHash = passwordHash
         });
 
         await _redis.SetAsync(
@@ -89,27 +95,18 @@ public class CustomerAuthService : ICustomerAuthService
         var step1 = JsonSerializer.Deserialize<Step1Data>(step1Json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
             ?? throw new InvalidOperationException("Invalid session data");
 
-        // 2) Validate
-        if (request.Password != request.ConfirmPassword)
-            throw new ArgumentException("Passwords do not match");
-
-        ValidatePasswordStrength(request.Password);
-
-        if (!DateTime.TryParse(request.DateOfBirth, out var dateOfBirth) || dateOfBirth > DateTime.UtcNow)
-            throw new ArgumentException("Invalid date of birth. Please provide a valid date in YYYY-MM-DD format and ensure it is not in the future.");
-
-        var age = DateTime.UtcNow.Year - dateOfBirth.Year;
-        if (dateOfBirth.Date > DateTime.UtcNow.Date.AddYears(-age)) age--;
-
-        if (age < 16)
-            throw new ArgumentException("You must be at least 16 years old to register.");
-
+        // 2) Validate passport expiry
         if (!DateTime.TryParse(request.PassportExpiryDate, out var passportExpiry) || passportExpiry <= DateTime.UtcNow)
             throw new ArgumentException("Passport is expired");
 
-        var usernameExists = await _db.Customers.AnyAsync(c => c.Username == request.Username);
-        if (usernameExists)
-            throw new InvalidOperationException("Username is already taken");
+        // Auto-generate username from email prefix (e.g. mahmoud.akl from mahmoud.akl@example.com)
+        string username = step1.Email.Split('@')[0];
+        
+        // Ensure username uniqueness by appending random numbers if already taken
+        if (await _db.Customers.AnyAsync(c => c.Username == username))
+        {
+            username = $"{username}_{Random.Shared.Next(100, 999)}";
+        }
 
         // Double-check email (race condition protection)
         var emailExists = await _db.Customers.AnyAsync(c => c.Email == step1.Email);
@@ -142,25 +139,119 @@ public class CustomerAuthService : ICustomerAuthService
 
             // 5) Determine verification status
             if (ocrResult.ValidScore < 65)
-                throw new InvalidOperationException("Passport image is unclear or invalid. Please upload a clearer image.");
+                throw new InvalidOperationException("Passport image is completely unreadable or invalid. Please upload a clearer image of your passport.");
 
-            bool passportVerified = ocrResult.Error == null && ocrResult.ValidScore >= 85;
+            // Clean passport number input (remove spaces, punctuation, convert to upper case)
+            if (string.IsNullOrWhiteSpace(request.PassportNumber))
+                throw new ArgumentException("Passport number is required");
+
+            string cleanedPassportInput = request.PassportNumber.Replace(" ", "").Replace("-", "").Replace(",", "").Trim().ToUpperInvariant();
+
+            // Verify it contains ONLY english letters (A-Z) and numbers (0-9)
+            if (!System.Text.RegularExpressions.Regex.IsMatch(cleanedPassportInput, "^[A-Z0-9]+$"))
+            {
+                throw new ArgumentException("Please enter a valid passport number (English letters and digits only, without spaces or special characters)");
+            }
+
+            bool isHighConfidenceOcr = ocrResult.Error == null && ocrResult.ValidScore >= 85;
 
             DateTime.TryParse(ocrResult.DateOfBirthFormatted, out var extractedDob);
             DateTime.TryParse(ocrResult.ExpirationDateFormatted, out var extractedExpiry);
 
-            if (passportVerified)
+            // Age validation from extracted passport date of birth (must be >= 16)
+            if (extractedDob != default)
             {
-                if (extractedExpiry <= DateTime.UtcNow)
-                    throw new InvalidOperationException("The uploaded passport data is expired");
+                var age = DateTime.UtcNow.Year - extractedDob.Year;
+                if (extractedDob.Date > DateTime.UtcNow.Date.AddYears(-age)) age--;
 
-                if (!string.IsNullOrWhiteSpace(ocrResult.Number))
+                if (age < 16)
+                    throw new ArgumentException("You must be at least 16 years old to register based on your passport.");
+            }
+
+            bool passportVerified = false;
+
+            string passportToRegister = cleanedPassportInput;
+            DateTime passportExpiryToRegister = passportExpiry;
+            
+            // Extract Nationality, Gender and DOB from OCR or fall back to sensible defaults
+            string nationalityToRegister = !string.IsNullOrWhiteSpace(ocrResult.Nationality) ? ocrResult.Nationality : "Egyptian";
+            string genderToRegister = !string.IsNullOrWhiteSpace(ocrResult.SexFormatted) ? ocrResult.SexFormatted : "Male";
+            DateTime dobToRegister = extractedDob != default ? extractedDob : DateTime.UtcNow.AddYears(-20);
+
+            if (isHighConfidenceOcr)
+            {
+                // Clean the OCR fields for comparison
+                string cleanedOcrNumber = ocrResult.Number?.Replace(" ", "").Replace("-", "").Replace(",", "").Trim().ToUpperInvariant() ?? "";
+                
+                // Compare passport number
+                bool passportNumberMatches = string.Equals(cleanedPassportInput, cleanedOcrNumber, StringComparison.OrdinalIgnoreCase);
+
+                // Compare expiration date
+                bool expiryDateMatches = false;
+                if (extractedExpiry != default)
                 {
-                    bool exists = await _db.Customers.AnyAsync(c => c.PassportNumber == ocrResult.Number);
-
-                    if (exists)
-                        throw new InvalidOperationException("The extracted passport number is already registered in the system.");
+                    expiryDateMatches = extractedExpiry.Date == passportExpiry.Date;
                 }
+
+                if (passportNumberMatches && expiryDateMatches)
+                {
+                    // 3-a: Perfect match
+                    passportVerified = true;
+                    
+                    // Take everything from OCR
+                    passportToRegister = cleanedOcrNumber;
+                    passportExpiryToRegister = extractedExpiry;
+                    dobToRegister = extractedDob != default ? extractedDob : dobToRegister;
+                    nationalityToRegister = !string.IsNullOrWhiteSpace(ocrResult.Nationality) ? ocrResult.Nationality : nationalityToRegister;
+                    genderToRegister = !string.IsNullOrWhiteSpace(ocrResult.SexFormatted) ? ocrResult.SexFormatted : genderToRegister;
+                }
+                else
+                {
+                    // 3-b: Mismatch detected
+                    if (request.ForceSubmit != true)
+                    {
+                        // First attempt: Throw warning using custom PassportMismatchException (returns isBypassable = true)
+                        throw new Travora.Domain.Exceptions.PassportMismatchException("Please check your passport number and expiration date to match the uploaded passport image.");
+                    }
+                    else
+                    {
+                        // Second attempt: force submit accepted, but under review
+                        passportVerified = false;
+                        
+                        // User's manual cleaned entries are saved for Passport Number and Expiration
+                        passportToRegister = cleanedPassportInput;
+                        passportExpiryToRegister = passportExpiry;
+                        
+                        // For high confidence, we still take DOB, nationality, gender from OCR
+                        dobToRegister = extractedDob != default ? extractedDob : dobToRegister;
+                        nationalityToRegister = !string.IsNullOrWhiteSpace(ocrResult.Nationality) ? ocrResult.Nationality : nationalityToRegister;
+                        genderToRegister = !string.IsNullOrWhiteSpace(ocrResult.SexFormatted) ? ocrResult.SexFormatted : genderToRegister;
+                    }
+                }
+            }
+            else
+            {
+                // Score between 65 and 85: under review, save manual entries
+                passportVerified = false;
+                passportToRegister = cleanedPassportInput;
+                passportExpiryToRegister = passportExpiry;
+
+                if (request.ForceSubmit != true)
+                {
+                    // First attempt: Throw warning using custom PassportMismatchException (returns isBypassable = true)
+                    throw new Travora.Domain.Exceptions.PassportMismatchException("Could not verify passport details automatically. Please try uploading a clearer image.");
+                }
+            }
+
+            // Verify expiry of the passport to be registered
+            if (passportExpiryToRegister <= DateTime.UtcNow)
+                throw new InvalidOperationException("The passport data is expired");
+
+            if (!string.IsNullOrWhiteSpace(passportToRegister))
+            {
+                bool exists = await _db.Customers.AnyAsync(c => c.PassportNumber == passportToRegister);
+                if (exists)
+                    throw new InvalidOperationException("The passport number is already registered in the system.");
             }
 
             var verificationStatus = passportVerified ? VerificationStatus.Approved : VerificationStatus.UnderReview;
@@ -172,15 +263,15 @@ public class CustomerAuthService : ICustomerAuthService
             {
                 Firstname = step1.FirstName,
                 Lastname = step1.LastName,
-                Username = request.Username,
+                Username = username,
                 Email = step1.Email,
                 PhoneNumber = step1.PhoneNumber,
-                Nationality = passportVerified && !string.IsNullOrWhiteSpace(ocrResult.Nationality) ? ocrResult.Nationality : step1.Nationality,
-                Gender = passportVerified && !string.IsNullOrWhiteSpace(ocrResult.SexFormatted) ? ocrResult.SexFormatted : step1.Gender,
-                PassportNumber = passportVerified && !string.IsNullOrWhiteSpace(ocrResult.Number) ? ocrResult.Number : "manual_review",
-                PassportExpiryDate = passportVerified && extractedExpiry != default ? extractedExpiry : passportExpiry,
-                DateOfBirth = passportVerified && extractedDob != default ? extractedDob : dateOfBirth,
-                PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
+                Nationality = nationalityToRegister,
+                Gender = genderToRegister,
+                PassportNumber = passportToRegister,
+                PassportExpiryDate = passportExpiryToRegister,
+                DateOfBirth = dobToRegister,
+                PasswordHash = step1.PasswordHash,
                 IsActive = true,
                 AccountStatus = accountStatus,
                 EmailVerified = false, 
@@ -213,10 +304,10 @@ public class CustomerAuthService : ICustomerAuthService
             var validation = new PassportValidation
             {
                 DocumentId = document.DocumentId,
-                ExpiryCheckPassed = passportExpiry > DateTime.UtcNow,
+                ExpiryCheckPassed = passportExpiryToRegister > DateTime.UtcNow,
                 FormatCheckPassed = ocrResult.ValidComposite ?? false,
                 NameMatchCheck = string.Equals(ocrResult.Surname, step1.LastName, StringComparison.OrdinalIgnoreCase),
-                BirthDateMatchCheck = extractedDob.Date == dateOfBirth.Date,
+                BirthDateMatchCheck = extractedDob != default,
                 ValidationStatus = validationStatus,
                 OcrConfidenceScore = ocrResult.ValidScore / 100.0m,
                 ManualReviewRequired = !passportVerified,
@@ -283,26 +374,21 @@ public class CustomerAuthService : ICustomerAuthService
             });
             await _db.SaveChangesAsync();
 
-            // 10) Welcome email + Verify Email OTP (Only if verified)
-            if (accountStatus == CustomerAccountStatus.Verified)
-            {
-                // When you stop the Fixed OTP, uncomment this line and delete the one below it
-                var otp = Random.Shared.Next(100000, 999999).ToString();
-                // var otp = !string.IsNullOrEmpty(_fixedOtp) ? _fixedOtp : Random.Shared.Next(100000, 999999).ToString();
-                await _redis.SetAsync($"email_verify:{step1.Email}", otp, TimeSpan.FromHours(24));
+            // 10) Welcome email + Verify Email OTP (For all registered customers: Verified & Pending)
+            var otp = Random.Shared.Next(100000, 999999).ToString();
+            await _redis.SetAsync($"email_verify:{step1.Email}", otp, TimeSpan.FromMinutes(10));
 
-                _ = Task.Run(async () =>
+            _ = Task.Run(async () =>
+            {
+                try
                 {
-                    try
-                    {
-                        await _emailService.SendEmailAsync(
-                            step1.Email,
-                            "Welcome to Travora - Account Activation",
-                            $"<h2>Hello {step1.FirstName} 👋</h2><p>Your account has been created successfully.</p><p>Email activation code is: <b style='font-size:24px;letter-spacing:4px;'>{otp}</b></p>");
-                    }
-                    catch { /* Email failure should not block registration */ }
-                });
-            }
+                    await _emailService.SendEmailAsync(
+                        step1.Email,
+                        "Welcome to Travora - Account Activation",
+                        $"<h2>Hello {step1.FirstName} 👋</h2><p>Your account has been created successfully.</p><p>Email activation code is: <b style='font-size:24px;letter-spacing:4px;'>{otp}</b></p>");
+                }
+                catch { /* Email failure should not block registration */ }
+            });
 
             // 11) Delete session from Redis
             await _redis.DeleteAsync($"register:step1:{request.SessionId}");
@@ -319,7 +405,7 @@ public class CustomerAuthService : ICustomerAuthService
                 AccountStatus = accountStatus.ToString(),
                 PassportVerified = passportVerified,
                 RequiresManualReview = !passportVerified,
-                PassportNumber = passportVerified ? customer.PassportNumber : null
+                PassportNumber = customer.PassportNumber
             };
         }
         finally
@@ -597,6 +683,5 @@ internal class Step1Data
     public string LastName { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;
     public string PhoneNumber { get; set; } = string.Empty;
-    public string Nationality { get; set; } = string.Empty;
-    public string Gender { get; set; } = string.Empty;
+    public string PasswordHash { get; set; } = string.Empty;
 }
