@@ -1,8 +1,10 @@
+using Travora.Domain.Enums;
+
 namespace Travora.Application.DTOs.Orders;
 
 public class RescheduleRequest
 {
-    public string Type { get; set; } = string.Empty; // "pickup" or "delivery"
+    public RescheduleType Type { get; set; }
     public DateTime NewDate { get; set; }
     public string NewTimeSlot { get; set; } = string.Empty;
 }
