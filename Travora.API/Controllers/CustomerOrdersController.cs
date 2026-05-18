@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Travora.Application.DTOs.Orders;
 using Travora.Application.DTOs.Orders.DoorToDoor;
 using Travora.Application.Interfaces.Services.Customer;
+using Travora.Domain.Enums;
 
 namespace Travora.API.Controllers;
 
@@ -29,12 +30,12 @@ public class CustomerOrdersController : ControllerBase
     // GET /api/v1/orders
     [HttpGet]
     [ProducesResponseType(typeof(List<OrderListDto>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetOrders(CancellationToken cancellationToken)
+    public async Task<IActionResult> GetOrders([FromQuery] OrderStatus? status, [FromQuery] PackageFilter? package, CancellationToken cancellationToken)
     {
         try
         {
             var customerId = GetCustomerId();
-            var response = await _orderService.GetCustomerOrdersAsync(customerId, cancellationToken);
+            var response = await _orderService.GetCustomerOrdersAsync(customerId, status, package, cancellationToken);
             return Ok(response);
         }
         catch (UnauthorizedAccessException)
@@ -89,11 +90,33 @@ public class CustomerOrdersController : ControllerBase
         }
     }
 
-    // GET /api/v1/orders/{orderId}/available-slots?type=pickup&date=2025-12-29
+    // GET /api/v1/orders/{orderId}/available-dates?type=Pickup
+    [HttpGet("{orderId}/available-dates")]
+    [ProducesResponseType(typeof(AvailableDatesResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetAvailableDates(
+        int orderId, [FromQuery] RescheduleType type, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var customerId = GetCustomerId();
+            var response = await _orderService.GetAvailableDatesForRescheduleAsync(customerId, orderId, type, cancellationToken);
+
+            if (!response.IsValid)
+                return BadRequest(response);
+
+            return Ok(response);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { errorMessage = ex.Message });
+        }
+    }
+
+    // GET /api/v1/orders/{orderId}/available-slots?type=Pickup&date=2025-12-29
     [HttpGet("{orderId}/available-slots")]
     [ProducesResponseType(typeof(AvailableSlotsResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAvailableSlots(
-        int orderId, [FromQuery] string type, [FromQuery] DateTime date, CancellationToken cancellationToken)
+        int orderId, [FromQuery] RescheduleType type, [FromQuery] DateTime date, CancellationToken cancellationToken)
     {
         try
         {

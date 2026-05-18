@@ -18,14 +18,7 @@ public class CustomerRefundController : ControllerBase
         _refundService = refundService;
     }
 
-    [HttpPost("{orderId}/refund")]
-    [ProducesResponseType(typeof(RefundResponse), StatusCodes.Status200OK)]
-    public async Task<IActionResult> RequestRefund(int orderId, [FromBody] RefundRequest request)
-    {
-        var customerId = int.Parse(User.FindFirstValue("customerId")!);
-        var response = await _refundService.RequestRefundAsync(customerId, orderId, request);
-        return Ok(response);
-    }
+
 
     [HttpGet("{orderId}/refund")]
     [ProducesResponseType(typeof(RefundStatusResponse), StatusCodes.Status200OK)]
