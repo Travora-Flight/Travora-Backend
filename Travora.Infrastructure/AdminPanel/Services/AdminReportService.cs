@@ -21,18 +21,19 @@ public class AdminReportService : IAdminReportService
 
     public async Task<ReportDashboardDataResponse> GetDashboardStatsAsync()
     {
-        var total = await _db.Reports.CountAsync();
-        var completed = await _db.Reports.CountAsync(r => !string.IsNullOrEmpty(r.ReportFilePath));
-        var padding = await _db.Reports.CountAsync(r => string.IsNullOrEmpty(r.ReportFilePath));
+        var totalGenerated = await _db.Reports.CountAsync();
+        var dailyOrdersCount = await _db.Reports.CountAsync(r => r.ReportType == ReportType.DailyOrders);
+        
+        var currentMonthStart = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var monthlyReportsCount = await _db.Reports.CountAsync(r => r.CreatedAt >= currentMonthStart);
 
         return new ReportDashboardDataResponse
         {
             Stats = new ReportStatsResponse
             {
-                Total = total,
-                Completed = completed,
-                InProgress = padding > 0 ? padding : 0, 
-                Pending = 0 // Keeping it simple for stats
+                TotalGenerated = totalGenerated,
+                DailyOrdersCount = dailyOrdersCount,
+                MonthlyReportsCount = monthlyReportsCount
             }
         };
     }

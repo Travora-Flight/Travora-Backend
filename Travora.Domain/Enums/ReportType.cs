@@ -2,10 +2,11 @@ namespace Travora.Domain.Enums;
 
 public enum ReportType
 {
-    Daily = 1,
-    Weekly = 2,
-    Monthly = 3,
-    Custom = 4,
-    DailyOrders = 5,
-    MonthlyRevenue = 6
+    DailyOrders = 1,
+    Financial = 2,
+    CustomsSummary = 3,
+    EmployeePerformance = 4,
+    CustomerFeedback = 5,
+    RefundAnalysis = 6,
+    TransactionsLedger = 7
 }
