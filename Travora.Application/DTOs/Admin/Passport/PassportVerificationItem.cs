@@ -11,6 +11,7 @@ public class PassportVerificationItem
     public string PassportImageUrl { get; set; } = string.Empty;
     public PassportInfoDetails PassportInfo { get; set; } = new();
     public string Status { get; set; } = string.Empty;
+    public string Gender { get; set; } = string.Empty;
     public decimal OcrConfidenceScore { get; set; }
     public bool ManualReviewRequired { get; set; }
 }

@@ -85,6 +85,7 @@ public class AdminPassportService : IAdminPassportService
                 ExpiryDate = x.c.PassportExpiryDate.ToString("dd/MM/yyyy")
             },
             Status = x.d.VerificationStatus.ToString().ToLower(),
+            Gender = x.c.Gender,
             OcrConfidenceScore = Math.Round(x.p.OcrConfidenceScore, 2),
             ManualReviewRequired = x.p.ManualReviewRequired
         }).ToList();
@@ -139,6 +140,7 @@ public class AdminPassportService : IAdminPassportService
             Email = item.c.Email,
             PassportImageUrl = item.d.FilePath,
             Status = item.d.VerificationStatus.ToString().ToLower(),
+            Gender = item.c.Gender,
             OcrConfidenceScore = Math.Round(item.p.OcrConfidenceScore, 2),
             ManualReviewRequired = item.p.ManualReviewRequired,
             PassportInfo = new PassportInfoDetails

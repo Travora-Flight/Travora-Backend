@@ -13,6 +13,7 @@ public class PassportVerificationDetailsResponse
     public string Email { get; set; } = string.Empty;
     public string PassportImageUrl { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
+    public string Gender { get; set; } = string.Empty;
     public decimal OcrConfidenceScore { get; set; }
     public bool ManualReviewRequired { get; set; }
     
