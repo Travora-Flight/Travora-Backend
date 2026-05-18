@@ -17,8 +17,7 @@ public class VehicleResponseExample : IExamplesProvider<VehicleResponse>
             Color = "White",
             Capacity = 14,
             IsAssigned = true,
-            AssignedToEmployeeId = 4,
-            AssignedToEmployeeName = "Salem Salem"
+            IsActive = true
         };
     }
 }

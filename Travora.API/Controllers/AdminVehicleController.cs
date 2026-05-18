@@ -58,7 +58,7 @@ public class AdminVehicleController : ControllerBase
         }
     }
 
-    [HttpPut("{id}")]
+    [HttpPatch("{id}")]
     [ProducesResponseType(typeof(VehicleResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> UpdateVehicleAsync(int id, [FromBody] UpdateVehicleRequest request)
     {
@@ -74,6 +74,20 @@ public class AdminVehicleController : ControllerBase
         catch (InvalidOperationException ex)
         {
             return BadRequest(new { error = ex.Message });
+        }
+    }
+
+    [HttpPatch("{id}/status")]
+    public async Task<IActionResult> UpdateStatusAsync(int id, [FromBody] VehicleStatusRequest request)
+    {
+        try
+        {
+            await _vehicleService.UpdateVehicleStatusAsync(id, request);
+            return Ok(new { success = true });
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
         }
     }
 

@@ -27,9 +27,9 @@ public class AdminVehicleService : IAdminVehicleService
                 Year = v.Year,
                 Color = v.Color,
                 Capacity = v.Capacity,
+                IsActive = v.IsActive,
                 IsAssigned = v.Employees.Any(e => e.IsActive && !e.IsDeleted),
-                AssignedToEmployeeId = v.Employees.Where(e => e.IsActive && !e.IsDeleted).Select(e => (int?)e.EmployeeId).FirstOrDefault(),
-                AssignedToEmployeeName = v.Employees.Where(e => e.IsActive && !e.IsDeleted).Select(e => e.Firstname + " " + e.Lastname).FirstOrDefault()
+                Employees = null // Exclude heavy employee list in basic overview
             })
             .ToListAsync();
     }
@@ -52,9 +52,17 @@ public class AdminVehicleService : IAdminVehicleService
             Year = v.Year,
             Color = v.Color,
             Capacity = v.Capacity,
+            IsActive = v.IsActive,
             IsAssigned = activeEmployee != null,
-            AssignedToEmployeeId = activeEmployee?.EmployeeId,
-            AssignedToEmployeeName = activeEmployee != null ? $"{activeEmployee.Firstname} {activeEmployee.Lastname}" : null
+            Employees = v.Employees.Select(e => new VehicleEmployeeResponse
+            {
+                EmployeeId = e.EmployeeId,
+                Name = $"{e.Firstname} {e.Lastname}",
+                Mobile = e.PhoneNumber,
+                Status = e.IsActive && !e.IsDeleted ? "Active" : "Inactive",
+                Email = e.Email,
+                ShiftType = e.ShiftType.ToString()
+            }).ToList()
         };
     }
 
@@ -70,7 +78,10 @@ public class AdminVehicleService : IAdminVehicleService
             Model = request.Model,
             Year = request.Year,
             Color = request.Color,
-            Capacity = request.Capacity
+            Capacity = request.Capacity,
+            IsActive = request.IsActive,
+            IsDeleted = false,
+            CreatedAt = DateTime.UtcNow
         };
 
         _db.Vehicles.Add(vehicle);
@@ -96,8 +107,11 @@ public class AdminVehicleService : IAdminVehicleService
         if (request.Year.HasValue) vehicle.Year = request.Year.Value;
         if (!string.IsNullOrEmpty(request.Color)) vehicle.Color = request.Color;
         if (request.Capacity.HasValue) vehicle.Capacity = request.Capacity.Value;
+        if (request.IsActive.HasValue) vehicle.IsActive = request.IsActive.Value;
 
+        vehicle.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+        
         return await GetVehicleByIdAsync(vehicle.VehicleId);
     }
 
@@ -110,10 +124,23 @@ public class AdminVehicleService : IAdminVehicleService
 
         if (vehicle.Employees.Any(e => e.IsActive && !e.IsDeleted))
         {
-            throw new InvalidOperationException("Cannot delete a vehicle that is assigned to an employee");
+            throw new InvalidOperationException("Cannot delete a vehicle that is currently assigned to an active employee");
         }
 
-        _db.Vehicles.Remove(vehicle);
+        // Perform Soft Delete
+        vehicle.IsDeleted = true;
+        vehicle.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        return true;
+    }
+
+    public async Task<bool> UpdateVehicleStatusAsync(int id, VehicleStatusRequest request)
+    {
+        var vehicle = await _db.Vehicles.FindAsync(id)
+            ?? throw new KeyNotFoundException("Vehicle not found");
+
+        vehicle.IsActive = request.IsActive;
+        vehicle.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
         return true;
     }
