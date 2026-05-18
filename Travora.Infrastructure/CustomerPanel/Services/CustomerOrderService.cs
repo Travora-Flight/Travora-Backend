@@ -106,14 +106,35 @@ public class CustomerOrderService : ICustomerOrderService
     // ===================================================================
     // ENDPOINT 0 — List Orders
     // ===================================================================
-    public async Task<IEnumerable<OrderListDto>> GetCustomerOrdersAsync(int customerId, CancellationToken cancellationToken = default)
+    public async Task<IEnumerable<OrderListDto>> GetCustomerOrdersAsync(int customerId, OrderStatus? status = null, PackageFilter? package = null, CancellationToken cancellationToken = default)
     {
-        var orders = await _context.Orders
+        var query = _context.Orders
             .Include(o => o.Package)
             .Include(o => o.Flight)
             .Include(o => o.PickupLocation)
             .Include(o => o.DeliveryLocation)
-            .Where(o => o.CustomerId == customerId)
+            .Where(o => o.CustomerId == customerId);
+
+        if (status.HasValue)
+        {
+            query = query.Where(o => o.OrderStatus == status.Value);
+        }
+
+        if (package.HasValue)
+        {
+            var code = package.Value switch
+            {
+                PackageFilter.DoorToDoor => PackageCodes.DoorToDoor,
+                PackageFilter.CarServiceToAirport => PackageCodes.CarServiceToAirport,
+                PackageFilter.CarServiceFromAirport => PackageCodes.CarServiceFromAirport,
+                PackageFilter.TrackingBaggage => PackageCodes.TrackingBaggage,
+                _ => string.Empty
+            };
+
+            query = query.Where(o => o.Package.PackageCode == code);
+        }
+
+        var orders = await query
             .OrderByDescending(o => o.CreatedAt)
             .AsNoTracking()
             .ToListAsync(cancellationToken);
@@ -122,22 +143,26 @@ public class CustomerOrderService : ICustomerOrderService
         foreach (var order in orders)
         {
             var packageName = order.Package?.PackageName ?? string.Empty;
+            var packageCode = order.Package?.PackageCode ?? string.Empty;
             string? from = null, to = null;
 
-            switch (packageName)
+            if (packageCode != PackageCodes.TrackingBaggage && packageName != PackageNames.TrackingBaggage)
             {
-                case PackageNames.DoorToDoor:
-                    from = order.PickupLocation?.City;
-                    to = order.DeliveryLocation?.City;
-                    break;
-                case PackageNames.CarServiceToAirport:
-                    from = order.PickupLocation?.City;
-                    to = order.Flight?.ArrivalIataCode;
-                    break;
-                case PackageNames.CarServiceFromAirport:
-                    from = order.Flight?.DepartureIataCode;
-                    to = order.DeliveryLocation?.City;
-                    break;
+                switch (packageName)
+                {
+                    case PackageNames.DoorToDoor:
+                        from = order.PickupLocation?.City;
+                        to = order.DeliveryLocation?.City;
+                        break;
+                    case PackageNames.CarServiceToAirport:
+                        from = order.PickupLocation?.City;
+                        to = order.Flight?.ArrivalIataCode;
+                        break;
+                    case PackageNames.CarServiceFromAirport:
+                        from = order.Flight?.DepartureIataCode;
+                        to = order.DeliveryLocation?.City;
+                        break;
+                }
             }
 
             result.Add(new OrderListDto
@@ -530,8 +555,31 @@ public class CustomerOrderService : ICustomerOrderService
                 Message = "Order cannot be cancelled while the service is in progress"
             };
 
-        bool shouldRefund = order.OrderStatus is OrderStatus.Confirmed or OrderStatus.InProgress;
+        bool shouldRefund = order.OrderStatus is OrderStatus.Confirmed or OrderStatus.InProgress or OrderStatus.rescheduled;
+        bool refundSuccess = false;
 
+        if (shouldRefund)
+        {
+            try
+            {
+                // Call RefundService FIRST while the order is still in Confirmed/rescheduled/InProgress state
+                var refundRequest = new Travora.Application.DTOs.Refunds.RefundRequest { Reason = reason };
+                var refundResult = await _refundService.RequestRefundAsync(customerId, orderId, refundRequest);
+                
+                if (refundResult.Success)
+                {
+                    refundSuccess = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Auto refund failed for order {OrderId} during cancellation", orderId);
+            }
+        }
+
+        // Cancel the main order and services in our system
+        // Note: If refundSuccess is true, the refund service already updated order.OrderStatus to Cancelled 
+        // in the DB, but updating it here on the tracked entity is safe and ensures consistency before saving.
         order.OrderStatus = OrderStatus.Cancelled;
         order.CancellationReason = reason;
         order.UpdatedAt = DateTime.UtcNow;
@@ -546,20 +594,25 @@ public class CustomerOrderService : ICustomerOrderService
         }
 
         // Notification to customer (DB + real-time)
-        _context.Notifications.Add(new Domain.Entities.Notification
+        // If refundSuccess is true, the refund service has already sent the "RefundApproved" push/notification, 
+        // so we don't send a duplicate general cancel notification to the customer.
+        if (!refundSuccess)
         {
-            UserId = customerId,
-            UserType = UserType.Customer,
-            NotificationType = NotificationType.OrderUpdated,
-            Title = "Your order has been cancelled",
-            Message = "Your order has been cancelled successfully",
-            NotificationChannel = NotificationChannel.InApp,
-            OrderId = orderId
-        });
+            _context.Notifications.Add(new Domain.Entities.Notification
+            {
+                UserId = customerId,
+                UserType = UserType.Customer,
+                NotificationType = NotificationType.OrderUpdated,
+                Title = "Your order has been cancelled",
+                Message = "Your order has been cancelled successfully",
+                NotificationChannel = NotificationChannel.InApp,
+                OrderId = orderId
+            });
 
-        await _notificationPusher.PushToCustomerAsync(customerId, "Your order has been cancelled", "Your order has been cancelled successfully", "OrderCancelled", orderId);
+            await _notificationPusher.PushToCustomerAsync(customerId, "Your order has been cancelled", "Your order has been cancelled successfully", "OrderCancelled", orderId);
+        }
 
-        // Notification to assigned employee (if any)
+        // Notification to assigned employee/driver (if any) - ALWAYS send this to free the drivers!
         var assignedServices = order.OrderServices.Where(os => os.AssignedEmployeeId.HasValue).ToList();
         foreach (var svc in assignedServices)
         {
@@ -579,27 +632,98 @@ public class CustomerOrderService : ICustomerOrderService
 
         await _context.SaveChangesAsync(cancellationToken);
 
-        if (shouldRefund)
+        if (refundSuccess)
         {
-            try
-            {
-                var refundRequest = new Travora.Application.DTOs.Refunds.RefundRequest { Reason = reason };
-                await _refundService.RequestRefundAsync(customerId, orderId, refundRequest);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Auto refund failed for order {OrderId}", orderId);
-            }
+            return new CancelOrderResponse { Success = true, Message = "Your order has been cancelled and refunded successfully" };
         }
 
         return new CancelOrderResponse { Success = true, Message = "Your order has been cancelled successfully" };
     }
 
     // ===================================================================
-    // ENDPOINT 3 — Available Slots for Reschedule
+    // ENDPOINT 3 — Available Dates for Reschedule
+    // ===================================================================
+    public async Task<AvailableDatesResponse> GetAvailableDatesForRescheduleAsync(
+        int customerId, int orderId, RescheduleType type, CancellationToken cancellationToken = default)
+    {
+        var order = await _context.Orders
+            .Include(o => o.Package)
+            .Include(o => o.Flight)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(o => o.OrderId == orderId, cancellationToken);
+
+        if (order == null)
+            return new AvailableDatesResponse { IsValid = false, ErrorMessage = "Order not found" };
+
+        if (order.CustomerId != customerId)
+            return new AvailableDatesResponse { IsValid = false, ErrorMessage = "You do not have permission" };
+
+        if (order.OrderStatus is not (OrderStatus.Confirmed or OrderStatus.rescheduled))
+            return new AvailableDatesResponse { IsValid = false, ErrorMessage = "The date for this order cannot be changed" };
+
+        var packageName = order.Package?.PackageName ?? string.Empty;
+
+        if (type == RescheduleType.Pickup)
+        {
+            if (packageName != PackageNames.DoorToDoor && packageName != PackageNames.CarServiceToAirport)
+                return new AvailableDatesResponse { IsValid = false, ErrorMessage = "Rescheduling pickup is only available for Door to Door or Car Service to Airport services" };
+
+            var departureTime = order.Flight.ScheduledDepartureTime;
+            var today = DateTime.UtcNow.Date;
+            var flightDate = departureTime.Date;
+
+            if (flightDate < today)
+                return new AvailableDatesResponse { IsValid = false, ErrorMessage = "The flight date has already passed" };
+
+            var availableDates = new List<DateTime>();
+            for (var d = today; d <= flightDate; d = d.AddDays(1))
+            {
+                // Must be at least 12 hours before departure
+                if ((departureTime - d.Date).TotalHours >= 12)
+                {
+                    availableDates.Add(d);
+                }
+            }
+
+            return new AvailableDatesResponse
+            {
+                IsValid = true,
+                AvailableDates = availableDates
+            };
+        }
+        else if (type == RescheduleType.Delivery)
+        {
+            if (packageName != PackageNames.DoorToDoor && packageName != PackageNames.CarServiceFromAirport)
+                return new AvailableDatesResponse { IsValid = false, ErrorMessage = "Rescheduling delivery is only available for Door to Door or Car Service from Airport services" };
+
+            var arrivalTime = order.Flight.ScheduledArrivalTime;
+            var executionStart = arrivalTime.AddHours(4);
+            var executionEnd = executionStart.AddDays(4);
+            var today = DateTime.UtcNow.Date;
+
+            var startDate = executionStart.Date < today ? today : executionStart.Date;
+            var availableDates = new List<DateTime>();
+
+            for (var d = startDate; d <= executionEnd.Date; d = d.AddDays(1))
+            {
+                availableDates.Add(d);
+            }
+
+            return new AvailableDatesResponse
+            {
+                IsValid = true,
+                AvailableDates = availableDates
+            };
+        }
+
+        return new AvailableDatesResponse { IsValid = false, ErrorMessage = "Invalid reschedule type" };
+    }
+
+    // ===================================================================
+    // ENDPOINT 3.5 — Available Slots for Reschedule
     // ===================================================================
     public async Task<AvailableSlotsResponse> GetAvailableSlotsForRescheduleAsync(
-        int customerId, int orderId, string type, DateTime date, CancellationToken cancellationToken = default)
+        int customerId, int orderId, RescheduleType type, DateTime date, CancellationToken cancellationToken = default)
     {
         var order = await _context.Orders
             .Include(o => o.Package)
@@ -618,31 +742,64 @@ public class CustomerOrderService : ICustomerOrderService
 
         var packageName = order.Package?.PackageName ?? string.Empty;
 
-        if (string.Equals(type, "delivery", StringComparison.OrdinalIgnoreCase) && packageName != PackageNames.DoorToDoor)
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Rescheduling delivery is only available for Door to Door service" };
-
-        // 12-hour rule
-        var departureTime = order.Flight.ScheduledDepartureTime;
-        if ((departureTime - date.Date).TotalHours < 12)
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Booking must be made at least 12 hours before departure" };
+        if (type == RescheduleType.Pickup)
+        {
+            if (packageName != PackageNames.DoorToDoor && packageName != PackageNames.CarServiceToAirport)
+                return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Rescheduling pickup is only available for Door to Door or Car Service to Airport services" };
+        }
+        else if (type == RescheduleType.Delivery)
+        {
+            if (packageName != PackageNames.DoorToDoor && packageName != PackageNames.CarServiceFromAirport)
+                return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Rescheduling delivery is only available for Door to Door or Car Service from Airport services" };
+        }
+        else
+        {
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Invalid reschedule type" };
+        }
 
         var today = DateTime.UtcNow.Date;
         if (date.Date < today)
             return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Cannot select a date in the past" };
 
-        var flightDate = departureTime.Date;
-        if (date.Date > flightDate)
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Booking cannot be made after the flight date" };
-
-        var response = new AvailableSlotsResponse();
+        var response = new AvailableSlotsResponse { IsValid = true };
         TimeSpan? cutoffTimeSpan = null;
+        TimeSpan? startAfterTimeSpan = null;
 
-        if (date.Date == flightDate)
+        if (type == RescheduleType.Pickup)
         {
-            var cutoffUtc = departureTime.AddHours(-12);
-            cutoffTimeSpan = cutoffUtc.TimeOfDay;
-            response.CutoffTime = cutoffTimeSpan.Value.ToString(@"hh\:mm");
-            response.Note = $"The last available slot must end before {response.CutoffTime}";
+            var departureTime = order.Flight.ScheduledDepartureTime;
+            if ((departureTime - date.Date).TotalHours < 12)
+                return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Booking must be made at least 12 hours before departure" };
+
+            var flightDate = departureTime.Date;
+            if (date.Date > flightDate)
+                return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Booking cannot be made after the flight date" };
+
+            if (date.Date == flightDate)
+            {
+                var cutoffUtc = departureTime.AddHours(-12);
+                cutoffTimeSpan = cutoffUtc.TimeOfDay;
+                response.CutoffTime = cutoffTimeSpan.Value.ToString(@"hh\:mm");
+                response.Note = $"The last available slot must end before {response.CutoffTime}";
+            }
+        }
+        else // Delivery
+        {
+            var arrivalTime = order.Flight.ScheduledArrivalTime;
+            var executionStart = arrivalTime.AddHours(4);
+            var executionEnd = executionStart.AddDays(4);
+
+            if (date.Date < executionStart.Date)
+                return new AvailableSlotsResponse { IsValid = false, ErrorMessage = $"Cannot select a date before the earliest arrival-based window ({executionStart:yyyy-MM-dd})" };
+
+            if (date.Date > executionEnd.Date)
+                return new AvailableSlotsResponse { IsValid = false, ErrorMessage = $"Cannot book more than 4 days after delivery start window ({executionEnd:yyyy-MM-dd})" };
+
+            if (date.Date == executionStart.Date)
+            {
+                startAfterTimeSpan = executionStart.TimeOfDay;
+                response.Note = $"Nearest available delivery after {startAfterTimeSpan.Value:hh\\:mm}";
+            }
         }
 
         var allDrivers = await _context.Employees
@@ -671,11 +828,22 @@ public class CustomerOrderService : ICustomerOrderService
 
             bool isAvailable = true;
 
-            if (cutoffTimeSpan.HasValue && end > cutoffTimeSpan.Value)
+            if (type == RescheduleType.Pickup)
             {
-                isAvailable = false;
+                if (cutoffTimeSpan.HasValue && end > cutoffTimeSpan.Value)
+                {
+                    isAvailable = false;
+                }
             }
-            else
+            else // Delivery
+            {
+                if (startAfterTimeSpan.HasValue && start < startAfterTimeSpan.Value)
+                {
+                    isAvailable = false;
+                }
+            }
+
+            if (isAvailable)
             {
                 var availableDrivers = allDrivers.Where(d =>
                     IsShiftCovering(d.ShiftType, start, end) &&
@@ -714,10 +882,21 @@ public class CustomerOrderService : ICustomerOrderService
             return new RescheduleResponse { Success = false, Message = "The date for this order cannot be changed" };
 
         var packageName = order.Package?.PackageName ?? string.Empty;
-        bool isDelivery = string.Equals(request.Type, "delivery", StringComparison.OrdinalIgnoreCase);
 
-        if (isDelivery && packageName != PackageNames.DoorToDoor)
-            return new RescheduleResponse { Success = false, Message = "Rescheduling delivery is only available for Door to Door service" };
+        if (request.Type == RescheduleType.Pickup)
+        {
+            if (packageName != PackageNames.DoorToDoor && packageName != PackageNames.CarServiceToAirport)
+                return new RescheduleResponse { Success = false, Message = "Rescheduling pickup is only available for Door to Door or Car Service to Airport services" };
+        }
+        else if (request.Type == RescheduleType.Delivery)
+        {
+            if (packageName != PackageNames.DoorToDoor && packageName != PackageNames.CarServiceFromAirport)
+                return new RescheduleResponse { Success = false, Message = "Rescheduling delivery is only available for Door to Door or Car Service from Airport services" };
+        }
+        else
+        {
+            return new RescheduleResponse { Success = false, Message = "Invalid reschedule type" };
+        }
 
         // Validate slot is available
         var slotsResponse = await GetAvailableSlotsForRescheduleAsync(customerId, orderId, request.Type, request.NewDate, cancellationToken);
@@ -730,7 +909,7 @@ public class CustomerOrderService : ICustomerOrderService
         var slotStart = TimeSpan.Parse(slotParts[0]);
         var slotEnd = slotParts[1] == "24:00" ? TimeSpan.FromHours(23).Add(TimeSpan.FromMinutes(59)) : TimeSpan.Parse(slotParts[1]);
 
-        if (isDelivery)
+        if (request.Type == RescheduleType.Delivery)
         {
             order.DeliveryDate = request.NewDate;
             order.DeliveryTimeSlot = request.NewTimeSlot;
