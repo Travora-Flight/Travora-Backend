@@ -20,9 +20,10 @@ public class RegisterStep1Request
     [RegularExpression(@"^\d{11}$", ErrorMessage = "Phone number must be 11 digits")]
     public string PhoneNumber { get; set; } = string.Empty;
 
-    [Required(ErrorMessage = "Nationality is required")]
-    public string Nationality { get; set; } = string.Empty;
+    [Required(ErrorMessage = "Password is required")]
+    [MinLength(8, ErrorMessage = "Password must be at least 8 characters")]
+    public string Password { get; set; } = string.Empty;
 
-    [Required(ErrorMessage = "Gender is required")]
-    public string Gender { get; set; } = string.Empty;
+    [Required(ErrorMessage = "Confirm password is required")]
+    public string ConfirmPassword { get; set; } = string.Empty;
 }
