@@ -1,6 +1,18 @@
 using System.ComponentModel.DataAnnotations;
 
+using System.Text.Json.Serialization;
+
 namespace Travora.Application.DTOs.Admin.Vehicles;
+
+public class VehicleEmployeeResponse
+{
+    public int EmployeeId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Mobile { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty; // "Active" or "Inactive"
+    public string Email { get; set; } = string.Empty;
+    public string ShiftType { get; set; } = string.Empty;
+}
 
 public class VehicleResponse
 {
@@ -11,10 +23,12 @@ public class VehicleResponse
     public int Year { get; set; }
     public string Color { get; set; } = string.Empty;
     public int Capacity { get; set; }
+    public bool IsActive { get; set; }
     
     public bool IsAssigned { get; set; }
-    public int? AssignedToEmployeeId { get; set; }
-    public string? AssignedToEmployeeName { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<VehicleEmployeeResponse>? Employees { get; set; }
 }
 
 public class CreateVehicleRequest
@@ -31,6 +45,7 @@ public class CreateVehicleRequest
     public string Color { get; set; } = string.Empty;
     [Range(1, 100, ErrorMessage = "Capacity must be greater than 0")]
     public int Capacity { get; set; }
+    public bool IsActive { get; set; } = true;
 }
 
 public class UpdateVehicleRequest
@@ -41,4 +56,10 @@ public class UpdateVehicleRequest
     public int? Year { get; set; }
     public string? Color { get; set; }
     public int? Capacity { get; set; }
+    public bool? IsActive { get; set; }
+}
+
+public class VehicleStatusRequest
+{
+    public bool IsActive { get; set; }
 }

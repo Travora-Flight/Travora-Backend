@@ -9,4 +9,5 @@ public interface IAdminVehicleService
     Task<VehicleResponse> CreateVehicleAsync(CreateVehicleRequest request);
     Task<VehicleResponse> UpdateVehicleAsync(int id, UpdateVehicleRequest request);
     Task<bool> DeleteVehicleAsync(int id);
+    Task<bool> UpdateVehicleStatusAsync(int id, VehicleStatusRequest request);
 }
