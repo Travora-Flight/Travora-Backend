@@ -57,10 +57,11 @@ public class EmployeeBaggageService : IEmployeeBaggageService
         var baggage = await _db.Baggages.FindAsync(request.BaggageId)
             ?? throw new KeyNotFoundException("Baggage not found");
 
-        var alreadyScanned = await _db.QrScans
-            .AnyAsync(q => q.BaggageId == baggage.BaggageId);
-        if (alreadyScanned)
-            throw new InvalidOperationException("This bag has already been scanned");
+        var alreadyScannedInPhase = await _db.QrScans
+            .AnyAsync(q => q.BaggageId == baggage.BaggageId
+                        && q.OrderServiceId == request.OrderServiceId);
+        if (alreadyScannedInPhase)
+            throw new InvalidOperationException("This bag has already been scanned in this phase");
 
         if (baggage.OrderId != orderService.OrderId)
             throw new InvalidOperationException("This bag is not in this order");
@@ -141,6 +142,7 @@ public class EmployeeBaggageService : IEmployeeBaggageService
             BaggageId = baggage.BaggageId,
             ScannedByEmployeeId = employeeId,
             CheckpointId = null, // Driver has no checkpoint
+            OrderServiceId = request.OrderServiceId,
             ScanTimestamp = DateTime.UtcNow,
             GpsLatitude = gpsLat ?? 0,
             GpsLongitude = gpsLng ?? 0
@@ -268,6 +270,13 @@ public class EmployeeBaggageService : IEmployeeBaggageService
         if (photos.Any(p => !allowedTypes.Contains(p.ContentType.ToLower())))
             throw new InvalidOperationException("Only images can be uploaded (jpg/jpeg/png)");
 
+        // Determine the active OrderService for this employee
+        var activeOrderServiceId = baggage.Order.OrderServices
+            .Where(os => os.AssignedEmployeeId == employeeId &&
+                         os.ServiceStatus == ServiceStatus.InProgress)
+            .Select(os => (int?)os.OrderServiceId)
+            .FirstOrDefault();
+
         var uploadedUrls = new List<string>();
         foreach (var photo in photos)
         {
@@ -280,7 +289,8 @@ public class EmployeeBaggageService : IEmployeeBaggageService
                 ImagePath = url,
                 CapturedByEmployeeId = employeeId,
                 BaggageId = baggageId,
-                CheckpointId = employee.CheckpointId, // null for Driver
+                CheckpointId = employee.CheckpointId,
+                OrderServiceId = activeOrderServiceId,
                 CaptureTimestamp = DateTime.UtcNow
             });
         }
@@ -431,6 +441,7 @@ public class EmployeeBaggageService : IEmployeeBaggageService
             CheckpointType.AirportGate => BaggageTrackingStatus.AtGate,
             CheckpointType.AirportBaggageBelt => BaggageTrackingStatus.OnBelt,
             CheckpointType.DeliveryPoint => BaggageTrackingStatus.Delivered,
+            CheckpointType.BaggageOffice => BaggageTrackingStatus.AtBaggageOffice,
             _ => BaggageTrackingStatus.AtTerminal
         };
 
@@ -476,14 +487,18 @@ public class EmployeeBaggageService : IEmployeeBaggageService
 
         await _db.SaveChangesAsync();
 
-        // Notification
+        // Notification — special message for BaggageOffice
+        var (notifTitle, notifMsg) = newStatus == BaggageTrackingStatus.AtBaggageOffice
+            ? ("Your bag is at the Baggage Office", "Your bag has been moved to the lost baggage office. Please come with your passport to collect it.")
+            : ("Bag Update", $"Your bag is now at {employee.Checkpoint.CheckpointName}");
+
         _db.Notifications.Add(new Notification
         {
             UserId = baggage.Order.CustomerId,
             UserType = UserType.Customer,
             NotificationType = NotificationType.BaggageUpdated,
-            Title = "Bag Update",
-            Message = $"Your bag is now at {employee.Checkpoint.CheckpointName}",
+            Title = notifTitle,
+            Message = notifMsg,
             NotificationChannel = NotificationChannel.InApp,
             OrderId = baggage.OrderId,
             BaggageId = baggage.BaggageId
@@ -494,8 +509,8 @@ public class EmployeeBaggageService : IEmployeeBaggageService
         // SignalR Real-time
         await _pusher.PushToCustomerAsync(
             baggage.Order.CustomerId,
-            "Bag Update",
-            $"Your bag is now at {employee.Checkpoint.CheckpointName}",
+            notifTitle,
+            notifMsg,
             "BaggageUpdated",
             baggage.OrderId);
 

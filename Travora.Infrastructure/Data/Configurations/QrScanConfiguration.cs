@@ -32,5 +32,10 @@ public class QrScanConfiguration : IEntityTypeConfiguration<QrScan>
             .WithMany(c => c.QrScans)
             .HasForeignKey(q => q.ScannedByCustomerId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne(q => q.OrderService)
+            .WithMany()
+            .HasForeignKey(q => q.OrderServiceId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

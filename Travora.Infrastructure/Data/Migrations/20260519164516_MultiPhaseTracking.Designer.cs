@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Travora.Infrastructure.Data;
 
@@ -11,9 +12,11 @@ using Travora.Infrastructure.Data;
 namespace Travora.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260519164516_MultiPhaseTracking")]
+    partial class MultiPhaseTracking
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -560,7 +563,7 @@ namespace Travora.Infrastructure.Data.Migrations
                         .HasPrecision(10, 6)
                         .HasColumnType("decimal(10,6)");
 
-                    b.Property<int?>("HandledByEmployeeId")
+                    b.Property<int>("HandledByEmployeeId")
                         .HasColumnType("int");
 
                     b.Property<int>("Status")
@@ -3167,7 +3170,8 @@ namespace Travora.Infrastructure.Data.Migrations
                     b.HasOne("Travora.Domain.Entities.Employee", "HandledByEmployee")
                         .WithMany("BaggageTrackings")
                         .HasForeignKey("HandledByEmployeeId")
-                        .OnDelete(DeleteBehavior.Restrict);
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
 
                     b.HasOne("Travora.Domain.Entities.QrScan", "TriggeredByScan")
                         .WithMany("TriggeredTrackings")

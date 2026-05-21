@@ -160,6 +160,13 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         string finalPassportNumber = string.Empty;
         string? ocrResultJson = null;
 
+        // OCR-extracted fields (source of truth for personal data)
+        string ocrFirstName = string.Empty;
+        string ocrLastName = string.Empty;
+        string ocrNationality = string.Empty;
+        DateTime? ocrDob = null;
+        DateTime? ocrExpiry = null;
+
         try
         {
             await using (var fileStream = System.IO.File.Create(tempPath))
@@ -184,6 +191,15 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
 
             passportVerified = true;
             finalPassportNumber = ocrResult.Number ?? string.Empty;
+            ocrFirstName = ocrResult.Names ?? string.Empty;
+            ocrLastName = ocrResult.Surname ?? string.Empty;
+            ocrNationality = ocrResult.Nationality ?? string.Empty;
+
+            if (DateTime.TryParse(ocrResult.DateOfBirthFormatted, out var parsedDob))
+                ocrDob = parsedDob;
+            if (DateTime.TryParse(ocrResult.ExpirationDateFormatted, out var parsedExpiry))
+                ocrExpiry = parsedExpiry;
+
             ocrResultJson = System.Text.Json.JsonSerializer.Serialize(ocrResult);
         }
         catch (Exception ex)
@@ -202,6 +218,10 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         {
             return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Could not extract passport number from image. Please try again with a clearer photo." };
         }
+
+        // Check passport expiry
+        if (ocrExpiry.HasValue && ocrExpiry.Value <= DateTime.UtcNow)
+            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "The companion's passport is expired" };
 
         if (finalPassportNumber == draft.PassengerInfo?.PassportNumber)
             return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "You cannot add yourself as a companion" };
@@ -233,18 +253,18 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
             return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "The companion is not on the same flight" };
         }
 
-        // 5. Save to draft
+        // 5. Save to draft — OCR data takes priority over Airline data
         var newCompanion = new DraftCompanion
         {
-            FirstName = passengerData.FirstName ?? string.Empty,
-            LastName = passengerData.LastName ?? string.Empty,
+            FirstName = !string.IsNullOrWhiteSpace(ocrFirstName) ? ocrFirstName : (passengerData.FirstName ?? string.Empty),
+            LastName = !string.IsNullOrWhiteSpace(ocrLastName) ? ocrLastName : (passengerData.LastName ?? string.Empty),
             PassportNumber = finalPassportNumber,
             TicketNumber = request.TicketNumber,
             SeatNumber = airlineRes.Ticket?.SeatNumber ?? passengerData.SeatNumber ?? string.Empty,
             PassportImageUrl = imageUrl,
-            Nationality = passengerData.Nationality,
-            DateOfBirth = DateTime.TryParse(passengerData.DateOfBirth, out var dob) ? dob : null,
-            PassportExpiryDate = DateTime.TryParse(passengerData.PassportExpiryDate, out var expiry) ? expiry : null,
+            Nationality = !string.IsNullOrWhiteSpace(ocrNationality) ? ocrNationality : passengerData.Nationality,
+            DateOfBirth = ocrDob ?? (DateTime.TryParse(passengerData.DateOfBirth, out var dob) ? dob : null),
+            PassportExpiryDate = ocrExpiry ?? (DateTime.TryParse(passengerData.PassportExpiryDate, out var expiry) ? expiry : null),
             IsVerified = passportVerified,
             PassportFileSizeKb = (int)(request.PassportImage.Length / 1024),
             PassportMimeType = request.PassportImage.ContentType,
@@ -252,12 +272,9 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         };
 
         // Ensure we don't add the same companion twice (by passport)
-        if (!draft.Companions.Any(c => c.PassportNumber == finalPassportNumber))
-        {
-            draft.Companions.Add(newCompanion);
-            // Reset TTL when modifying
-            await _draftOrderService.SaveDraftOrderAsync(draft, TimeSpan.FromMinutes(30), cancellationToken);
-        }
+        draft.Companions.RemoveAll(c => c.PassportNumber == finalPassportNumber);
+        draft.Companions.Add(newCompanion);
+        await _draftOrderService.SaveDraftOrderAsync(draft, TimeSpan.FromMinutes(30), cancellationToken);
 
         return new ValidateCompanionResponse
         {
@@ -1178,32 +1195,43 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
                     int? assignedEmployeeId = null;
                     var status = Domain.Enums.ServiceStatus.Pending;
 
-                    if (packageService.ExecutionPhase == Domain.Enums.ExecutionPhase.Pickup)
+                    switch (packageService.ExecutionPhase)
                     {
-                        var slotParts = draft.SelectedSlot!.Split('-');
-                        var slotStart = TimeSpan.Parse(slotParts[0]);
-                        var slotEnd = slotParts[1] == "24:00" ? TimeSpan.FromHours(23).Add(TimeSpan.FromMinutes(59)) : TimeSpan.Parse(slotParts[1]);
-                        scheduledStart = draft.SelectedSlotDate!.Value.Date + slotStart;
-                        scheduledEnd = draft.SelectedSlotDate!.Value.Date + slotEnd;
+                        case Domain.Enums.ExecutionPhase.Pickup:
+                            var slotParts = draft.SelectedSlot!.Split('-');
+                            var slotStart = TimeSpan.Parse(slotParts[0]);
+                            var slotEnd = slotParts[1] == "24:00" ? TimeSpan.FromHours(23).Add(TimeSpan.FromMinutes(59)) : TimeSpan.Parse(slotParts[1]);
+                            scheduledStart = draft.SelectedSlotDate!.Value.Date + slotStart;
+                            scheduledEnd = draft.SelectedSlotDate!.Value.Date + slotEnd;
+                            break;
 
-                        // Employee gets assigned AFTER payment, so we leave it as Pending for now
-                        status = Domain.Enums.ServiceStatus.Pending;
-                    }
-                    else if (packageService.ExecutionPhase == Domain.Enums.ExecutionPhase.AirportCheckin)
-                    {
-                        // Approximate time — will be actually determined when the Driver completes Pickup
-                        scheduledStart = draft.FlightInfo.DepartureTimeUtc.AddHours(-3);
-                        scheduledEnd = draft.FlightInfo.DepartureTimeUtc.AddHours(-1);
-                        // No assignment made — remains Pending
-                    }
-                    else // Delivery
-                    {
-                        var slotParts = draft.SelectedDeliverySlot!.Split('-');
-                        var slotStart = TimeSpan.Parse(slotParts[0]);
-                        var slotEnd = slotParts[1] == "24:00" ? TimeSpan.FromHours(23).Add(TimeSpan.FromMinutes(59)) : TimeSpan.Parse(slotParts[1]);
-                        scheduledStart = draft.SelectedDeliverySlotDate!.Value.Date + slotStart;
-                        scheduledEnd = draft.SelectedDeliverySlotDate!.Value.Date + slotEnd;
-                        // Will be automatically assigned when BaggageHandler completes AirportCheckin
+                        case Domain.Enums.ExecutionPhase.DepartureCheckin:
+                            // Scheduled at end of Pickup slot (will be assigned when Pickup completes)
+                            var pickupSlotParts = draft.SelectedSlot!.Split('-');
+                            var pickupSlotEnd = pickupSlotParts[1] == "24:00" ? TimeSpan.FromHours(23).Add(TimeSpan.FromMinutes(59)) : TimeSpan.Parse(pickupSlotParts[1]);
+                            scheduledStart = draft.SelectedSlotDate!.Value.Date + pickupSlotEnd;
+                            scheduledEnd = draft.FlightInfo.DepartureTimeUtc.AddHours(-1);
+                            break;
+
+                        case Domain.Enums.ExecutionPhase.ArrivalCheckin:
+                            // Scheduled at flight arrival time (will be assigned when DepartureCheckin completes)
+                            var arrivalTime = draft.FlightInfo.ArrivalTimeUtc ?? draft.FlightInfo.DepartureTimeUtc.AddHours(3);
+                            scheduledStart = arrivalTime;
+                            scheduledEnd = arrivalTime.AddHours(2);
+                            break;
+
+                        case Domain.Enums.ExecutionPhase.Delivery:
+                            var deliverySlotParts = draft.SelectedDeliverySlot!.Split('-');
+                            var deliverySlotStart = TimeSpan.Parse(deliverySlotParts[0]);
+                            var deliverySlotEnd = deliverySlotParts[1] == "24:00" ? TimeSpan.FromHours(23).Add(TimeSpan.FromMinutes(59)) : TimeSpan.Parse(deliverySlotParts[1]);
+                            scheduledStart = draft.SelectedDeliverySlotDate!.Value.Date + deliverySlotStart;
+                            scheduledEnd = draft.SelectedDeliverySlotDate!.Value.Date + deliverySlotEnd;
+                            break;
+
+                        default:
+                            scheduledStart = draft.SelectedSlotDate!.Value.Date;
+                            scheduledEnd = scheduledStart.AddHours(2);
+                            break;
                     }
 
                     _context.OrderServices.Add(new Domain.Entities.OrderService

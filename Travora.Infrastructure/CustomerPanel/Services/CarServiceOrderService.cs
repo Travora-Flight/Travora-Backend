@@ -171,6 +171,13 @@ public class CarServiceOrderService : ICarServiceOrderService
         string finalPassportNumber = string.Empty;
         string? ocrResultJson = null;
 
+        // OCR-extracted fields (source of truth for personal data)
+        string ocrFirstName = string.Empty;
+        string ocrLastName = string.Empty;
+        string ocrNationality = string.Empty;
+        DateTime? ocrDob = null;
+        DateTime? ocrExpiry = null;
+
         try
         {
             await using (var fileStream = System.IO.File.Create(tempPath))
@@ -195,6 +202,15 @@ public class CarServiceOrderService : ICarServiceOrderService
 
             passportVerified = true;
             finalPassportNumber = ocrResult.Number ?? string.Empty;
+            ocrFirstName = ocrResult.Names ?? string.Empty;
+            ocrLastName = ocrResult.Surname ?? string.Empty;
+            ocrNationality = ocrResult.Nationality ?? string.Empty;
+
+            if (DateTime.TryParse(ocrResult.DateOfBirthFormatted, out var parsedDob))
+                ocrDob = parsedDob;
+            if (DateTime.TryParse(ocrResult.ExpirationDateFormatted, out var parsedExpiry))
+                ocrExpiry = parsedExpiry;
+
             ocrResultJson = JsonSerializer.Serialize(ocrResult);
         }
         catch (Exception ex)
@@ -213,6 +229,10 @@ public class CarServiceOrderService : ICarServiceOrderService
         {
             return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Could not extract passport number from image. Please try again with a clearer photo." };
         }
+
+        // Check passport expiry
+        if (ocrExpiry.HasValue && ocrExpiry.Value <= DateTime.UtcNow)
+            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "The companion's passport is expired" };
 
         if (finalPassportNumber == draft.PassengerInfo?.PassportNumber)
             return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "You cannot add yourself as a companion" };
@@ -240,28 +260,27 @@ public class CarServiceOrderService : ICarServiceOrderService
         if (flightData.FlightNumber != draft.FlightInfo.FlightNumber)
             return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Companion is not on the same flight" };
 
+        // OCR data takes priority over Airline data
         var newCompanion = new DraftCompanion
         {
-            FirstName = passengerData.FirstName ?? string.Empty,
-            LastName = passengerData.LastName ?? string.Empty,
+            FirstName = !string.IsNullOrWhiteSpace(ocrFirstName) ? ocrFirstName : (passengerData.FirstName ?? string.Empty),
+            LastName = !string.IsNullOrWhiteSpace(ocrLastName) ? ocrLastName : (passengerData.LastName ?? string.Empty),
             PassportNumber = finalPassportNumber,
             TicketNumber = request.TicketNumber,
             SeatNumber = airlineRes.Ticket?.SeatNumber ?? passengerData.SeatNumber ?? string.Empty,
             PassportImageUrl = imageUrl,
-            Nationality = passengerData.Nationality,
-            DateOfBirth = DateTime.TryParse(passengerData.DateOfBirth, out var dob) ? dob : null,
-            PassportExpiryDate = DateTime.TryParse(passengerData.PassportExpiryDate, out var expiry) ? expiry : null,
+            Nationality = !string.IsNullOrWhiteSpace(ocrNationality) ? ocrNationality : passengerData.Nationality,
+            DateOfBirth = ocrDob ?? (DateTime.TryParse(passengerData.DateOfBirth, out var dob) ? dob : null),
+            PassportExpiryDate = ocrExpiry ?? (DateTime.TryParse(passengerData.PassportExpiryDate, out var expiry) ? expiry : null),
             IsVerified = passportVerified,
             PassportFileSizeKb = (int)(request.PassportImage.Length / 1024),
             PassportMimeType = request.PassportImage.ContentType,
             PassportOcrResultJson = ocrResultJson
         };
 
-        if (!draft.Companions.Any(c => c.PassportNumber == finalPassportNumber))
-        {
-            draft.Companions.Add(newCompanion);
-            await _draftOrderService.SaveCarServiceDraftAsync(draft, TimeSpan.FromMinutes(30), cancellationToken);
-        }
+        draft.Companions.RemoveAll(c => c.PassportNumber == finalPassportNumber);
+        draft.Companions.Add(newCompanion);
+        await _draftOrderService.SaveCarServiceDraftAsync(draft, TimeSpan.FromMinutes(30), cancellationToken);
 
         return new ValidateCompanionResponse
         {
@@ -1289,16 +1308,51 @@ public class CarServiceOrderService : ICarServiceOrderService
                     }
                 }
 
-                // OrderService
+                // OrderServices — phase-aware scheduling
                 var packageServices = await _context.PackageServices
                     .Where(ps => ps.PackageId == order.PackageId)
                     .Include(ps => ps.Service)
+                    .OrderBy(ps => ps.ExecutionPhase)
                     .ToListAsync(cancellationToken);
 
                 foreach (var packageService in packageServices)
                 {
-                    DateTime scheduledStart = slotDate.Date + slotStart;
-                    DateTime scheduledEnd = slotDate.Date + slotEnd;
+                    DateTime scheduledStart, scheduledEnd;
+
+                    switch (packageService.ExecutionPhase)
+                    {
+                        case ExecutionPhase.Pickup:
+                            // Use the customer-selected time slot
+                            scheduledStart = slotDate.Date + slotStart;
+                            scheduledEnd = slotDate.Date + slotEnd;
+                            break;
+
+                        case ExecutionPhase.DepartureCheckin:
+                            // To Airport: scheduled at end of Pickup slot (assigned when Pickup completes)
+                            scheduledStart = slotDate.Date + slotEnd;
+                            scheduledEnd = draft.FlightInfo.DepartureTimeUtc.AddHours(-1);
+                            break;
+
+                        case ExecutionPhase.ArrivalCheckin:
+                        {
+                            // From Airport: BaggageHandler retrieves bags after plane arrives
+                            var arrivalTime = draft.FlightInfo.ArrivalTimeUtc ?? draft.FlightInfo.DepartureTimeUtc.AddHours(3);
+                            scheduledStart = arrivalTime;
+                            scheduledEnd = arrivalTime.AddHours(2);
+                            break;
+                        }
+
+                        case ExecutionPhase.Delivery:
+                            // Use the customer-selected time slot
+                            scheduledStart = slotDate.Date + slotStart;
+                            scheduledEnd = slotDate.Date + slotEnd;
+                            break;
+
+                        default:
+                            scheduledStart = slotDate.Date + slotStart;
+                            scheduledEnd = slotDate.Date + slotEnd;
+                            break;
+                    }
 
                     _context.OrderServices.Add(new Domain.Entities.OrderService
                     {
@@ -1365,28 +1419,75 @@ public class CarServiceOrderService : ICarServiceOrderService
     // ===================================================================
     public async Task AssignEmployeesAfterPaymentAsync(int orderId, CancellationToken cancellationToken = default)
     {
-        var order = await _context.Orders.FindAsync(new object[] { orderId }, cancellationToken);
+        var order = await _context.Orders
+            .Include(o => o.Package)
+            .FirstOrDefaultAsync(o => o.OrderId == orderId, cancellationToken);
 
-        var servicesToAssign = await _context.OrderServices
+        if (order == null) return;
+
+        // Get only the FIRST phase to assign (ordered by ExecutionPhase)
+        var firstPendingService = await _context.OrderServices
+            .Include(os => os.PackageService)
             .Where(os => os.OrderId == orderId && os.ServiceStatus == ServiceStatus.Pending)
-            .ToListAsync(cancellationToken);
+            .OrderBy(os => os.PackageService.ExecutionPhase)
+            .FirstOrDefaultAsync(cancellationToken);
 
-        foreach (var service in servicesToAssign)
+        if (firstPendingService == null) return;
+
+        var phase = firstPendingService.PackageService.ExecutionPhase;
+
+        if (phase == ExecutionPhase.Pickup)
         {
-            var driver = await FindAvailableDriverAsync(service.ScheduledStartTime, service.ScheduledEndTime, cancellationToken);
+            // Pickup phase → assign a Driver
+            var driver = await FindAvailableDriverAsync(
+                firstPendingService.ScheduledStartTime,
+                firstPendingService.ScheduledEndTime,
+                cancellationToken);
+
             if (driver != null)
             {
-                service.AssignedEmployeeId = driver.EmployeeId;
-                service.AssignedAt = DateTime.UtcNow;
-                service.ServiceStatus = ServiceStatus.Assigned;
+                firstPendingService.AssignedEmployeeId = driver.EmployeeId;
+                firstPendingService.AssignedAt = DateTime.UtcNow;
+                firstPendingService.ServiceStatus = ServiceStatus.Assigned;
 
                 _context.Notifications.Add(new Domain.Entities.Notification
                 {
                     UserId = driver.EmployeeId,
                     UserType = UserType.Employee,
                     NotificationType = NotificationType.OrderUpdated,
-                    Title = "You have been assigned to a new request (Car Service)",
-                    Message = $"Delivery request - Time: {service.ScheduledStartTime:dd/MM hh:mm tt}",
+                    Title = "You have been assigned to a new pickup (Car Service)",
+                    Message = $"Pickup request - Time: {firstPendingService.ScheduledStartTime:dd/MM hh:mm tt}",
+                    NotificationChannel = NotificationChannel.InApp,
+                    OrderId = orderId
+                });
+            }
+        }
+        else if (phase is ExecutionPhase.DepartureCheckin or ExecutionPhase.ArrivalCheckin)
+        {
+            // AirportCheckin phase → assign a BaggageHandler
+            var handler = await _context.Employees
+                .Where(e => e.JobRole == JobRole.BaggageHandler
+                         && e.IsActive
+                         && !e.IsDeleted)
+                .Include(e => e.AssignedOrderServices)
+                .FirstOrDefaultAsync(h =>
+                    !h.AssignedOrderServices.Any(s =>
+                        s.ServiceStatus == ServiceStatus.InProgress ||
+                        s.ServiceStatus == ServiceStatus.Assigned), cancellationToken);
+
+            if (handler != null)
+            {
+                firstPendingService.AssignedEmployeeId = handler.EmployeeId;
+                firstPendingService.AssignedAt = DateTime.UtcNow;
+                firstPendingService.ServiceStatus = ServiceStatus.Assigned;
+
+                _context.Notifications.Add(new Domain.Entities.Notification
+                {
+                    UserId = handler.EmployeeId,
+                    UserType = UserType.Employee,
+                    NotificationType = NotificationType.OrderUpdated,
+                    Title = "You have been assigned to receive bags at the airport",
+                    Message = $"Airport pickup - Time: {firstPendingService.ScheduledStartTime:dd/MM hh:mm tt}",
                     NotificationChannel = NotificationChannel.InApp,
                     OrderId = orderId
                 });
@@ -1394,26 +1495,23 @@ public class CarServiceOrderService : ICarServiceOrderService
         }
 
         // Notify customer
-        if (order != null)
+        _context.Notifications.Add(new Domain.Entities.Notification
         {
-            _context.Notifications.Add(new Domain.Entities.Notification
-            {
-                UserId = order.CustomerId,
-                UserType = UserType.Customer,
-                NotificationType = NotificationType.OrderUpdated,
-                Title = "Order confirmed",
-                Message = "A driver has been successfully assigned to your request",
-                NotificationChannel = NotificationChannel.InApp,
-                OrderId = orderId
-            });
+            UserId = order.CustomerId,
+            UserType = UserType.Customer,
+            NotificationType = NotificationType.OrderUpdated,
+            Title = "Order confirmed",
+            Message = "An employee has been successfully assigned to your request",
+            NotificationChannel = NotificationChannel.InApp,
+            OrderId = orderId
+        });
 
-            await _pusher.PushToCustomerAsync(
-                order.CustomerId,
-                "Order confirmed",
-                "A driver has been successfully assigned to your request",
-                "OrderConfirmed",
-                orderId);
-        }
+        await _pusher.PushToCustomerAsync(
+            order.CustomerId,
+            "Order confirmed",
+            "An employee has been successfully assigned to your request",
+            "OrderConfirmed",
+            orderId);
 
         await _context.SaveChangesAsync(cancellationToken);
     }

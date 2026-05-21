@@ -14,6 +14,7 @@ public class OrderDetailsResponse
     public bool HasBoardingPass { get; set; }
     public AppointmentDto? Appointment { get; set; }
     public List<TrackingStepDto> TrackingStatus { get; set; } = new();
+    public string? TrackingMessage { get; set; }
 }
 
 public class AppointmentDto

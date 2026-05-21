@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Travora.Infrastructure.Data;
 
@@ -11,9 +12,11 @@ using Travora.Infrastructure.Data;
 namespace Travora.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260519003255_AddMultiPhaseCarServiceSupport")]
+    partial class AddMultiPhaseCarServiceSupport
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -517,9 +520,6 @@ namespace Travora.Infrastructure.Data.Migrations
                     b.Property<int>("ImageSizeKb")
                         .HasColumnType("int");
 
-                    b.Property<int?>("OrderServiceId")
-                        .HasColumnType("int");
-
                     b.HasKey("PhotoId");
 
                     b.HasIndex("BaggageId");
@@ -529,8 +529,6 @@ namespace Travora.Infrastructure.Data.Migrations
                     b.HasIndex("CapturedByEmployeeId");
 
                     b.HasIndex("CheckpointId");
-
-                    b.HasIndex("OrderServiceId");
 
                     b.ToTable("BaggagePhotos");
                 });
@@ -560,7 +558,7 @@ namespace Travora.Infrastructure.Data.Migrations
                         .HasPrecision(10, 6)
                         .HasColumnType("decimal(10,6)");
 
-                    b.Property<int?>("HandledByEmployeeId")
+                    b.Property<int>("HandledByEmployeeId")
                         .HasColumnType("int");
 
                     b.Property<int>("Status")
@@ -3135,11 +3133,6 @@ namespace Travora.Infrastructure.Data.Migrations
                         .HasForeignKey("CheckpointId")
                         .OnDelete(DeleteBehavior.Restrict);
 
-                    b.HasOne("Travora.Domain.Entities.OrderService", "OrderService")
-                        .WithMany()
-                        .HasForeignKey("OrderServiceId")
-                        .OnDelete(DeleteBehavior.NoAction);
-
                     b.Navigation("Baggage");
 
                     b.Navigation("CapturedByCustomer");
@@ -3147,8 +3140,6 @@ namespace Travora.Infrastructure.Data.Migrations
                     b.Navigation("CapturedByEmployee");
 
                     b.Navigation("Checkpoint");
-
-                    b.Navigation("OrderService");
                 });
 
             modelBuilder.Entity("Travora.Domain.Entities.BaggageTracking", b =>
@@ -3167,7 +3158,8 @@ namespace Travora.Infrastructure.Data.Migrations
                     b.HasOne("Travora.Domain.Entities.Employee", "HandledByEmployee")
                         .WithMany("BaggageTrackings")
                         .HasForeignKey("HandledByEmployeeId")
-                        .OnDelete(DeleteBehavior.Restrict);
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
 
                     b.HasOne("Travora.Domain.Entities.QrScan", "TriggeredByScan")
                         .WithMany("TriggeredTrackings")

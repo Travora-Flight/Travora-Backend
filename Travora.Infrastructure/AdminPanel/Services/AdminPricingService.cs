@@ -373,14 +373,18 @@ public class AdminPricingService : IAdminPricingService
         "pickup" => Travora.Domain.Enums.ServiceType.Pickup,
         "delivery" => Travora.Domain.Enums.ServiceType.Delivery,
         "tracking" => Travora.Domain.Enums.ServiceType.Tracking,
+        "departure_baggage_handling" or "departure" => Travora.Domain.Enums.ServiceType.DepartureBaggageHandling,
+        "arrival_baggage_handling" or "arrival" => Travora.Domain.Enums.ServiceType.ArrivalBaggageHandling,
         _ => throw new ArgumentException("Invalid service type")
     };
 
     private Travora.Domain.Enums.ExecutionPhase MapExecutionPhase(string phase) => phase.ToLower() switch
     {
         "pickup" => Travora.Domain.Enums.ExecutionPhase.Pickup,
-        "airport" => Travora.Domain.Enums.ExecutionPhase.AirportCheckin,
+        "departure_checkin" or "airport" => Travora.Domain.Enums.ExecutionPhase.DepartureCheckin,
+        "arrival_checkin" => Travora.Domain.Enums.ExecutionPhase.ArrivalCheckin,
         "delivery" => Travora.Domain.Enums.ExecutionPhase.Delivery,
+        "tracking" => Travora.Domain.Enums.ExecutionPhase.Tracking,
         _ => throw new ArgumentException("Invalid phase")
     };
 }

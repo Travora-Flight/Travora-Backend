@@ -30,5 +30,10 @@ public class BaggagePhotoConfiguration : IEntityTypeConfiguration<BaggagePhoto>
             .WithMany(c => c.BaggagePhotos)
             .HasForeignKey(b => b.CheckpointId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne(b => b.OrderService)
+            .WithMany()
+            .HasForeignKey(b => b.OrderServiceId)
+            .OnDelete(DeleteBehavior.NoAction);
     }
 }

@@ -12,10 +12,12 @@ public class BaggagePhoto
     public int? CapturedByCustomerId { get; set; }
     public int BaggageId { get; set; }
     public int? CheckpointId { get; set; }
+    public int? OrderServiceId { get; set; }
 
     // Navigation properties
     public Employee? CapturedByEmployee { get; set; }
     public Customer? CapturedByCustomer { get; set; }
     public Baggage Baggage { get; set; } = null!;
     public Checkpoint? Checkpoint { get; set; }
+    public OrderService? OrderService { get; set; }
 }

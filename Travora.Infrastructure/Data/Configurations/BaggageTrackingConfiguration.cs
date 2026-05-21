@@ -15,6 +15,7 @@ public class BaggageTrackingConfiguration : IEntityTypeConfiguration<BaggageTrac
         builder.HasOne(b => b.HandledByEmployee)
             .WithMany(e => e.BaggageTrackings)
             .HasForeignKey(b => b.HandledByEmployeeId)
+            .IsRequired(false)
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne(b => b.Baggage)

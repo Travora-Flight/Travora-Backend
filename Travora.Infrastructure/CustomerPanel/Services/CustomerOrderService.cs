@@ -46,51 +46,55 @@ public class CustomerOrderService : ICustomerOrderService
     // ===================================================================
     private static readonly Dictionary<string, List<(string Step, BaggageTrackingStatus DbStatus, string Source, string Description)>> TrackingStepsByPackage = new()
     {
+        // Door To Door: Check-in → Arrived at Airport → Security → Terminal → Gate → Loaded → Arrived → Customs → Out for Delivery → Delivered
         [PackageNames.DoorToDoor] = new()
         {
-            ("Order Confirmed",    BaggageTrackingStatus.Registered,       "db",      "Order confirmed and service scheduled"),
-            ("Picked Up",          BaggageTrackingStatus.PickedUp,         "db",      "Bags picked up from your address"),
-            ("Check-In",           BaggageTrackingStatus.PickedUp,         "airline", "Bags checked-in at the airport"),
-            ("Security Check",     BaggageTrackingStatus.AtSecurity,       "airline", "Bags at security check"),
-            ("At Customs",         BaggageTrackingStatus.AtCustoms,        "airline", "Bags at customs"),
-            ("At Gate",            BaggageTrackingStatus.AtGate,           "airline", "Bags at the gate"),
-            ("Loaded on Aircraft", BaggageTrackingStatus.LoadedOnAircraft, "airline", "Bags loaded on the aircraft"),
-            ("Arrived",            BaggageTrackingStatus.Arrived,          "airline", "Aircraft arrived at destination"),
-            ("Out for Delivery",   BaggageTrackingStatus.OutForDelivery,   "db",      "Bags out for delivery"),
-            ("Delivered",          BaggageTrackingStatus.Delivered,        "db",      "Delivered successfully")
+            ("Order Confirmed",      BaggageTrackingStatus.Registered,       "db",      "Order confirmed and service scheduled"),
+            ("Check-in",             BaggageTrackingStatus.PickedUp,         "db",      "Bags picked up and checked-in by our driver"),
+            ("Arrived at Airport",   BaggageTrackingStatus.ArrivedAtAirport, "db",      "Bags arrived at departure airport"),
+            ("Security Check",       BaggageTrackingStatus.AtSecurity,       "airline", "Bags passed security check"),
+            ("Terminal",             BaggageTrackingStatus.AtTerminal,       "airline", "Bags at airport terminal"),
+            ("Gate",                 BaggageTrackingStatus.AtGate,           "airline", "Bags at boarding gate"),
+            ("Loaded on Aircraft",   BaggageTrackingStatus.LoadedOnAircraft, "airline", "Bags loaded on the aircraft"),
+            ("Arrived at Dest",      BaggageTrackingStatus.Arrived,          "airline", "Aircraft arrived at destination"),
+            ("Customs Cleared",      BaggageTrackingStatus.AtCustoms,        "db",      "Bags cleared customs at destination"),
+            ("Out for Delivery",     BaggageTrackingStatus.OutForDelivery,   "db",      "Bags out for delivery to your address"),
+            ("Delivered",            BaggageTrackingStatus.Delivered,        "db",      "Delivered successfully")
         },
+        // Car Service To Airport: Check-in → Arrived at Airport → Security → Terminal → Gate → Loaded on Aircraft
         [PackageNames.CarServiceToAirport] = new()
         {
-            ("Order Confirmed",    BaggageTrackingStatus.Registered,       "db",      "Order confirmed"),
-            ("Picked Up",          BaggageTrackingStatus.PickedUp,         "db",      "Bags picked up from your address"),
-            ("Check-In",           BaggageTrackingStatus.PickedUp,         "airline", "Bags checked-in at the airport"),
-            ("Security Check",     BaggageTrackingStatus.AtSecurity,       "airline", "Bags at security check"),
-            ("At Gate",            BaggageTrackingStatus.AtGate,           "airline", "Bags at the gate"),
-            ("Loaded on Aircraft", BaggageTrackingStatus.LoadedOnAircraft, "airline", "Bags loaded on the aircraft"),
-            ("Arrived",            BaggageTrackingStatus.Arrived,          "airline", "Bags arrived at destination")
+            ("Order Confirmed",      BaggageTrackingStatus.Registered,       "db",      "Order confirmed"),
+            ("Check-in",             BaggageTrackingStatus.PickedUp,         "db",      "Bags picked up and checked-in by our driver"),
+            ("Arrived at Airport",   BaggageTrackingStatus.ArrivedAtAirport, "db",      "Bags arrived at departure airport"),
+            ("Security Check",       BaggageTrackingStatus.AtSecurity,       "airline", "Bags passed security check"),
+            ("Terminal",             BaggageTrackingStatus.AtTerminal,       "airline", "Bags at airport terminal"),
+            ("Gate",                 BaggageTrackingStatus.AtGate,           "airline", "Bags at boarding gate"),
+            ("Loaded on Aircraft",   BaggageTrackingStatus.LoadedOnAircraft, "airline", "Bags loaded on the aircraft")
         },
+        // Car Service From Airport: Arrived at Dest → Customs (airline) → Out for Delivery → Delivered
         [PackageNames.CarServiceFromAirport] = new()
         {
-            ("Order Confirmed",    BaggageTrackingStatus.Registered,      "db",      "Order confirmed"),
-            ("Arrived",            BaggageTrackingStatus.Arrived,         "airline", "Aircraft arrived at destination"),
-            ("Baggage Belt",       BaggageTrackingStatus.OnBelt,          "airline", "Bags on baggage belt"),
-            ("Out for Delivery",   BaggageTrackingStatus.OutForDelivery,  "db",      "Bags out for delivery"),
-            ("Delivered",          BaggageTrackingStatus.Delivered,       "db",      "Delivered successfully")
+            ("Order Confirmed",      BaggageTrackingStatus.Registered,       "db",      "Order confirmed"),
+            ("Arrived at Dest",      BaggageTrackingStatus.Arrived,          "airline", "Aircraft arrived at destination"),
+            ("Customs",              BaggageTrackingStatus.AtCustoms,        "airline", "Bags at destination customs"),
+            ("Out for Delivery",     BaggageTrackingStatus.OutForDelivery,   "db",      "Bags out for delivery to your address"),
+            ("Delivered",            BaggageTrackingStatus.Delivered,        "db",      "Delivered successfully")
         },
+        // Bag Tracking: Security → Terminal → Gate → Loaded → Arrived → Baggage Belt (+ optional At Baggage Office)
         [PackageNames.TrackingBaggage] = new()
         {
-            ("Bags Registered",    BaggageTrackingStatus.Registered,       "db",      "placeholder"),
-            ("Check-In",           BaggageTrackingStatus.PickedUp,         "airline", "Bags checked-in at the airport"),
-            ("Security Check",     BaggageTrackingStatus.AtSecurity,       "airline", "Bags at security check"),
-            ("At Customs",         BaggageTrackingStatus.AtCustoms,        "airline", "Bags at customs"),
-            ("At Terminal",        BaggageTrackingStatus.AtTerminal,       "airline", "Bags at terminal"),
-            ("At Gate",            BaggageTrackingStatus.AtGate,           "airline", "Bags at the gate"),
-            ("Loaded on Aircraft", BaggageTrackingStatus.LoadedOnAircraft, "airline", "Bags loaded on the aircraft"),
-            ("Arrived",            BaggageTrackingStatus.Arrived,          "airline", "Aircraft arrived at destination"),
-            ("Ready for Pickup",   BaggageTrackingStatus.OnBelt,           "airline", "Bags ready for pickup from baggage belt")
+            ("Bags Registered",      BaggageTrackingStatus.Registered,       "db",      "Bags registered for tracking"),
+            ("Security Check",       BaggageTrackingStatus.AtSecurity,       "airline", "Bags passed security check"),
+            ("Terminal",             BaggageTrackingStatus.AtTerminal,       "airline", "Bags at terminal"),
+            ("Gate",                 BaggageTrackingStatus.AtGate,           "airline", "Bags at the gate"),
+            ("Loaded on Aircraft",   BaggageTrackingStatus.LoadedOnAircraft, "airline", "Bags loaded on the aircraft"),
+            ("Arrived at Dest",      BaggageTrackingStatus.Arrived,          "airline", "Aircraft arrived at destination"),
+            ("Baggage Belt",         BaggageTrackingStatus.OnBelt,           "airline", "Bags ready for pickup from baggage belt")
         }
     };
 
+    // Maps the airline API 'currentLocation' values to our tracking status
     private static readonly Dictionary<string, BaggageTrackingStatus> LocationToStatusMap = new(StringComparer.OrdinalIgnoreCase)
     {
         ["Check-In"]           = BaggageTrackingStatus.PickedUp,
@@ -99,6 +103,7 @@ public class CustomerOrderService : ICustomerOrderService
         ["Terminal"]           = BaggageTrackingStatus.AtTerminal,
         ["Gate"]               = BaggageTrackingStatus.AtGate,
         ["Loaded on Aircraft"] = BaggageTrackingStatus.LoadedOnAircraft,
+        ["Arrived at Dest"]    = BaggageTrackingStatus.Arrived,
         ["Arrived"]            = BaggageTrackingStatus.Arrived,
         ["Baggage Belt"]       = BaggageTrackingStatus.OnBelt
     };
@@ -193,7 +198,6 @@ public class CustomerOrderService : ICustomerOrderService
             .Include(o => o.OrderCompanions).ThenInclude(oc => oc.Companion)
             .Include(o => o.Baggages).ThenInclude(b => b.BaggageTrackings)
             .Include(o => o.OrderServices)
-            .AsNoTracking()
             .FirstOrDefaultAsync(o => o.OrderId == orderId, cancellationToken);
 
         if (order == null)
@@ -220,20 +224,14 @@ public class CustomerOrderService : ICustomerOrderService
                 from = order.Flight?.DepartureIataCode;
                 to = order.DeliveryLocation?.City;
                 break;
+            case PackageNames.TrackingBaggage:
+                from = order.Flight?.DepartureIataCode;
+                to = order.Flight?.ArrivalIataCode;
+                break;
         }
 
         if (order.OrderStatus == OrderStatus.Pending)
         {
-            var pendingSteps = TrackingStepsByPackage.TryGetValue(packageName, out var ps)
-                ? ps.Select((s, index) => new TrackingStepDto
-                  {
-                      Step = s.Step,
-                      Description = index == 0 ? $"{order.TotalBaggageCount} bags registered in system" : null,
-                      IsDone = false,
-                      Timestamp = null
-                  }).ToList()
-                : new List<TrackingStepDto>();
-
             var totalWt = order.Baggages.Sum(b => b.TotalWeight ?? 0m);
 
             return new OrderDetailsResponse
@@ -249,23 +247,21 @@ public class CustomerOrderService : ICustomerOrderService
                 CanCancel = true,
                 HasBoardingPass = packageName is PackageNames.DoorToDoor or PackageNames.CarServiceToAirport,
                 Appointment = null,
-                TrackingStatus = pendingSteps
+                TrackingStatus = new List<TrackingStepDto>(),
+                TrackingMessage = "Tracking is not available until payment is completed"
             };
         }
 
-        // --- Tracking ---
-        // 1) DB tracking — last status per bag
-        var dbTrackingMap = new Dictionary<int, (BaggageTrackingStatus Status, DateTime ArrivalTime)>();
-        foreach (var bag in order.Baggages)
-        {
-            var lastTracking = bag.BaggageTrackings
-                .OrderByDescending(bt => bt.ArrivalTime)
-                .FirstOrDefault();
-            if (lastTracking != null)
-                dbTrackingMap[bag.BaggageId] = (lastTracking.Status, lastTracking.ArrivalTime);
-        }
+        // ===================================================================
+        // TRACKING — Persist airline updates & build per-step timestamps
+        // ===================================================================
 
-        // 2) Airline tracking — call by-ticket for all tickets in parallel
+        // 1) Collect all existing BaggageTracking records per bag (keyed by status)
+        var allTrackingRecords = order.Baggages
+            .SelectMany(b => b.BaggageTrackings)
+            .ToList();
+
+        // 2) Query Airline API for current status per bag
         var airlineBagMap = new Dictionary<string, (BaggageTrackingStatus Status, DateTime? UpdatedAt)>(StringComparer.OrdinalIgnoreCase);
         try
         {
@@ -276,11 +272,8 @@ public class CustomerOrderService : ICustomerOrderService
                 if (!string.IsNullOrEmpty(oc.TicketNumber))
                     ticketNumbers.Add(oc.TicketNumber);
 
-            var airlineTasks = ticketNumbers
-                .Select(tn => _airlineService.GetBaggageByTicketAsync(tn, cancellationToken))
-                .ToList();
-
-            var airlineResults = await Task.WhenAll(airlineTasks);
+            var airlineResults = await Task.WhenAll(
+                ticketNumbers.Select(tn => _airlineService.GetBaggageByTicketAsync(tn, cancellationToken)));
 
             foreach (var result in airlineResults)
             {
@@ -296,58 +289,69 @@ public class CustomerOrderService : ICustomerOrderService
             _logger.LogWarning(ex, "Airline API failed for order {OrderId}, using DB tracking only", orderId);
         }
 
-        // 3) Merge — MAX per bag, then MAX overall
-        var overallStatus = BaggageTrackingStatus.Registered;
-        // Map for airline timestamps keyed by status
-        var airlineTimestamps = new Dictionary<BaggageTrackingStatus, DateTime?>();
-        var dbTimestamps = new Dictionary<BaggageTrackingStatus, DateTime>();
-
+        // 3) Persist NEW airline statuses to BaggageTracking (only if not already recorded)
+        var newTrackingRecords = new List<Domain.Entities.BaggageTracking>();
         foreach (var bag in order.Baggages)
         {
-            var dbStatus = dbTrackingMap.ContainsKey(bag.BaggageId) ? dbTrackingMap[bag.BaggageId].Status : BaggageTrackingStatus.Registered;
-            var airlineStatus = BaggageTrackingStatus.Registered;
-            DateTime? airlineTimestamp = null;
+            if (string.IsNullOrEmpty(bag.BaggageNumber)) continue;
+            if (!airlineBagMap.TryGetValue(bag.BaggageNumber, out var airlineData)) continue;
 
-            if (!string.IsNullOrEmpty(bag.BaggageNumber) && airlineBagMap.TryGetValue(bag.BaggageNumber, out var airlineData))
-            {
-                airlineStatus = airlineData.Status;
-                airlineTimestamp = airlineData.UpdatedAt;
-            }
+            var existingStatuses = allTrackingRecords
+                .Where(t => t.BaggageId == bag.BaggageId)
+                .Select(t => t.Status)
+                .ToHashSet();
 
-            var baggageStatus = (BaggageTrackingStatus)Math.Max((int)dbStatus, (int)airlineStatus);
-            if ((int)baggageStatus > (int)overallStatus)
-                overallStatus = baggageStatus;
-
-            // Collect timestamps
-            if (dbTrackingMap.ContainsKey(bag.BaggageId))
+            // Only persist the CURRENT airline status (the one actually reported)
+            if (!existingStatuses.Contains(airlineData.Status))
             {
-                if (!dbTimestamps.ContainsKey(dbStatus) || dbTrackingMap[bag.BaggageId].ArrivalTime > dbTimestamps[dbStatus])
-                    dbTimestamps[dbStatus] = dbTrackingMap[bag.BaggageId].ArrivalTime;
-            }
-            if (airlineTimestamp.HasValue && airlineStatus != BaggageTrackingStatus.Registered)
-            {
-                foreach (var statusValue in Enum.GetValues<BaggageTrackingStatus>())
+                var record = new Domain.Entities.BaggageTracking
                 {
-                    if ((int)statusValue <= (int)airlineStatus)
-                    {
-                        if (!airlineTimestamps.ContainsKey(statusValue) || airlineTimestamp > airlineTimestamps[statusValue])
-                            airlineTimestamps[statusValue] = airlineTimestamp;
-                    }
-                }
+                    BaggageId = bag.BaggageId,
+                    Status = airlineData.Status,
+                    ArrivalTime = airlineData.UpdatedAt ?? DateTime.UtcNow,
+                    HandledByEmployeeId = null, // Airline-sourced
+                    GpsLatitude = 0,
+                    GpsLongitude = 0
+                };
+                newTrackingRecords.Add(record);
             }
         }
 
-        // Also collect all DB tracking timestamps per status (for steps)
+        if (newTrackingRecords.Count > 0)
+        {
+            _context.BaggageTrackings.AddRange(newTrackingRecords);
+            await _context.SaveChangesAsync(cancellationToken);
+
+            // Merge into our working set
+            allTrackingRecords.AddRange(newTrackingRecords);
+        }
+
+        // 4) Determine overall status: per bag MAX(all statuses), then MIN across bags
+        var overallStatus = BaggageTrackingStatus.Cancelled;
+        var hasBags = order.Baggages.Any();
+
         foreach (var bag in order.Baggages)
         {
-            foreach (var bt in bag.BaggageTrackings)
-            {
-                if (!dbTimestamps.ContainsKey(bt.Status) || bt.ArrivalTime > dbTimestamps[bt.Status])
-                    dbTimestamps[bt.Status] = bt.ArrivalTime;
-            }
+            var bagHighest = allTrackingRecords
+                .Where(t => t.BaggageId == bag.BaggageId)
+                .Select(t => (int)t.Status)
+                .DefaultIfEmpty((int)BaggageTrackingStatus.Registered)
+                .Max();
+
+            if (bagHighest < (int)overallStatus)
+                overallStatus = (BaggageTrackingStatus)bagHighest;
         }
 
-        // Auto-Complete logic for Bag Tracking
+        if (!hasBags || overallStatus == BaggageTrackingStatus.Cancelled)
+            overallStatus = BaggageTrackingStatus.Registered;
+
+        // 5) Build timestamp lookup: for each status, take the LATEST ArrivalTime across all bags
+        //    (the time the last bag reached that status = when ALL bags reached it)
+        var timestampByStatus = allTrackingRecords
+            .GroupBy(t => t.Status)
+            .ToDictionary(g => g.Key, g => g.Max(t => t.ArrivalTime));
+
+        // 6) Auto-Complete logic for Bag Tracking
         if (packageName == PackageNames.TrackingBaggage && 
             overallStatus >= BaggageTrackingStatus.OnBelt && 
             order.OrderStatus != OrderStatus.Completed)
@@ -389,33 +393,26 @@ public class CustomerOrderService : ICustomerOrderService
                     "OrderCompleted",
                     orderId);
                 
-                // Update local order variable for accurate response
                 order.OrderStatus = OrderStatus.Completed;
             }
         }
 
-        // Build tracking steps
+        // 7) Build tracking steps with real per-step timestamps
         var trackingSteps = new List<TrackingStepDto>();
         if (TrackingStepsByPackage.TryGetValue(packageName, out var steps))
         {
             foreach (var (stepName, stepStatus, source, description) in steps)
             {
                 bool isDone = (int)overallStatus >= (int)stepStatus;
-                DateTime? timestamp = null;
 
-                if (isDone)
-                {
-                    if (source == "db" && dbTimestamps.TryGetValue(stepStatus, out var dbTs))
-                        timestamp = dbTs;
-                    else if (source == "airline" && airlineTimestamps.TryGetValue(stepStatus, out var airTs))
-                        timestamp = airTs;
-                }
+                // Get timestamp from the actual DB record for this specific status
+                DateTime? timestamp = isDone && timestampByStatus.TryGetValue(stepStatus, out var ts)
+                    ? ts
+                    : null;
 
-                string? stepDescription;
-                if (stepName == "Bags Registered" && packageName == PackageNames.TrackingBaggage)
-                    stepDescription = $"{order.TotalBaggageCount} bags registered in the system";
-                else
-                    stepDescription = description;
+                string stepDescription = stepName == "Bags Registered" && packageName == PackageNames.TrackingBaggage
+                    ? $"{order.TotalBaggageCount} bags registered in the system"
+                    : description;
 
                 trackingSteps.Add(new TrackingStepDto
                 {
@@ -427,18 +424,11 @@ public class CustomerOrderService : ICustomerOrderService
             }
         }
 
-        if (packageName == PackageNames.TrackingBaggage)
+        // Registered step: use order creation time as fallback
+        var registeredStep = trackingSteps.FirstOrDefault();
+        if (registeredStep != null && registeredStep.IsDone && registeredStep.Timestamp == null)
         {
-            var firstStep = trackingSteps.FirstOrDefault();
-            if (firstStep != null && firstStep.IsDone && firstStep.Timestamp == null)
-            {
-                var orderService = await _context.OrderServices
-                    .Where(os => os.OrderId == orderId)
-                    .FirstOrDefaultAsync(cancellationToken);
-                
-                if (orderService?.ActualStartTime != null)
-                    firstStep.Timestamp = orderService.ActualStartTime;
-            }
+            registeredStep.Timestamp = order.CreatedAt;
         }
 
         // --- Status label ---
@@ -446,13 +436,15 @@ public class CustomerOrderService : ICustomerOrderService
         {
             BaggageTrackingStatus.Registered => "Order Confirmed",
             BaggageTrackingStatus.PickedUp => "Picked Up",
-            BaggageTrackingStatus.AtCustoms => "At Customs",
+            BaggageTrackingStatus.ArrivedAtAirport => "At Airport",
             BaggageTrackingStatus.AtSecurity => "Security Check",
             BaggageTrackingStatus.AtTerminal => "At Terminal",
             BaggageTrackingStatus.AtGate => "At Gate",
             BaggageTrackingStatus.LoadedOnAircraft => "Loaded on Aircraft",
             BaggageTrackingStatus.Arrived => "Arrived",
+            BaggageTrackingStatus.AtCustoms => "At Customs",
             BaggageTrackingStatus.OnBelt => "Baggage Belt",
+            BaggageTrackingStatus.AtBaggageOffice => "At Baggage Office",
             BaggageTrackingStatus.OutForDelivery => "Out for Delivery",
             BaggageTrackingStatus.Delivered => "Delivered",
             _ => order.OrderStatus.ToString()

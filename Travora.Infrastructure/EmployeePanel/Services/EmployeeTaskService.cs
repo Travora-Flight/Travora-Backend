@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Travora.Application.DTOs.Employee.Tasks;
 using Travora.Application.Interfaces.Services;
 using Travora.Application.Interfaces.Services.Employee;
+using Travora.Domain.Constants;
 using Travora.Domain.Entities;
 using Travora.Domain.Enums;
 using Travora.Infrastructure.Data;
@@ -112,7 +113,10 @@ public class EmployeeTaskService : IEmployeeTaskService
     public async Task<TaskActionResponse> StartTaskAsync(int employeeId, int orderServiceId)
     {
         var os = await _db.OrderServices
-            .Include(x => x.Order)
+            .Include(x => x.PackageService)
+            .Include(x => x.Order).ThenInclude(o => o.OrderServices)
+                .ThenInclude(s => s.PackageService)
+            .Include(x => x.Order).ThenInclude(o => o.Package)
             .FirstOrDefaultAsync(x => x.OrderServiceId == orderServiceId)
             ?? throw new KeyNotFoundException("Task not found");
 
@@ -123,41 +127,114 @@ public class EmployeeTaskService : IEmployeeTaskService
             throw new InvalidOperationException("Task not assigned yet or already started");
 
         var now = DateTime.UtcNow;
-        if (os.ScheduledStartTime > now.AddMinutes(30))
-            throw new InvalidOperationException("The order time has not arrived yet");
+        var currentPhase = os.PackageService?.ExecutionPhase;
+
+        // Phase-aware CanStart validation
+        switch (currentPhase)
+        {
+            case ExecutionPhase.Pickup:
+                if (os.ScheduledStartTime > now.AddMinutes(30))
+                    throw new InvalidOperationException("Cannot start yet. You can begin 30 minutes before the scheduled time.");
+                break;
+            case ExecutionPhase.Delivery:
+                if (os.ScheduledStartTime > now.AddHours(4))
+                    throw new InvalidOperationException("Cannot start yet. You can begin 4 hours before the scheduled delivery time.");
+                break;
+            // DepartureCheckin & ArrivalCheckin: can start immediately after assignment
+        }
 
         os.ServiceStatus = ServiceStatus.InProgress;
         os.ActualStartTime = now;
         os.UpdatedAt = now;
 
+        // Set ActualEndTime on the PREVIOUS phase (the previous employee's job ends when the next one starts)
+        var previousPhase = currentPhase switch
+        {
+            ExecutionPhase.DepartureCheckin => ExecutionPhase.Pickup,
+            ExecutionPhase.ArrivalCheckin => ExecutionPhase.DepartureCheckin,
+            ExecutionPhase.Delivery => ExecutionPhase.ArrivalCheckin,
+            _ => (ExecutionPhase?)null
+        };
+
+        if (previousPhase.HasValue)
+        {
+            var prevService = os.Order.OrderServices
+                .FirstOrDefault(s => s.PackageService?.ExecutionPhase == previousPhase.Value
+                                  && s.ServiceStatus == ServiceStatus.Completed
+                                  && s.ActualEndTime == null);
+            if (prevService != null)
+            {
+                prevService.ActualEndTime = now;
+                prevService.UpdatedAt = now;
+            }
+        }
+
         // Update order status if this is the first service to start
         var order = os.Order;
-        if (order.OrderStatus == OrderStatus.Pending)
+        if (order.OrderStatus == OrderStatus.Confirmed)
         {
             order.OrderStatus = OrderStatus.InProgress;
             order.UpdatedAt = now;
         }
 
-        // Notification
+        // Update tracking status based on phase
+        if (currentPhase == ExecutionPhase.DepartureCheckin)
+        {
+            // ArrivedAtAirport — bags arrived at departure airport
+            foreach (var bag in await _db.Baggages.Where(b => b.OrderId == order.OrderId).ToListAsync())
+            {
+                _db.BaggageTrackings.Add(new BaggageTracking
+                {
+                    Status = BaggageTrackingStatus.ArrivedAtAirport,
+                    HandledByEmployeeId = employeeId,
+                    BaggageId = bag.BaggageId,
+                    ArrivalTime = now,
+                    GpsLatitude = 0,
+                    GpsLongitude = 0
+                });
+            }
+        }
+        else if (currentPhase == ExecutionPhase.Delivery)
+        {
+            // OutForDelivery — driver is on the way
+            foreach (var bag in await _db.Baggages.Where(b => b.OrderId == order.OrderId).ToListAsync())
+            {
+                _db.BaggageTrackings.Add(new BaggageTracking
+                {
+                    Status = BaggageTrackingStatus.OutForDelivery,
+                    HandledByEmployeeId = employeeId,
+                    BaggageId = bag.BaggageId,
+                    ArrivalTime = now,
+                    GpsLatitude = 0,
+                    GpsLongitude = 0
+                });
+            }
+        }
+
+        // Phase-appropriate notification
+        var (title, message) = currentPhase switch
+        {
+            ExecutionPhase.Pickup => ("Your order is being processed", "Our driver is on the way to pick up your bags"),
+            ExecutionPhase.DepartureCheckin => ("Your bags arrived at the airport", "Your luggage is now at the airport and being processed"),
+            ExecutionPhase.ArrivalCheckin => ("Your bags cleared customs", "Our handler has received your bags at the destination"),
+            ExecutionPhase.Delivery => ("Out for delivery", "Your bags are on their way to you"),
+            _ => ("Order update", "Your order status has been updated")
+        };
+
         _db.Notifications.Add(new Notification
         {
             UserId = order.CustomerId,
             UserType = UserType.Customer,
             NotificationType = NotificationType.OrderUpdated,
-            Title = "Your order is being processed",
-            Message = "The employee is on the way to you",
+            Title = title,
+            Message = message,
             NotificationChannel = NotificationChannel.InApp,
             OrderId = order.OrderId
         });
 
         await _db.SaveChangesAsync();
 
-        await _pusher.PushToCustomerAsync(
-            order.CustomerId,
-            "Your order is being processed",
-            "The employee is on the way to you",
-            "OrderUpdated",
-            order.OrderId);
+        await _pusher.PushToCustomerAsync(order.CustomerId, title, message, "OrderUpdated", order.OrderId);
 
         return new TaskActionResponse
         {
@@ -175,7 +252,8 @@ public class EmployeeTaskService : IEmployeeTaskService
 
         var os = await _db.OrderServices
             .Include(x => x.PackageService)
-            .Include(x => x.Order).ThenInclude(o => o.Baggages).ThenInclude(b => b.BaggagePhotos)
+            .Include(x => x.Order).ThenInclude(o => o.Baggages)
+            .Include(x => x.Order).ThenInclude(o => o.Package)
             .Include(x => x.Order).ThenInclude(o => o.OrderServices)
                 .ThenInclude(s => s.PackageService)
             .FirstOrDefaultAsync(x => x.OrderServiceId == orderServiceId)
@@ -187,173 +265,106 @@ public class EmployeeTaskService : IEmployeeTaskService
         if (os.ServiceStatus != ServiceStatus.InProgress)
             throw new InvalidOperationException("Task not in progress");
 
-        // Driver validations
-        if (employee.JobRole == JobRole.Driver)
+        var currentPhase = os.PackageService?.ExecutionPhase;
+        var order = os.Order;
+        var baggageIds = order.Baggages.Select(b => b.BaggageId).ToList();
+
+        // ===== Phase-aware validations =====
+        if (currentPhase != ExecutionPhase.Tracking)
         {
-            var completeBaggageIds = os.Order.Baggages.Select(b => b.BaggageId).ToList();
-            var completeScannedIds = await _db.QrScans
-                .Where(q => completeBaggageIds.Contains(q.BaggageId))
+            // All phases require scanning ALL bags (per this OrderService)
+            var scannedCount = await _db.QrScans
+                .Where(q => baggageIds.Contains(q.BaggageId) && q.OrderServiceId == orderServiceId)
                 .Select(q => q.BaggageId)
                 .Distinct()
-                .ToListAsync();
-            var unscannedBags = completeBaggageIds.Count - completeScannedIds.Count;
-            if (unscannedBags > 0)
-                throw new InvalidOperationException("All bags must be scanned before completion");
+                .CountAsync();
 
-            var bagsWithoutPhotos = os.Order.Baggages.Count(b => b.BaggagePhotos.Count < 3);
-            if (bagsWithoutPhotos > 0)
-                throw new InvalidOperationException("Photos must be uploaded for all bags");
+            if (scannedCount < baggageIds.Count)
+                throw new InvalidOperationException($"All bags must be scanned. {baggageIds.Count - scannedCount} bags remaining.");
+
+            // All phases require 3+ photos per bag (per this OrderService)
+            var photoCounts = await _db.BaggagePhotos
+                .Where(p => baggageIds.Contains(p.BaggageId) && p.OrderServiceId == orderServiceId)
+                .GroupBy(p => p.BaggageId)
+                .Select(g => new { BaggageId = g.Key, Count = g.Count() })
+                .ToListAsync();
+
+            var bagsWithInsufficientPhotos = baggageIds
+                .Count(id => !photoCounts.Any(pc => pc.BaggageId == id && pc.Count >= 3));
+
+            if (bagsWithInsufficientPhotos > 0)
+                throw new InvalidOperationException($"At least 3 photos required per bag. {bagsWithInsufficientPhotos} bags need more photos.");
+
+            // Pickup phase ONLY: Security Lock must be set
+            if (currentPhase == ExecutionPhase.Pickup)
+            {
+                var unlockedBags = 0;
+                foreach (var bagId in baggageIds)
+                {
+                    var hasLock = await _db.SecurityLocks
+                        .AnyAsync(l => l.BaggageId == bagId && l.IsActive && !l.IsDeleted);
+                    if (!hasLock) unlockedBags++;
+                }
+                if (unlockedBags > 0)
+                    throw new InvalidOperationException($"Security lock must be set on all bags. {unlockedBags} bags need a lock.");
+            }
         }
 
         var now = DateTime.UtcNow;
         os.ServiceStatus = ServiceStatus.Completed;
-        os.ActualEndTime = now;
         os.UpdatedAt = now;
-
-        var order = os.Order;
-        var executionPhase = os.PackageService?.ExecutionPhase;
+        // ActualEndTime will be set by the NEXT phase's StartTask, except for the last phase
+        
+        // ===== Tracking status updates =====
+        if (currentPhase == ExecutionPhase.Pickup)
+        {
+            // PickedUp — all bags scanned, so mark them all
+            foreach (var bagId in baggageIds)
+            {
+                _db.BaggageTrackings.Add(new BaggageTracking
+                {
+                    Status = BaggageTrackingStatus.PickedUp,
+                    HandledByEmployeeId = employeeId,
+                    BaggageId = bagId,
+                    ArrivalTime = now
+                });
+            }
+        }
+        else if (currentPhase == ExecutionPhase.ArrivalCheckin)
+        {
+            // AtCustoms — bags cleared customs (Door To Door only, set by Travora)
+            var packageName = order.Package?.PackageName;
+            if (packageName == PackageNames.DoorToDoor)
+            {
+                foreach (var bagId in baggageIds)
+                {
+                    _db.BaggageTrackings.Add(new BaggageTracking
+                    {
+                        Status = BaggageTrackingStatus.AtCustoms,
+                        HandledByEmployeeId = employeeId,
+                        BaggageId = bagId,
+                        ArrivalTime = now
+                    });
+                }
+            }
+        }
+        else if (currentPhase == ExecutionPhase.Delivery)
+        {
+            // Delivered
+            foreach (var bagId in baggageIds)
+            {
+                _db.BaggageTrackings.Add(new BaggageTracking
+                {
+                    Status = BaggageTrackingStatus.Delivered,
+                    HandledByEmployeeId = employeeId,
+                    BaggageId = bagId,
+                    ArrivalTime = now
+                });
+            }
+        }
 
         // ===== Auto-Assign Chain =====
-        if (executionPhase == ExecutionPhase.Pickup)
-        {
-            // Pickup completed → auto-assign AirportCheckin to first available BaggageHandler
-            var airportCheckinService = order.OrderServices
-                .FirstOrDefault(s =>
-                    s.PackageService?.ExecutionPhase == ExecutionPhase.AirportCheckin
-                    && s.ServiceStatus == ServiceStatus.Pending);
-
-            if (airportCheckinService != null)
-            {
-                var handlers = await _db.Employees
-                    .Where(e => e.JobRole == JobRole.BaggageHandler
-                             && e.IsActive
-                             && !e.IsDeleted)
-                    .Include(e => e.AssignedOrderServices)
-                    .ToListAsync();
-
-                var availableHandler = handlers.FirstOrDefault(h =>
-                    !h.AssignedOrderServices.Any(s =>
-                        s.ServiceStatus == ServiceStatus.InProgress ||
-                        s.ServiceStatus == ServiceStatus.Assigned));
-
-                if (availableHandler != null)
-                {
-                    airportCheckinService.AssignedEmployeeId = availableHandler.EmployeeId;
-                    airportCheckinService.ServiceStatus = ServiceStatus.Assigned;
-                    airportCheckinService.AssignedAt = now;
-                    airportCheckinService.UpdatedAt = now;
-
-                    _db.Notifications.Add(new Notification
-                    {
-                        UserId = availableHandler.EmployeeId,
-                        UserType = UserType.Employee,
-                        NotificationType = NotificationType.OrderUpdated,
-                        Title = "You have been assigned to a new request",
-                        Message = "Please receive the bags from the driver at the Check-in point",
-                        NotificationChannel = NotificationChannel.InApp,
-                        OrderId = order.OrderId
-                    });
-
-                    await _pusher.PushToEmployeeAsync(
-                        availableHandler.EmployeeId,
-                        "You have been assigned to a new request",
-                        "Please receive the bags from the driver at the Check-in point",
-                        "NewTaskAssigned",
-                        order.OrderId);
-
-                    // Customer notification — bags at airport
-                    _db.Notifications.Add(new Notification
-                    {
-                        UserId = order.CustomerId,
-                        UserType = UserType.Customer,
-                        NotificationType = NotificationType.OrderUpdated,
-                        Title = "Your bags arrived at the airport",
-                        Message = "Your luggage is now at the airport and being processed",
-                        NotificationChannel = NotificationChannel.InApp,
-                        OrderId = order.OrderId
-                    });
-
-                    await _pusher.PushToCustomerAsync(
-                        order.CustomerId,
-                        "Your bags arrived at the airport",
-                        "Your luggage is now at the airport and being processed",
-                        "OrderUpdated",
-                        order.OrderId);
-                }
-            }
-        }
-        else if (executionPhase == ExecutionPhase.AirportCheckin)
-        {
-            // AirportCheckin completed → auto-assign Delivery to first available Driver
-            var deliveryService = order.OrderServices
-                .FirstOrDefault(s =>
-                    s.PackageService?.ExecutionPhase == ExecutionPhase.Delivery
-                    && s.ServiceStatus == ServiceStatus.Pending);
-
-            if (deliveryService != null)
-            {
-                var drivers = await _db.Employees
-                    .Where(e => e.JobRole == JobRole.Driver
-                             && e.IsActive
-                             && !e.IsDeleted)
-                    .Include(e => e.AssignedOrderServices)
-                    .ToListAsync();
-
-                var slotStart = deliveryService.ScheduledStartTime.TimeOfDay;
-                var slotEnd = deliveryService.ScheduledEndTime.TimeOfDay;
-                var date = deliveryService.ScheduledStartTime.Date;
-
-                var availableDriver = drivers.FirstOrDefault(d =>
-                    IsShiftCovering(d.ShiftType, slotStart, slotEnd) &&
-                    !HasConflict(d, date, slotStart, slotEnd));
-
-                if (availableDriver != null)
-                {
-                    deliveryService.AssignedEmployeeId = availableDriver.EmployeeId;
-                    deliveryService.ServiceStatus = ServiceStatus.Assigned;
-                    deliveryService.AssignedAt = now;
-                    deliveryService.UpdatedAt = now;
-
-                    _db.Notifications.Add(new Notification
-                    {
-                        UserId = availableDriver.EmployeeId,
-                        UserType = UserType.Employee,
-                        NotificationType = NotificationType.OrderUpdated,
-                        Title = "You have been assigned to a new delivery",
-                        Message = "Please receive the bags from the airport and deliver them to the customer",
-                        NotificationChannel = NotificationChannel.InApp,
-                        OrderId = order.OrderId
-                    });
-
-                    await _pusher.PushToEmployeeAsync(
-                        availableDriver.EmployeeId,
-                        "You have been assigned to a new delivery",
-                        "Please receive the bags from the airport and deliver them to the customer",
-                        "NewTaskAssigned",
-                        availableDriver.EmployeeId);
-
-                    // Customer notification — delivery driver assigned
-                    _db.Notifications.Add(new Notification
-                    {
-                        UserId = order.CustomerId,
-                        UserType = UserType.Customer,
-                        NotificationType = NotificationType.OrderUpdated,
-                        Title = "Delivery driver assigned",
-                        Message = "Your bags are on the way to you",
-                        NotificationChannel = NotificationChannel.InApp,
-                        OrderId = order.OrderId
-                    });
-
-                    await _pusher.PushToCustomerAsync(
-                        order.CustomerId,
-                        "Delivery driver assigned",
-                        "Your bags are on the way to you",
-                        "OrderUpdated",
-                        order.OrderId);
-                }
-                // If no driver -> remains Pending and Admin assigns manually
-            }
-        }
+        await AutoAssignNextPhaseAsync(os, order, currentPhase, now);
 
         // Check if all order services are completed
         var allCompleted = order.OrderServices.All(s =>
@@ -361,41 +372,52 @@ public class EmployeeTaskService : IEmployeeTaskService
 
         if (allCompleted)
         {
+            os.ActualEndTime = now; // Last phase sets its own end time
             order.OrderStatus = OrderStatus.Completed;
             order.UpdatedAt = now;
         }
 
-        // Notification to customer
-        _db.Notifications.Add(new Notification
-        {
-            UserId = order.CustomerId,
-            UserType = UserType.Customer,
-            NotificationType = allCompleted ? NotificationType.OrderCompleted : NotificationType.OrderUpdated,
-            Title = allCompleted ? "Your order has been fully completed" : "A stage of your order has been completed",
-            Message = allCompleted ? "Your bag has been successfully delivered ✅" : "The next stage is being processed",
-            NotificationChannel = NotificationChannel.InApp,
-            OrderId = order.OrderId
-        });
-
-        await _db.SaveChangesAsync();
-
+        // ===== Notifications =====
         if (allCompleted)
         {
-            await _pusher.PushToCustomerAsync(
-                order.CustomerId,
-                "Your order has been fully completed",
-                "Your bag has been successfully delivered ✅",
-                "OrderCompleted",
-                order.OrderId);
+            var packageName = order.Package?.PackageName ?? "";
+            var (title, message) = packageName switch
+            {
+                PackageNames.DoorToDoor => ("Your bags have been delivered!", "Your luggage has been safely delivered to your address. Thank you for using Travora! 🎉"),
+                PackageNames.CarServiceToAirport => ("Your bags are on the aircraft!", "Your luggage has been loaded on the aircraft. Have a safe flight! ✈️"),
+                PackageNames.CarServiceFromAirport => ("Your bags have been delivered!", "Your luggage has been safely delivered to your address. Thank you for using Travora! 🎉"),
+                _ => ("Order completed", "Your order has been completed successfully")
+            };
+
+            _db.Notifications.Add(new Notification
+            {
+                UserId = order.CustomerId,
+                UserType = UserType.Customer,
+                NotificationType = NotificationType.OrderCompleted,
+                Title = title,
+                Message = message,
+                NotificationChannel = NotificationChannel.InApp,
+                OrderId = order.OrderId
+            });
+
+            await _db.SaveChangesAsync();
+            await _pusher.PushToCustomerAsync(order.CustomerId, title, message, "OrderCompleted", order.OrderId);
         }
         else
         {
-            await _pusher.PushToCustomerAsync(
-                order.CustomerId,
-                "A stage of your order has been completed",
-                "The next stage is being processed",
-                "OrderUpdated",
-                order.OrderId);
+            _db.Notifications.Add(new Notification
+            {
+                UserId = order.CustomerId,
+                UserType = UserType.Customer,
+                NotificationType = NotificationType.OrderUpdated,
+                Title = "A stage of your order has been completed",
+                Message = "The next stage is being processed",
+                NotificationChannel = NotificationChannel.InApp,
+                OrderId = order.OrderId
+            });
+
+            await _db.SaveChangesAsync();
+            await _pusher.PushToCustomerAsync(order.CustomerId, "A stage of your order has been completed", "The next stage is being processed", "OrderUpdated", order.OrderId);
         }
 
         return new TaskActionResponse
@@ -406,6 +428,92 @@ public class EmployeeTaskService : IEmployeeTaskService
             CompletedAt = now,
             OrderCompleted = allCompleted
         };
+    }
+
+    // ===== Auto-Assign Next Phase =====
+    private async Task AutoAssignNextPhaseAsync(OrderService currentOs, Order order, ExecutionPhase? currentPhase, DateTime now)
+    {
+        var nextPhase = currentPhase switch
+        {
+            ExecutionPhase.Pickup => ExecutionPhase.DepartureCheckin,
+            ExecutionPhase.DepartureCheckin => ExecutionPhase.ArrivalCheckin,
+            ExecutionPhase.ArrivalCheckin => ExecutionPhase.Delivery,
+            _ => (ExecutionPhase?)null
+        };
+
+        if (!nextPhase.HasValue) return;
+
+        var nextService = order.OrderServices
+            .FirstOrDefault(s => s.PackageService?.ExecutionPhase == nextPhase.Value
+                              && s.ServiceStatus == ServiceStatus.Pending);
+
+        if (nextService == null) return;
+
+        // Determine role needed for next phase
+        var needsDriver = nextPhase is ExecutionPhase.Pickup or ExecutionPhase.Delivery;
+        var needsHandler = nextPhase is ExecutionPhase.DepartureCheckin or ExecutionPhase.ArrivalCheckin;
+
+        int? assignedId = null;
+
+        if (needsHandler)
+        {
+            var handler = await _db.Employees
+                .Where(e => e.JobRole == JobRole.BaggageHandler && e.IsActive && !e.IsDeleted)
+                .Include(e => e.AssignedOrderServices)
+                .FirstOrDefaultAsync(h => !h.AssignedOrderServices.Any(s =>
+                    s.ServiceStatus == ServiceStatus.InProgress || s.ServiceStatus == ServiceStatus.Assigned));
+
+            assignedId = handler?.EmployeeId;
+        }
+        else if (needsDriver)
+        {
+            var slotStart = nextService.ScheduledStartTime.TimeOfDay;
+            var slotEnd = nextService.ScheduledEndTime.TimeOfDay;
+            var date = nextService.ScheduledStartTime.Date;
+
+            var driver = await _db.Employees
+                .Where(e => e.JobRole == JobRole.Driver && e.IsActive && !e.IsDeleted && e.VehicleId != null)
+                .Include(e => e.AssignedOrderServices)
+                .ToListAsync();
+
+            var available = driver.FirstOrDefault(d =>
+                IsShiftCovering(d.ShiftType, slotStart, slotEnd) &&
+                !HasConflict(d, date, slotStart, slotEnd));
+
+            assignedId = available?.EmployeeId;
+        }
+
+        if (assignedId.HasValue)
+        {
+            nextService.AssignedEmployeeId = assignedId.Value;
+            nextService.ServiceStatus = ServiceStatus.Assigned;
+            nextService.AssignedAt = now;
+            nextService.UpdatedAt = now;
+
+            var phaseLabel = nextPhase switch
+            {
+                ExecutionPhase.DepartureCheckin => "airport check-in",
+                ExecutionPhase.ArrivalCheckin => "arrival check-in",
+                ExecutionPhase.Delivery => "delivery",
+                _ => "task"
+            };
+
+            _db.Notifications.Add(new Notification
+            {
+                UserId = assignedId.Value,
+                UserType = UserType.Employee,
+                NotificationType = NotificationType.OrderUpdated,
+                Title = $"New {phaseLabel} task assigned",
+                Message = $"You have been assigned to handle a {phaseLabel} for order #{order.OrderId}",
+                NotificationChannel = NotificationChannel.InApp,
+                OrderId = order.OrderId
+            });
+
+            await _pusher.PushToEmployeeAsync(assignedId.Value,
+                $"New {phaseLabel} task assigned",
+                $"You have been assigned to handle a {phaseLabel} for order #{order.OrderId}",
+                "NewTaskAssigned", order.OrderId);
+        }
     }
 
     public async Task<CompletedTasksResponse> GetCompletedTasksAsync(int employeeId, int page, int pageSize)

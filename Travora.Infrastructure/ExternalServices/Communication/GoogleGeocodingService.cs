@@ -31,12 +31,10 @@ public class GoogleGeocodingService : IGeocodingService
         if (result == null || result.Status != "OK" || result.Results == null || result.Results.Count == 0)
             return null;
 
-        // Try to find the most "human-readable" result. 
-        // In many regions (like Egypt), the first result might be a 'premise' with a plus code.
-        // We prefer a result that has a 'route' (street) component.
-        var selectedResult = result.Results.FirstOrDefault(r => 
-            r.AddressComponents?.Any(c => c.Types != null && c.Types.Contains("route")) == true) 
-            ?? result.Results[0];
+        // Always use the first result — Google returns them ordered from most
+        // precise to least precise. Searching for a 'route' component often
+        // picked a less specific result (e.g. "طريق بدون اسم").
+        var selectedResult = result.Results[0];
 
         var components = selectedResult.AddressComponents ?? new List<GoogleAddressComponent>();
 

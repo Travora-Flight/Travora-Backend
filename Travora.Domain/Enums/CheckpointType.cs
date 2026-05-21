@@ -9,5 +9,6 @@ public enum CheckpointType
     AirportGate = 5,       // Boarding gate
     AirportBaggageBelt = 6,// Airport baggage belt
     DeliveryPoint = 7,     // Delivery point to customer
-    TransitHub = 8         // Transit hub / Intermediate transport center
+    TransitHub = 8,        // Transit hub / Intermediate transport center
+    BaggageOffice = 9      // Lost baggage office at airport
 }
