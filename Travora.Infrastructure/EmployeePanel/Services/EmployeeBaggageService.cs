@@ -117,13 +117,21 @@ public class EmployeeBaggageService : IEmployeeBaggageService
                 throw new InvalidOperationException($"Tag number {tag.TagNumber} is already assigned to another baggage");
         }
 
-        // 4) Update baggage in DB
+        // 4) Verify tag matches if bag was already scanned in a previous phase
+        if (!string.IsNullOrEmpty(baggage.BaggageNumber) && !string.IsNullOrEmpty(tag.TagNumber)
+            && baggage.BaggageNumber != tag.TagNumber)
+        {
+            throw new InvalidOperationException(
+                $"You must scan the same bag that was previously registered. Expected: {baggage.BaggageNumber}");
+        }
+
+        // 5) Update baggage in DB
         baggage.BaggageNumber = tag.TagNumber;
         baggage.TotalWeight = tag.WeightKg;
         baggage.Destination = tag.Destination;
         baggage.UpdatedAt = DateTime.UtcNow;
 
-        // 4) Get GPS from Redis
+        // 6) Get GPS from Redis
         decimal? gpsLat = null, gpsLng = null;
         var locationJson = await _redis.GetAsync($"employee:{employeeId}:last_location");
         if (!string.IsNullOrEmpty(locationJson))
@@ -136,7 +144,7 @@ public class EmployeeBaggageService : IEmployeeBaggageService
             }
         }
 
-        // 5) Record QR Scan
+        // 7) Record QR Scan
         var scan = new QrScan
         {
             BaggageId = baggage.BaggageId,
@@ -150,7 +158,7 @@ public class EmployeeBaggageService : IEmployeeBaggageService
         _db.QrScans.Add(scan);
         await _db.SaveChangesAsync();
 
-        // 6) Record Baggage Tracking
+        // 8) Record Baggage Tracking
         _db.BaggageTrackings.Add(new BaggageTracking
         {
             Status = BaggageTrackingStatus.PickedUp,
@@ -163,7 +171,7 @@ public class EmployeeBaggageService : IEmployeeBaggageService
             GpsLongitude = gpsLng ?? 0
         });
 
-        // 7) Notification
+        // 9) Notification
         var orderWithBags = await _db.Orders
             .Include(o => o.Baggages)
                 .ThenInclude(b => b.BaggageTrackings)
@@ -246,6 +254,14 @@ public class EmployeeBaggageService : IEmployeeBaggageService
         if (baggage.BaggageNumber == null)
             throw new InvalidOperationException("Must scan the bag first");
 
+        // Determine the active OrderService for this employee (needed for scoped photo limits)
+        var activeOrderServiceId = baggage.Order.OrderServices
+            .Where(os => os.AssignedEmployeeId == employeeId &&
+                         os.ServiceStatus == ServiceStatus.InProgress)
+            .Select(os => (int?)os.OrderServiceId)
+            .FirstOrDefault()
+            ?? throw new InvalidOperationException("No active task found for this employee");
+
         // Requires active lock before uploading photos
         var hasActiveLock = await _db.SecurityLocks
             .AnyAsync(l => l.BaggageId == baggageId && l.IsActive && !l.IsDeleted);
@@ -253,14 +269,15 @@ public class EmployeeBaggageService : IEmployeeBaggageService
         if (!hasActiveLock)
             throw new InvalidOperationException("Must register the lock code first");
 
-        // Validate photo count (max 6 per baggage) directly against the DB
-        var existingCount = await _db.BaggagePhotos.CountAsync(p => p.BaggageId == baggageId);
+        // Validate photo count per THIS order service (each employee has their own limit of 6)
+        var existingCount = await _db.BaggagePhotos
+            .CountAsync(p => p.BaggageId == baggageId && p.OrderServiceId == activeOrderServiceId);
         if (existingCount >= 6)
-            throw new InvalidOperationException("Reached the maximum limit of 6 photos for this bag");
+            throw new InvalidOperationException("Reached the maximum limit of 6 photos for this bag in your task");
 
         var allowedToAdd = 6 - existingCount;
         if (photos.Count > allowedToAdd)
-            throw new InvalidOperationException($"Only {allowedToAdd} photos can be added, the bag has {existingCount} photos");
+            throw new InvalidOperationException($"Only {allowedToAdd} photos can be added, you already have {existingCount} photos for this bag");
 
         if (photos.Count < 3 && existingCount == 0)
             throw new InvalidOperationException("At least 3 photos must be uploaded to start");
@@ -270,12 +287,6 @@ public class EmployeeBaggageService : IEmployeeBaggageService
         if (photos.Any(p => !allowedTypes.Contains(p.ContentType.ToLower())))
             throw new InvalidOperationException("Only images can be uploaded (jpg/jpeg/png)");
 
-        // Determine the active OrderService for this employee
-        var activeOrderServiceId = baggage.Order.OrderServices
-            .Where(os => os.AssignedEmployeeId == employeeId &&
-                         os.ServiceStatus == ServiceStatus.InProgress)
-            .Select(os => (int?)os.OrderServiceId)
-            .FirstOrDefault();
 
         var uploadedUrls = new List<string>();
         foreach (var photo in photos)
@@ -297,29 +308,48 @@ public class EmployeeBaggageService : IEmployeeBaggageService
 
         await _db.SaveChangesAsync();
 
-        // Customer Notification — Photos uploaded
+        // Customer Notification — Only when ALL bags in the order have photos for this phase
         var photoOrder = baggage.Order;
-        _db.Notifications.Add(new Notification
+        var orderBaggageIds = await _db.Baggages
+            .Where(b => b.OrderId == photoOrder.OrderId)
+            .Select(b => b.BaggageId)
+            .ToListAsync();
+
+        var allBagsHavePhotos = true;
+        foreach (var bid in orderBaggageIds)
         {
-            UserId = photoOrder.CustomerId,
-            UserType = UserType.Customer,
-            NotificationType = NotificationType.BaggageUpdated,
-            Title = "Photos uploaded for your baggage",
-            Message = $"The employee uploaded {photos.Count} photos for bag {baggage.BaggageNumber}",
-            NotificationChannel = NotificationChannel.InApp,
-            OrderId = photoOrder.OrderId,
-            BaggageId = baggageId
-        });
-        await _db.SaveChangesAsync();
+            var photoCount = await _db.BaggagePhotos
+                .CountAsync(p => p.BaggageId == bid && p.OrderServiceId == activeOrderServiceId);
+            if (photoCount < 3) { allBagsHavePhotos = false; break; }
+        }
 
-        await _pusher.PushToCustomerAsync(
-            photoOrder.CustomerId,
-            "Photos uploaded for your baggage",
-            $"The employee uploaded {photos.Count} photos for bag {baggage.BaggageNumber}",
-            "BaggageUpdated",
-            photoOrder.OrderId);
+        if (allBagsHavePhotos)
+        {
+            var totalBags = orderBaggageIds.Count;
+            var notifTitle = "Photos uploaded for all your bags";
+            var notifMsg = $"The employee has uploaded photos for all {totalBags} bags in your order";
 
-        var totalPhotos = baggage.BaggagePhotos.Count + photos.Count;
+            _db.Notifications.Add(new Notification
+            {
+                UserId = photoOrder.CustomerId,
+                UserType = UserType.Customer,
+                NotificationType = NotificationType.BaggageUpdated,
+                Title = notifTitle,
+                Message = notifMsg,
+                NotificationChannel = NotificationChannel.InApp,
+                OrderId = photoOrder.OrderId
+            });
+            await _db.SaveChangesAsync();
+
+            await _pusher.PushToCustomerAsync(
+                photoOrder.CustomerId,
+                notifTitle,
+                notifMsg,
+                "BaggageUpdated",
+                photoOrder.OrderId);
+        }
+
+        var totalPhotos = existingCount + photos.Count;
 
         return new BaggagePhotoResponse
         {
@@ -382,27 +412,46 @@ public class EmployeeBaggageService : IEmployeeBaggageService
         _db.SecurityLocks.Add(newLock);
         await _db.SaveChangesAsync();
 
-        // Customer Notification — Lock registered
+        // Customer Notification — Only when ALL bags in the order have active locks
         var lockOrder = baggage.Order;
-        _db.Notifications.Add(new Notification
-        {
-            UserId = lockOrder.CustomerId,
-            UserType = UserType.Customer,
-            NotificationType = NotificationType.BaggageUpdated,
-            Title = "Lock registered on your baggage",
-            Message = $"A security lock has been applied to bag {baggage.BaggageNumber}",
-            NotificationChannel = NotificationChannel.InApp,
-            OrderId = lockOrder.OrderId,
-            BaggageId = baggageId
-        });
-        await _db.SaveChangesAsync();
+        var lockOrderBaggageIds = await _db.Baggages
+            .Where(b => b.OrderId == lockOrder.OrderId)
+            .Select(b => b.BaggageId)
+            .ToListAsync();
 
-        await _pusher.PushToCustomerAsync(
-            lockOrder.CustomerId,
-            "Lock registered on your baggage",
-            $"A security lock has been applied to bag {baggage.BaggageNumber}",
-            "BaggageUpdated",
-            lockOrder.OrderId);
+        var allBagsLocked = true;
+        foreach (var bid in lockOrderBaggageIds)
+        {
+            var hasLock = await _db.SecurityLocks
+                .AnyAsync(l => l.BaggageId == bid && l.IsActive && !l.IsDeleted);
+            if (!hasLock) { allBagsLocked = false; break; }
+        }
+
+        if (allBagsLocked)
+        {
+            var totalBags = lockOrderBaggageIds.Count;
+            var notifTitle = "All your bags have been secured";
+            var notifMsg = $"Security locks have been applied to all {totalBags} bags in your order";
+
+            _db.Notifications.Add(new Notification
+            {
+                UserId = lockOrder.CustomerId,
+                UserType = UserType.Customer,
+                NotificationType = NotificationType.BaggageUpdated,
+                Title = notifTitle,
+                Message = notifMsg,
+                NotificationChannel = NotificationChannel.InApp,
+                OrderId = lockOrder.OrderId
+            });
+            await _db.SaveChangesAsync();
+
+            await _pusher.PushToCustomerAsync(
+                lockOrder.CustomerId,
+                notifTitle,
+                notifMsg,
+                "BaggageUpdated",
+                lockOrder.OrderId);
+        }
 
         return new LockBaggageResponse
         {
@@ -487,32 +536,75 @@ public class EmployeeBaggageService : IEmployeeBaggageService
 
         await _db.SaveChangesAsync();
 
-        // Notification — special message for BaggageOffice
-        var (notifTitle, notifMsg) = newStatus == BaggageTrackingStatus.AtBaggageOffice
-            ? ("Your bag is at the Baggage Office", "Your bag has been moved to the lost baggage office. Please come with your passport to collect it.")
-            : ("Bag Update", $"Your bag is now at {employee.Checkpoint.CheckpointName}");
-
-        _db.Notifications.Add(new Notification
+        // Notification — BaggageOffice is always per-bag (urgent), otherwise per-order
+        if (newStatus == BaggageTrackingStatus.AtBaggageOffice)
         {
-            UserId = baggage.Order.CustomerId,
-            UserType = UserType.Customer,
-            NotificationType = NotificationType.BaggageUpdated,
-            Title = notifTitle,
-            Message = notifMsg,
-            NotificationChannel = NotificationChannel.InApp,
-            OrderId = baggage.OrderId,
-            BaggageId = baggage.BaggageId
-        });
+            // Baggage Office is urgent — always notify immediately per bag
+            var officeTitle = "Your bag is at the Baggage Office";
+            var officeMsg = "Your bag has been moved to the lost baggage office. Please come with your passport to collect it.";
 
-        await _db.SaveChangesAsync();
+            _db.Notifications.Add(new Notification
+            {
+                UserId = baggage.Order.CustomerId,
+                UserType = UserType.Customer,
+                NotificationType = NotificationType.BaggageUpdated,
+                Title = officeTitle,
+                Message = officeMsg,
+                NotificationChannel = NotificationChannel.InApp,
+                OrderId = baggage.OrderId,
+                BaggageId = baggage.BaggageId
+            });
+            await _db.SaveChangesAsync();
 
-        // SignalR Real-time
-        await _pusher.PushToCustomerAsync(
-            baggage.Order.CustomerId,
-            notifTitle,
-            notifMsg,
-            "BaggageUpdated",
-            baggage.OrderId);
+            await _pusher.PushToCustomerAsync(
+                baggage.Order.CustomerId,
+                officeTitle,
+                officeMsg,
+                "BaggageUpdated",
+                baggage.OrderId);
+        }
+        else
+        {
+            // Normal checkpoint — notify only when ALL bags in the order have reached this checkpoint
+            var cpOrderBaggageIds = await _db.Baggages
+                .Where(b => b.OrderId == baggage.OrderId)
+                .Select(b => b.BaggageId)
+                .ToListAsync();
+
+            var allBagsAtCheckpoint = true;
+            foreach (var bid in cpOrderBaggageIds)
+            {
+                var hasStatus = await _db.BaggageTrackings
+                    .AnyAsync(t => t.BaggageId == bid && t.Status == newStatus);
+                if (!hasStatus) { allBagsAtCheckpoint = false; break; }
+            }
+
+            if (allBagsAtCheckpoint)
+            {
+                var totalBags = cpOrderBaggageIds.Count;
+                var cpTitle = "Bag Update";
+                var cpMsg = $"All {totalBags} bags are now at {employee.Checkpoint.CheckpointName}";
+
+                _db.Notifications.Add(new Notification
+                {
+                    UserId = baggage.Order.CustomerId,
+                    UserType = UserType.Customer,
+                    NotificationType = NotificationType.BaggageUpdated,
+                    Title = cpTitle,
+                    Message = cpMsg,
+                    NotificationChannel = NotificationChannel.InApp,
+                    OrderId = baggage.OrderId
+                });
+                await _db.SaveChangesAsync();
+
+                await _pusher.PushToCustomerAsync(
+                    baggage.Order.CustomerId,
+                    cpTitle,
+                    cpMsg,
+                    "BaggageUpdated",
+                    baggage.OrderId);
+            }
+        }
 
         return new CheckpointUpdateResponse
         {
