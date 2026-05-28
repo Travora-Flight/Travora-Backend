@@ -13,4 +13,5 @@ public interface IAdminEmployeeService
     Task<EmployeeProfileResponse> UpdateEmployeeAsync(int employeeId, UpdateEmployeeRequest request);
     Task<bool> UpdateEmployeeStatusAsync(int employeeId, EmployeeStatusRequest request);
     Task<bool> DeleteEmployeeAsync(int employeeId);
+    Task<ResetPasswordResponse> ResetEmployeePasswordAsync(int adminId, int employeeId);
 }

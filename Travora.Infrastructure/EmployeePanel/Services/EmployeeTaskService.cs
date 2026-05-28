@@ -30,6 +30,7 @@ public class EmployeeTaskService : IEmployeeTaskService
             .Include(x => x.Order).ThenInclude(o => o.Baggages).ThenInclude(b => b.BaggageTrackings)
             .Include(x => x.Order).ThenInclude(o => o.Baggages).ThenInclude(b => b.Customer)
             .Include(x => x.Order).ThenInclude(o => o.Baggages).ThenInclude(b => b.Companion)
+            .Include(x => x.Order).ThenInclude(o => o.CustomsDeclarations).ThenInclude(cd => cd.CustomsItems).ThenInclude(ci => ci.Invoices)
             .Include(x => x.PackageService).ThenInclude(ps => ps.Service)
             .FirstOrDefaultAsync(x => x.OrderServiceId == orderServiceId)
             ?? throw new KeyNotFoundException("Task not found");
@@ -44,13 +45,20 @@ public class EmployeeTaskService : IEmployeeTaskService
         var order = os.Order;
         var location = order.PickupLocation;
 
-        // Query scanned baggage IDs from QrScans table
+        // Query scanned baggage IDs for THIS order service only (not globally)
         var orderBaggageIds = order.Baggages.Select(b => b.BaggageId).ToList();
         var scannedBaggageIds = await _db.QrScans
-            .Where(q => orderBaggageIds.Contains(q.BaggageId))
+            .Where(q => orderBaggageIds.Contains(q.BaggageId) && q.OrderServiceId == orderServiceId)
             .Select(q => q.BaggageId)
             .Distinct()
             .ToListAsync();
+
+        // Query photo counts for THIS order service only (each employee sees their own photos)
+        var photoCountsByBaggage = await _db.BaggagePhotos
+            .Where(p => orderBaggageIds.Contains(p.BaggageId) && p.OrderServiceId == orderServiceId)
+            .GroupBy(p => p.BaggageId)
+            .Select(g => new { BaggageId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.BaggageId, x => x.Count);
 
         var groupedBags = order.Baggages.GroupBy(b => new { b.OwnerType, b.CompanionId, b.CustomerId })
             .Select(g =>
@@ -81,11 +89,43 @@ public class EmployeeTaskService : IEmployeeTaskService
                             Destination = b.Destination,
                             CurrentStatus = lastTracking?.Status.ToString(),
                             IsScanned = scannedBaggageIds.Contains(b.BaggageId),
-                            PhotosCount = b.BaggagePhotos.Count
+                            PhotosCount = photoCountsByBaggage.GetValueOrDefault(b.BaggageId, 0)
                         };
                     }).ToList()
                 };
             }).ToList();
+
+        var customer = order.Customer;
+        var isArrivalHandling = os.PackageService?.Service?.ServiceType == ServiceType.ArrivalBaggageHandling;
+
+        // Build customs data only for ArrivalBaggageHandling
+        CustomsInfoDto? customsInfo = null;
+
+        if (isArrivalHandling)
+        {
+            var declaration = order.CustomsDeclarations.FirstOrDefault();
+            if (declaration != null)
+            {
+                customsInfo = new CustomsInfoDto
+                {
+                    DeclarationType = declaration.CustomsType.ToString(),
+                    TotalDeclaredValue = declaration.TotalDeclaredValue,
+                    TotalCustomsFee = declaration.TotalCustomsFee,
+                    Notes = declaration.Notes,
+                    Items = declaration.CustomsItems.Select(ci => new CustomsItemDto
+                    {
+                        ItemDescription = ci.ItemDescription,
+                        Category = ci.ExternalCategoryName,
+                        Quantity = ci.Quantity,
+                        DeclaredValue = ci.DeclaredValue,
+                        TotalValue = ci.TotalValue,
+                        CustomsRatePercentage = ci.CustomsRatePercentage,
+                        CustomsFee = ci.TotalCustomsValue,
+                        InvoiceUrls = ci.Invoices.Select(inv => inv.InvoicePath).ToList()
+                    }).ToList()
+                };
+            }
+        }
 
         return new TaskDetailResponse
         {
@@ -94,19 +134,23 @@ public class EmployeeTaskService : IEmployeeTaskService
             CanStart = canStart,
             ScheduledDate = os.ScheduledStartTime.ToString("dd/MM"),
             ScheduledTime = os.ScheduledStartTime.ToString("hh:mm tt"),
-            Type = os.PackageService.Service.ServiceName,
+            Type = os.PackageService?.Service?.ServiceName ?? string.Empty,
             Location = $"{location.City}, {location.StreetAddress}",
             GpsLatitude = location.GpsLatitude,
             GpsLongitude = location.GpsLongitude,
             MapUrl = $"https://maps.google.com/?q={location.GpsLatitude},{location.GpsLongitude}",
             ClientInfo = new ClientInfoDto
             {
-                Name = $"{order.Customer.Firstname} {order.Customer.Lastname}",
-                Mobile = order.Customer.PhoneNumber
+                Name = $"{customer.Firstname} {customer.Lastname}",
+                Mobile = customer.PhoneNumber,
+                PassportNumber = isArrivalHandling ? customer.PassportNumber : null,
+                Nationality = isArrivalHandling ? customer.Nationality : null,
+                PassportExpiryDate = isArrivalHandling ? customer.PassportExpiryDate.ToString("dd/MM/yyyy") : null
             },
             TotalBaggageCount = order.TotalBaggageCount,
             ScannedCount = scannedBaggageIds.Count,
-            Bags = groupedBags
+            Bags = groupedBags,
+            CustomsInfo = customsInfo
         };
     }
 

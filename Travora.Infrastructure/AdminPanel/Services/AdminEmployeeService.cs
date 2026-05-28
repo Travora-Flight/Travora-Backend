@@ -431,6 +431,43 @@ public class AdminEmployeeService : IAdminEmployeeService
         }
     }
 
+    public async Task<ResetPasswordResponse> ResetEmployeePasswordAsync(int adminId, int employeeId)
+    {
+        var employee = await _db.Employees.FindAsync(employeeId)
+            ?? throw new KeyNotFoundException("Employee not found");
+
+        // Generate new temp password
+        string tempPassword = GenerateStrongTempPassword();
+        string tempPasswordHash = BCrypt.Net.BCrypt.HashPassword(tempPassword);
+
+        // Reset credentials
+        employee.TempPassword = tempPasswordHash;
+        employee.PasswordHash = null;
+        employee.IsFirstLogin = true;
+        employee.UpdatedAt = DateTime.UtcNow;
+
+        await _db.SaveChangesAsync();
+
+        // Send email to admin with the new credentials
+        var admin = await _db.Admins.FindAsync(adminId);
+        if (admin != null)
+        {
+            await _emailService.SendNewEmployeeCredentialsAsync(
+                adminEmail: admin.Email,
+                employeeName: $"{employee.Firstname} {employee.Lastname}",
+                employeeEmail: employee.Email,
+                tempPassword: tempPassword
+            );
+        }
+
+        return new ResetPasswordResponse
+        {
+            Success = true,
+            TempPassword = tempPassword,
+            Message = "Password has been reset. New credentials have been sent via email."
+        };
+    }
+
     private string GenerateStrongTempPassword()
     {
         const string uppers = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";

@@ -16,4 +16,7 @@ public class TaskDetailResponse
     public int TotalBaggageCount { get; set; }
     public int ScannedCount { get; set; }
     public List<BaggageGroupDto> Bags { get; set; } = new();
+
+    // Customs-related (populated only for ArrivalBaggageHandling)
+    public CustomsInfoDto? CustomsInfo { get; set; }
 }
