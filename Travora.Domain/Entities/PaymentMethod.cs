@@ -15,6 +15,7 @@ public class PaymentMethod : IHasTimestamps, ISoftDelete
     public bool IsDefault { get; set; } = false;
     public bool IsActive { get; set; } = true;
     public bool IsDeleted { get; set; } = false;
+    public string? PaymobCardToken { get; set; }
     public DateTime AddedAt { get; set; } = DateTime.UtcNow;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }

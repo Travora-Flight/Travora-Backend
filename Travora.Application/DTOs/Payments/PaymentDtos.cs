@@ -3,6 +3,7 @@ namespace Travora.Application.DTOs.Payments;
 public class PaymentInitiateRequest
 {
     public int OrderId { get; set; }
+    public int? PaymentMethodId { get; set; }
 }
 
 public class PaymentInitiationResponse
