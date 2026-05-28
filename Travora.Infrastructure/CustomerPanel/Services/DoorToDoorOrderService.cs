@@ -11,6 +11,7 @@ using Travora.Domain.Entities;
 using Travora.Infrastructure.Data;
 using System.Text.Json;
 using Travora.Application.DTOs.Customer.Auth;
+using Travora.Infrastructure.Helpers;
 
 namespace Travora.Infrastructure.CustomerPanel.Services;
 
@@ -184,13 +185,13 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
 
             var ocrResult = await _ocrService.ExtractPassportDataAsync(tempPath);
 
-            if (ocrResult == null || ocrResult.ValidScore < 85)
-            {
-                return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Passport image is unclear or invalid. Please upload a clearer image." };
-            }
+            // Validate OCR result using shared helper (checks score >= 90, ValidExpirationDate, expiry, ValidNumber)
+            var (isOcrValid, ocrError) = PassportOcrValidationHelper.ValidateCompanionPassport(ocrResult);
+            if (!isOcrValid)
+                return new ValidateCompanionResponse { IsValid = false, ErrorMessage = ocrError };
 
             passportVerified = true;
-            finalPassportNumber = ocrResult.Number ?? string.Empty;
+            finalPassportNumber = ocrResult!.Number ?? string.Empty;
             ocrFirstName = ocrResult.Names ?? string.Empty;
             ocrLastName = ocrResult.Surname ?? string.Empty;
             ocrNationality = ocrResult.Nationality ?? string.Empty;
@@ -215,13 +216,8 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         }
 
         if (string.IsNullOrWhiteSpace(finalPassportNumber))
-        {
             return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Could not extract passport number from image. Please try again with a clearer photo." };
-        }
 
-        // Check passport expiry
-        if (ocrExpiry.HasValue && ocrExpiry.Value <= DateTime.UtcNow)
-            return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "The companion's passport is expired" };
 
         if (finalPassportNumber == draft.PassengerInfo?.PassportNumber)
             return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "You cannot add yourself as a companion" };

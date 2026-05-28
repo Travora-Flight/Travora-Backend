@@ -14,6 +14,7 @@ using Travora.Infrastructure.Data;
 using System.IO;
 using System.Text.Json;
 using Travora.Application.DTOs.Customer.Auth;
+using Travora.Infrastructure.Helpers;
 
 namespace Travora.Infrastructure.CustomerPanel.Services;
 
@@ -154,26 +155,24 @@ public class BagTrackingOrderService : IBagTrackingOrderService
 
             // 2) OCR Extract Data
             var ocrResult = await _ocrService.ExtractPassportDataAsync(tempPath);
-            if (ocrResult == null || ocrResult.ValidScore < 85)
-            {
-                return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Passport image is unclear. Please upload a clearer photo" };
-            }
+
+            // Validate OCR result using shared helper (checks score >= 90, ValidExpirationDate, expiry, ValidNumber)
+            var (isOcrValid, ocrError) = PassportOcrValidationHelper.ValidateCompanionPassport(ocrResult);
+            if (!isOcrValid)
+                return new ValidateCompanionResponse { IsValid = false, ErrorMessage = ocrError };
 
             // Parse dates extracted from OCR
-            DateTime.TryParse(ocrResult.DateOfBirthFormatted, out var dob);
+            DateTime.TryParse(ocrResult!.DateOfBirthFormatted, out var dob);
             DateTime.TryParse(ocrResult.ExpirationDateFormatted, out var expiry);
-
-            bool ocrPassed = true;
-            if (ocrPassed && expiry <= DateTime.UtcNow)
-            {
-                return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "The companion's passport is expired" };
-            }
 
             // Use OCR extracted data
             string extractedPassportNum = ocrResult.Number ?? string.Empty;
             string extFirstname = !string.IsNullOrWhiteSpace(ocrResult.Names) ? ocrResult.Names : "";
             string extLastname = !string.IsNullOrWhiteSpace(ocrResult.Surname) ? ocrResult.Surname : "";
             string extNationality = ocrResult.Nationality ?? "";
+
+            if (string.IsNullOrWhiteSpace(extractedPassportNum))
+                return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "Could not extract passport number from image. Please try again with a clearer photo." };
 
             if (extractedPassportNum == draft.PassengerInfo?.PassportNumber)
                 return new ValidateCompanionResponse { IsValid = false, ErrorMessage = "You cannot add yourself as a companion" };
@@ -222,7 +221,7 @@ public class BagTrackingOrderService : IBagTrackingOrderService
                 Nationality = !string.IsNullOrWhiteSpace(extNationality) ? extNationality : passengerData.Nationality,
                 DateOfBirth = dob != default ? dob : (DateTime.TryParse(passengerData.DateOfBirth, out var pdob) ? pdob : null),
                 PassportExpiryDate = expiry != default ? expiry : (DateTime.TryParse(passengerData.PassportExpiryDate, out var pexp) ? pexp : null),
-                IsVerified = ocrPassed,
+                IsVerified = true,
                 PassportFileSizeKb = (int)(request.PassportImage.Length / 1024),
                 PassportMimeType = request.PassportImage.ContentType,
                 PassportOcrResultJson = JsonSerializer.Serialize(ocrResult)

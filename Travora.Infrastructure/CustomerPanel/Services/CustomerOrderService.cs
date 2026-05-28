@@ -500,6 +500,26 @@ public class CustomerOrderService : ICustomerOrderService
             }
         }
 
+        // --- Tracking Message ---
+        string? trackingMessage = null;
+        bool allStepsDone = trackingSteps.Count > 0 && trackingSteps.All(s => s.IsDone);
+
+        if (order.OrderStatus == OrderStatus.Cancelled)
+        {
+            trackingMessage = "This order has been cancelled";
+        }
+        else if (allStepsDone)
+        {
+            trackingMessage = packageName switch
+            {
+                PackageNames.DoorToDoor => "Your bags have been delivered successfully to your address. Thank you for using Travora! 🎉",
+                PackageNames.CarServiceToAirport => "Your bags have been loaded on the aircraft. Have a safe flight! ✈️",
+                PackageNames.CarServiceFromAirport => "Your bags have been delivered successfully to your address. Thank you for using Travora! 🎉",
+                PackageNames.TrackingBaggage => "Your bags are ready for pickup at the baggage belt. Thank you for using Travora! 🧳",
+                _ => null
+            };
+        }
+
         return new OrderDetailsResponse
         {
             OrderId = order.OrderId,
@@ -513,7 +533,8 @@ public class CustomerOrderService : ICustomerOrderService
             CanCancel = canCancel,
             HasBoardingPass = hasBoardingPass,
             Appointment = appointment,
-            TrackingStatus = trackingSteps
+            TrackingStatus = trackingSteps,
+            TrackingMessage = trackingMessage
         };
     }
 
