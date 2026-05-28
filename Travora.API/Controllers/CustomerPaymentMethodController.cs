@@ -12,13 +12,16 @@ public class CustomerPaymentMethodController : ControllerBase
 {
     private readonly IPaymentMethodService _paymentMethodService;
     private readonly Travora.Application.Interfaces.Services.Customer.ICustomerProfileService _profileService;
+    private readonly IPaymobService _paymobService;
 
     public CustomerPaymentMethodController(
         IPaymentMethodService paymentMethodService,
-        Travora.Application.Interfaces.Services.Customer.ICustomerProfileService profileService)
+        Travora.Application.Interfaces.Services.Customer.ICustomerProfileService profileService,
+        IPaymobService paymobService)
     {
         _paymentMethodService = paymentMethodService;
         _profileService = profileService;
+        _paymobService = paymobService;
     }
 
     [HttpGet]
@@ -41,6 +44,15 @@ public class CustomerPaymentMethodController : ControllerBase
             return BadRequest(new { success, message });
 
         return Ok(new AddPaymentMethodResponseWrapper { Success = success, Message = message, Data = data });
+    }
+
+    [HttpPost("initiate-save")]
+    [ProducesResponseType(typeof(Travora.Application.DTOs.Payments.PaymentInitiationResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> InitiateSaveCard()
+    {
+        var customerId = int.Parse(User.FindFirstValue("customerId")!);
+        var response = await _paymobService.InitiateSaveCardAsync(customerId);
+        return Ok(response);
     }
 
     [HttpPost("{id}/set-default")]

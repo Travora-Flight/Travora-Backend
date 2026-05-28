@@ -16,6 +16,4 @@ public class RegisterStep2Request
 
     [Required(ErrorMessage = "Passport number is required")]
     public string PassportNumber { get; set; } = string.Empty;
-
-    public bool? ForceSubmit { get; set; }
 }

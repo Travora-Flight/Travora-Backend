@@ -51,14 +51,17 @@ public class GlobalExceptionHandlerMiddleware
         context.Response.StatusCode = (int)statusCode;
         context.Response.ContentType = "application/json";
 
-        var isBypassable = exception is Travora.Domain.Exceptions.PassportMismatchException;
+        var remainingAttempts = (exception as Travora.Domain.Exceptions.PassportMismatchException)?.RemainingAttempts;
 
         var response = JsonSerializer.Serialize(new
         {
             status = (int)statusCode,
             message,
-            isBypassable,
+            remainingAttempts,
             timestamp = DateTime.UtcNow
+        }, new JsonSerializerOptions
+        {
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
         });
 
         await context.Response.WriteAsync(response);

@@ -99,4 +99,15 @@ public class AdminEmployeesController : ControllerBase
         await _employeeService.DeleteEmployeeAsync(id);
         return Ok(new { success = true });
     }
+
+    [HttpPost("{id}/reset-password")]
+    [ProducesResponseType(typeof(ResetPasswordResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ResetPasswordAsync(int id)
+    {
+        var adminId = GetAdminId();
+        if (adminId == 0) return Unauthorized();
+
+        var result = await _employeeService.ResetEmployeePasswordAsync(adminId, id);
+        return Ok(result);
+    }
 }
