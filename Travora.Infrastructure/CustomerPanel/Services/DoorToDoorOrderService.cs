@@ -62,16 +62,6 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         if (request.BaggageCount <= 0)
             return new ValidateFlightResponse { IsValid = false, ErrorMessage = "Please enter the number of bags." };
 
-        // 1.5 Prevent duplicate ticket usage for Door To Door
-        try
-        {
-            await ValidateTicketNotUsedAsync(request.TicketNumber, PackageCodes.DoorToDoor, PackageNames.DoorToDoor, cancellationToken);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return new ValidateFlightResponse { IsValid = false, ErrorMessage = ex.Message };
-        }
-
         // 2. Call the airline service
         var airlineReq = new AirlineValidateTicketRequest
         {
@@ -92,6 +82,16 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
                 ? string.Join(", ", airlineRes.Errors)
                 : "Invalid flight or ticket details from airline.";
             return new ValidateFlightResponse { IsValid = false, ErrorMessage = errorMsg };
+        }
+
+        // 1.5 Prevent duplicate ticket usage for Door To Door (run after validating ticket ownership)
+        try
+        {
+            await ValidateTicketNotUsedAsync(request.TicketNumber, PackageCodes.DoorToDoor, PackageNames.DoorToDoor, cancellationToken);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return new ValidateFlightResponse { IsValid = false, ErrorMessage = ex.Message };
         }
 
         flightData.Terminal = airlineRes.Terminal ?? airlineRes.Ticket?.Flight?.Terminal ?? flightData.Terminal;

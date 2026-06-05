@@ -55,33 +55,16 @@ public class CarServiceOrderService : ICarServiceOrderService
             .FirstOrDefaultAsync(c => c.CustomerId == customerId, cancellationToken);
 
         if (customer == null)
-            return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = "Customer not found" };
+            return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = "Customer not found", ServiceType = request.ServiceType };
         if (string.IsNullOrEmpty(customer.PassportNumber))
-            return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = "Passport number not found, please complete your profile data" };
+            return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = "Passport number not found, please complete your profile data", ServiceType = request.ServiceType };
         if (customer.AccountStatus != CustomerAccountStatus.Verified)
-            return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = "Your account must be verified to use this service" };
+            return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = "Your account must be verified to use this service", ServiceType = request.ServiceType };
 
         if (request.BaggageCount <= 0)
-            return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = "Please enter the number of bags." };
+            return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = "Please enter the number of bags.", ServiceType = request.ServiceType };
 
-        // Check if ticket is used in the same package
-        var packageCode = request.ServiceType == CarServiceType.DeliveryToAirport
-            ? PackageCodes.CarServiceToAirport
-            : PackageCodes.CarServiceFromAirport;
-        var packageName = request.ServiceType == CarServiceType.DeliveryToAirport
-            ? PackageNames.CarServiceToAirport
-            : PackageNames.CarServiceFromAirport;
-
-        try
-        {
-            await ValidateTicketNotUsedAsync(request.TicketNumber, packageCode, packageName, cancellationToken);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = ex.Message };
-        }
-
-        // Call Airline API
+        // Call Airline API first to validate ownership & details
         var airlineReq = new AirlineValidateTicketRequest
         {
             PassportNumber = customer.PassportNumber,
@@ -99,7 +82,24 @@ public class CarServiceOrderService : ICarServiceOrderService
             var errorMsg = airlineRes.Errors != null && airlineRes.Errors.Any()
                 ? string.Join(", ", airlineRes.Errors)
                 : "Flight or ticket data is invalid";
-            return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = errorMsg };
+            return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = errorMsg, ServiceType = request.ServiceType };
+        }
+
+        // Check if ticket is used in the same package (after validating ticket belongs to customer)
+        var packageCode = request.ServiceType == CarServiceType.DeliveryToAirport
+            ? PackageCodes.CarServiceToAirport
+            : PackageCodes.CarServiceFromAirport;
+        var packageName = request.ServiceType == CarServiceType.DeliveryToAirport
+            ? PackageNames.CarServiceToAirport
+            : PackageNames.CarServiceFromAirport;
+
+        try
+        {
+            await ValidateTicketNotUsedAsync(request.TicketNumber, packageCode, packageName, cancellationToken);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = ex.Message, ServiceType = request.ServiceType };
         }
 
         flightData.Terminal = airlineRes.Terminal ?? airlineRes.Ticket?.Flight?.Terminal ?? flightData.Terminal;
@@ -117,7 +117,7 @@ public class CarServiceOrderService : ICarServiceOrderService
             var departure = flightData.DepartureTimeUtc;
             var diff = departure - DateTime.UtcNow;
             if (diff.TotalHours < 12)
-                return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = "Booking must be made at least 12 hours before departure" };
+                return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = "Booking must be made at least 12 hours before departure", ServiceType = request.ServiceType };
         }
 
         var bookingDeadlineUtc = request.ServiceType == CarServiceType.DeliveryFromAirport

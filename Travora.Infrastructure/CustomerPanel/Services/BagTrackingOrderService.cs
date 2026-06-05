@@ -63,16 +63,6 @@ public class BagTrackingOrderService : IBagTrackingOrderService
         if (request.BaggageCount <= 0)
             return new ValidateFlightResponse { IsValid = false, ErrorMessage = "Please enter the number of bags." };
 
-        // Check if ticket is used in the same package
-        try
-        {
-            await ValidateTicketNotUsedAsync(request.TicketNumber, PackageCodes.TrackingBaggage, PackageNames.TrackingBaggage, cancellationToken);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return new ValidateFlightResponse { IsValid = false, ErrorMessage = ex.Message };
-        }
-
         // Call Airline API
         var airlineReq = new AirlineValidateTicketRequest
         {
@@ -92,6 +82,16 @@ public class BagTrackingOrderService : IBagTrackingOrderService
                 ? string.Join(", ", airlineRes.Errors)
                 : "Flight or ticket data is invalid";
             return new ValidateFlightResponse { IsValid = false, ErrorMessage = errorMsg };
+        }
+
+        // Check if ticket is used in the same package (run after validating ticket ownership)
+        try
+        {
+            await ValidateTicketNotUsedAsync(request.TicketNumber, PackageCodes.TrackingBaggage, PackageNames.TrackingBaggage, cancellationToken);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return new ValidateFlightResponse { IsValid = false, ErrorMessage = ex.Message };
         }
 
         flightData.Terminal = airlineRes.Terminal ?? airlineRes.Ticket?.Flight?.Terminal ?? flightData.Terminal;
