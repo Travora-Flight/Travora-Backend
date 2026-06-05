@@ -1,5 +1,4 @@
 using Microsoft.EntityFrameworkCore;
-using System.Text.Json;
 using Travora.Application.DTOs.Admin.LiveTracker;
 using Travora.Application.Interfaces;
 using Travora.Domain.Enums;
@@ -29,57 +28,30 @@ public class AdminLiveTrackerService : IAdminLiveTrackerService
 
         foreach (var driver in drivers)
         {
-            var key = $"employee:{driver.EmployeeId}:last_location";
-            var locationData = await _redis.GetAsync(key);
-            
-            bool isOnline = false;
+            var locationData = await _redis.GetAsync($"employee:{driver.EmployeeId}:last_location");
+            var parsed = EmployeeLocationHelper.ParseRedisLocation(locationData);
+
             string status = "offline";
             decimal lat = 0, lng = 0;
+            bool isOnline = false;
             string lastUpdated = "offline";
+            string? locationDesc = "Unknown";
             string? currentTask = null;
-            string locationDesc = "Unknown";
 
-            if (!string.IsNullOrEmpty(locationData))
+            if (parsed != null)
             {
-                // Parse JSON Redis value assuming { latitude, longitude, status, updatedAt, location }
-                try
-                {
-                    using var doc = JsonDocument.Parse(locationData);
-                    var root = doc.RootElement;
-                    
-                    isOnline = true;
-                    if (root.TryGetProperty("status", out var statusProp)) status = statusProp.GetString() ?? "available";
-                    if (root.TryGetProperty("latitude", out var latProp)) lat = latProp.GetDecimal();
-                    if (root.TryGetProperty("longitude", out var lngProp)) lng = lngProp.GetDecimal();
-                    if (root.TryGetProperty("location", out var locProp)) locationDesc = locProp.GetString() ?? "Unknown";
-                    
-                    if (root.TryGetProperty("updatedAt", out var updatedProp))
-                    {
-                        var updatedAt = updatedProp.GetDateTime();
-                        var diff = DateTime.UtcNow - updatedAt;
-                        lastUpdated = diff.TotalMinutes < 1 ? "Just now" : $"{(int)diff.TotalMinutes} mins ago";
-                    }
-                }
-                catch { /* Ignore parsing errors */ }
+                isOnline = true;
+                status = parsed.Status;
+                lat = parsed.Latitude;
+                lng = parsed.Longitude;
+                locationDesc = parsed.LocationDescription ?? "Unknown";
+                lastUpdated = parsed.LastUpdated;
             }
 
-            if (status == "on_service" || status == "on_duty")
-            {
-                var currentOrder = await _db.OrderServices
-                    .Include(os => os.PackageService)
-                        .ThenInclude(ps => ps.Service)
-                    .Include(os => os.Order)
-                        .ThenInclude(o => o.PickupLocation)
-                    .Where(os => os.AssignedEmployeeId == driver.EmployeeId && os.ServiceStatus == ServiceStatus.InProgress)
-                    .FirstOrDefaultAsync();
+            if (EmployeeLocationHelper.IsOnTask(status))
+                currentTask = await EmployeeLocationHelper.GetCurrentTaskAsync(_db, driver.EmployeeId);
 
-                if (currentOrder != null)
-                {
-                    currentTask = $"{currentOrder.PackageService?.Service?.ServiceName ?? "Service"} - {currentOrder.Order?.PickupLocation?.City ?? "Unknown Location"}";
-                }
-            }
-
-            var item = new LiveEmployeeItem
+            response.Employees.Add(new LiveEmployeeItem
             {
                 EmployeeId = driver.EmployeeId,
                 Name = $"{driver.Firstname} {driver.Lastname}",
@@ -93,9 +65,7 @@ public class AdminLiveTrackerService : IAdminLiveTrackerService
                 IsOnline = isOnline,
                 LastUpdated = lastUpdated,
                 Mobile = driver.PhoneNumber
-            };
-
-            response.Employees.Add(item);
+            });
         }
 
         // Apply filters
@@ -111,7 +81,7 @@ public class AdminLiveTrackerService : IAdminLiveTrackerService
         }
 
         response.Available = response.Employees.Count(e => e.Status == "available");
-        response.OnService = response.Employees.Count(e => e.Status == "on_service" || e.Status == "on_duty");
+        response.OnService = response.Employees.Count(e => EmployeeLocationHelper.IsOnTask(e.Status));
 
         return response;
     }
@@ -123,8 +93,8 @@ public class AdminLiveTrackerService : IAdminLiveTrackerService
             .Select(e => new { e.EmployeeId, e.Firstname, e.Lastname })
             .FirstOrDefaultAsync() ?? throw new KeyNotFoundException("Driver not found");
 
-        var key = $"employee:{driver.EmployeeId}:last_location";
-        var locationData = await _redis.GetAsync(key);
+        var locationData = await _redis.GetAsync($"employee:{driver.EmployeeId}:last_location");
+        var parsed = EmployeeLocationHelper.ParseRedisLocation(locationData);
 
         string status = "offline";
         decimal lat = 0, lng = 0;
@@ -133,45 +103,19 @@ public class AdminLiveTrackerService : IAdminLiveTrackerService
         string lastUpdated = "offline";
         string? currentTask = null;
 
-        if (!string.IsNullOrEmpty(locationData))
+        if (parsed != null)
         {
-            try
-            {
-                using var doc = JsonDocument.Parse(locationData);
-                var root = doc.RootElement;
-                    
-                if (root.TryGetProperty("status", out var statusProp)) status = statusProp.GetString() ?? "available";
-                if (root.TryGetProperty("latitude", out var latProp)) lat = latProp.GetDecimal();
-                if (root.TryGetProperty("longitude", out var lngProp)) lng = lngProp.GetDecimal();
-                if (root.TryGetProperty("speed", out var speedProp)) speedKmh = speedProp.GetDecimal();
-                if (root.TryGetProperty("isMoving", out var movingProp)) isMoving = movingProp.GetBoolean();
-                if (root.TryGetProperty("heading", out var headingProp)) heading = headingProp.GetDecimal();
-                    
-                if (root.TryGetProperty("updatedAt", out var updatedProp))
-                {
-                    var updatedAt = updatedProp.GetDateTime();
-                    var diff = DateTime.UtcNow - updatedAt;
-                    lastUpdated = diff.TotalMinutes < 1 ? "Just now" : $"{(int)diff.TotalMinutes} mins ago";
-                }
-            }
-            catch { }
+            status = parsed.Status;
+            lat = parsed.Latitude;
+            lng = parsed.Longitude;
+            speedKmh = parsed.Speed;
+            isMoving = parsed.IsMoving;
+            heading = parsed.Heading;
+            lastUpdated = parsed.LastUpdated;
         }
 
-        if (status == "on_service" || status == "on_duty")
-        {
-            var currentOrder = await _db.OrderServices
-                .Include(os => os.PackageService)
-                    .ThenInclude(ps => ps.Service)
-                .Include(os => os.Order)
-                    .ThenInclude(o => o.PickupLocation)
-                .Where(os => os.AssignedEmployeeId == driver.EmployeeId && os.ServiceStatus == ServiceStatus.InProgress)
-                .FirstOrDefaultAsync();
-
-            if (currentOrder != null)
-            {
-                currentTask = $"Client pickup - {currentOrder.Order?.PickupLocation?.StreetAddress ?? "Unknown"}, {currentOrder.Order?.PickupLocation?.City ?? "Unknown City"}, {currentOrder.Order?.PickupLocation?.Country ?? "Unknown Country"}";
-            }
-        }
+        if (EmployeeLocationHelper.IsOnTask(status))
+            currentTask = await EmployeeLocationHelper.GetCurrentTaskAsync(_db, driver.EmployeeId, detailed: true);
 
         return new EmployeeLocationDetailResponse
         {

@@ -688,8 +688,11 @@ public class CustomerOrderService : ICustomerOrderService
             if (flightDate < today)
                 return new AvailableDatesResponse { IsValid = false, ErrorMessage = "The flight date has already passed" };
 
+            var windowStart = flightDate.AddDays(-4);
+            var startDate = windowStart < today ? today : windowStart;
+
             var availableDates = new List<DateTime>();
-            for (var d = today; d <= flightDate; d = d.AddDays(1))
+            for (var d = startDate; d <= flightDate; d = d.AddDays(1))
             {
                 // Must be at least 12 hours before departure
                 if ((departureTime - d.Date).TotalHours >= 12)

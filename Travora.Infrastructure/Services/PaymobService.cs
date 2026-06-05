@@ -52,6 +52,241 @@ public class PaymobService : IPaymobService
         _pusher = pusher;
     }
 
+    // ==================== Helpers ====================
+
+    /// <summary>
+    /// Safely gets a boolean value from a JsonElement property that may be a real boolean or a string.
+    /// </summary>
+    private static bool GetBoolValue(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var prop)) return false;
+        return prop.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.String => prop.GetString()?.Equals("true", StringComparison.OrdinalIgnoreCase) == true,
+            _ => false
+        };
+    }
+
+    /// <summary>
+    /// Refunds a transaction via Paymob API. Used to auto-refund card-save verification charges.
+    /// </summary>
+    private async Task RefundTransactionAsync(string transactionId, int amountCents)
+    {
+        try
+        {
+            var client = _httpClientFactory.CreateClient("Paymob");
+
+            // Step 1: Authenticate to get auth_token (required for refund API)
+            var authResponse = await client.PostAsJsonAsync(
+                $"{_settings.BaseUrl}/api/auth/tokens",
+                new { api_key = _settings.ApiKey });
+            var authContent = await authResponse.Content.ReadAsStringAsync();
+
+            if (!authResponse.IsSuccessStatusCode)
+            {
+                _logger.LogError("Paymob auth for refund failed: {Status} - {Body}", authResponse.StatusCode, authContent);
+                return;
+            }
+
+            var authToken = JsonSerializer.Deserialize<JsonElement>(authContent).GetProperty("token").GetString();
+
+            // Step 2: Refund the transaction
+            var refundResponse = await client.PostAsJsonAsync(
+                $"{_settings.BaseUrl}/api/acceptance/void_refund/refund",
+                new { auth_token = authToken, transaction_id = transactionId, amount_cents = amountCents });
+            var refundContent = await refundResponse.Content.ReadAsStringAsync();
+
+            if (refundResponse.IsSuccessStatusCode)
+                _logger.LogInformation("Auto-refund successful for transaction {TxId}, amount={Amount} cents", transactionId, amountCents);
+            else
+                _logger.LogWarning("Auto-refund failed for transaction {TxId}: {Status} - {Body}", transactionId, refundResponse.StatusCode, refundContent);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Auto-refund exception for transaction {TxId}", transactionId);
+        }
+    }
+    // ==================== Intention API ====================
+
+    /// <summary>
+    /// Creates a Paymob payment intention via the Intention API.
+    /// Single endpoint replaces the old 3-step flow (auth → order → payment key).
+    /// </summary>
+    private async Task<JsonElement?> CreateIntentionAsync(
+        int amountCents, string currency, string specialReference,
+        string firstName, string lastName, string email, string phone,
+        List<string>? cardTokens = null, bool saveCard = false)
+    {
+        var client = _httpClientFactory.CreateClient("Paymob");
+        client.DefaultRequestHeaders.Clear();
+        client.DefaultRequestHeaders.Add("Authorization", $"Token {_settings.SecretKey}");
+
+        var body = new Dictionary<string, object>
+        {
+            ["amount"] = amountCents,
+            ["currency"] = currency,
+            ["payment_methods"] = new object[] { _settings.IntegrationId },
+            ["billing_data"] = new Dictionary<string, string>
+            {
+                ["first_name"] = string.IsNullOrEmpty(firstName) ? "Customer" : firstName,
+                ["last_name"] = string.IsNullOrEmpty(lastName) ? "User" : lastName,
+                ["email"] = string.IsNullOrEmpty(email) ? "customer@travora.com" : email,
+                ["phone_number"] = string.IsNullOrEmpty(phone) ? "01000000000" : phone
+            },
+            ["special_reference"] = specialReference,
+            ["notification_url"] = _settings.NotificationUrl
+        };
+
+        if (saveCard)
+            body["save_card"] = true;
+
+        if (cardTokens != null && cardTokens.Count > 0)
+            body["card_tokens"] = cardTokens;
+
+        var url = $"{_settings.BaseUrl}/v1/intention/";
+        _logger.LogInformation("Creating intention: URL={Url}, Amount={Amount}, Currency={Currency}, Ref={Ref}, SaveCard={SaveCard}",
+            url, amountCents, currency, specialReference, saveCard);
+
+        var response = await client.PostAsJsonAsync(url, body);
+        var content = await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogError("Intention API failed: {Status} - {Body}", response.StatusCode, content);
+            return null;
+        }
+
+        return JsonSerializer.Deserialize<JsonElement>(content);
+    }
+
+    /// <summary>
+    /// Same as CreateIntentionAsync but returns the error detail string on failure.
+    /// </summary>
+    private async Task<(JsonElement? result, string? error)> CreateIntentionWithErrorAsync(
+        int amountCents, string currency, string specialReference,
+        string firstName, string lastName, string email, string phone,
+        List<string>? cardTokens = null, bool saveCard = false)
+    {
+        var client = _httpClientFactory.CreateClient("Paymob");
+        client.DefaultRequestHeaders.Clear();
+        client.DefaultRequestHeaders.Add("Authorization", $"Token {_settings.SecretKey}");
+
+        var body = new Dictionary<string, object>
+        {
+            ["amount"] = amountCents,
+            ["currency"] = currency,
+            ["payment_methods"] = new object[] { _settings.IntegrationId },
+            ["billing_data"] = new Dictionary<string, string>
+            {
+                ["first_name"] = string.IsNullOrEmpty(firstName) ? "Customer" : firstName,
+                ["last_name"] = string.IsNullOrEmpty(lastName) ? "User" : lastName,
+                ["email"] = string.IsNullOrEmpty(email) ? "customer@travora.com" : email,
+                ["phone_number"] = string.IsNullOrEmpty(phone) ? "01000000000" : phone
+            },
+            ["special_reference"] = specialReference,
+            ["notification_url"] = _settings.NotificationUrl
+        };
+
+        if (saveCard)
+            body["save_card"] = true;
+
+        if (cardTokens != null && cardTokens.Count > 0)
+            body["card_tokens"] = cardTokens;
+
+        var url = $"{_settings.BaseUrl}/v1/intention/";
+        _logger.LogInformation("Creating intention (v2): URL={Url}, Amount={Amount}, Ref={Ref}", url, amountCents, specialReference);
+
+        var response = await client.PostAsJsonAsync(url, body);
+        var content = await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogError("Intention API failed: {Status} - {Body}", response.StatusCode, content);
+            return (null, $"HTTP {response.StatusCode}: {content}");
+        }
+
+        return (JsonSerializer.Deserialize<JsonElement>(content), null);
+    }
+
+    /// <summary>
+    /// Charges a saved card token directly via Paymob Pay API.
+    /// Returns (redirectUrl, rawResponse):
+    ///   - redirectUrl = non-empty string → 3DS redirect needed
+    ///   - redirectUrl = "" → payment completed directly
+    ///   - redirectUrl = null → payment failed (fallback to iframe)
+    /// </summary>
+    private async Task<(string? redirectUrl, string rawResponse)> PayWithSavedTokenAsync(string paymentKey, string cardToken)
+    {
+        var client = _httpClientFactory.CreateClient("Paymob");
+        var body = new
+        {
+            source = new
+            {
+                identifier = cardToken,
+                subtype = "TOKEN"
+            },
+            payment_token = paymentKey
+        };
+
+        var url = $"{_settings.BaseUrl}/api/acceptance/payments/pay";
+        _logger.LogInformation("Pay-with-token: URL={Url}, Token={Token}", url, cardToken[..8] + "...");
+
+        var content = "";
+        try
+        {
+            var response = await client.PostAsJsonAsync(url, body);
+            content = await response.Content.ReadAsStringAsync();
+            _logger.LogInformation("Pay-with-token response: {Status} - {Body}", response.StatusCode, content);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogError("Pay-with-token HTTP error: {Status} - {Body}", response.StatusCode, content);
+                return (null, $"HTTP {response.StatusCode}: {content}");
+            }
+
+            var result = JsonSerializer.Deserialize<JsonElement>(content);
+
+            // 1) Check for 3DS redirect URL (Paymob uses different field names)
+            string? redirect = null;
+            if (result.TryGetProperty("redirection_url", out var rdProp))
+                redirect = rdProp.GetString();
+            if (string.IsNullOrEmpty(redirect) && result.TryGetProperty("redirect_url", out var rProp))
+                redirect = rProp.GetString();
+            if (string.IsNullOrEmpty(redirect) && result.TryGetProperty("iframe_redir_url", out var iProp))
+                redirect = iProp.GetString();
+
+            if (!string.IsNullOrEmpty(redirect))
+            {
+                _logger.LogInformation("3DS redirect required: {Url}", redirect);
+                return (redirect, content);
+            }
+
+            // 2) Check if the payment actually succeeded
+            // Paymob may return booleans as strings ("true") or real booleans (true)
+            bool success = GetBoolValue(result, "success");
+            bool pending = GetBoolValue(result, "pending");
+
+            if (success)
+            {
+                _logger.LogInformation("Pay-with-token completed directly (no 3DS)");
+                return ("", content);
+            }
+
+            // 3) Payment did NOT succeed — return failure with raw response for debugging
+            _logger.LogWarning("Pay-with-token: success={Success}, pending={Pending}. Response: {Body}", success, pending, content);
+            return (null, content);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Pay-with-token exception");
+            return (null, $"Exception: {ex.Message} | Raw: {content}");
+        }
+    }
+
+    // ==================== Payment Initiation ====================
+
     public async Task<PaymentInitiationResponse> InitiatePaymentAsync(int orderId, int customerId, int? paymentMethodId = null)
     {
         var order = await _db.Orders
@@ -64,7 +299,7 @@ public class PaymobService : IPaymobService
         if (order.OrderStatus != OrderStatus.Pending)
             throw new InvalidOperationException("Order is not in pending payment status");
 
-        // Allow re-payment after failed attempt — reset Failed invoice back to Pending
+        // Allow re-payment after failed attempt
         var invoice = order.Invoices.FirstOrDefault(i => i.InvoiceStatus == InvoiceStatus.Pending)
             ?? order.Invoices.FirstOrDefault(i => i.InvoiceStatus == InvoiceStatus.Failed)
             ?? throw new InvalidOperationException("No invoice found for this order");
@@ -78,373 +313,330 @@ public class PaymobService : IPaymobService
 
         var customer = order.Customer;
         var amountCents = (int)(invoice.TotalAmount * 100);
-        var client = _httpClientFactory.CreateClient("Paymob");
-
-        // Step 1: Auth Token
-        var authPayload = new { api_key = _settings.ApiKey };
-        var authResponse = await client.PostAsJsonAsync($"{_settings.BaseUrl}/api/auth/tokens", authPayload);
-        authResponse.EnsureSuccessStatusCode();
-        var authResult = await authResponse.Content.ReadFromJsonAsync<JsonElement>();
-        var authToken = authResult.GetProperty("token").GetString()!;
-
         var currency = order.Package?.Currency ?? "EGP";
 
-        // Step 2: Order Registration
-        var orderPayload = new
-        {
-            auth_token = authToken,
-            delivery_needed = false,
-            amount_cents = amountCents,
-            currency = currency,
-            merchant_order_id = orderId.ToString(),
-            items = Array.Empty<object>()
-        };
-        var orderResponse = await client.PostAsJsonAsync($"{_settings.BaseUrl}/api/ecommerce/orders", orderPayload);
-        orderResponse.EnsureSuccessStatusCode();
-        var orderResult = await orderResponse.Content.ReadFromJsonAsync<JsonElement>();
-        var paymobOrderId = orderResult.GetProperty("id").GetInt64();
-
-        // Step 3: Payment Key
-        var paymentKeyPayload = new
-        {
-            auth_token = authToken,
-            amount_cents = amountCents,
-            expiration = 3600,
-            order_id = paymobOrderId,
-            currency = currency,
-            integration_id = _settings.IntegrationId,
-            billing_data = new
-            {
-                first_name = customer.Firstname,
-                last_name = customer.Lastname,
-                email = customer.Email,
-                phone_number = customer.PhoneNumber,
-                apartment = "NA",
-                floor = "NA",
-                street = "NA",
-                building = "NA",
-                shipping_method = "NA",
-                postal_code = "NA",
-                city = "NA",
-                country = "EG",
-                state = "NA"
-            }
-        };
-        var paymentKeyResponse = await client.PostAsJsonAsync($"{_settings.BaseUrl}/api/acceptance/payment_keys", paymentKeyPayload);
-        paymentKeyResponse.EnsureSuccessStatusCode();
-        var paymentKeyResult = await paymentKeyResponse.Content.ReadFromJsonAsync<JsonElement>();
-        var paymentKey = paymentKeyResult.GetProperty("token").GetString()!;
-
-        // Token direct payment (CIT / One-Click Checkout)
+        // Check for saved card token (CIT flow)
+        List<string>? cardTokens = null;
         if (paymentMethodId.HasValue)
         {
             var savedMethod = await _db.PaymentMethods
-                .FirstOrDefaultAsync(pm => pm.PaymentMethodId == paymentMethodId.Value && pm.CustomerId == customerId && pm.IsActive && !pm.IsDeleted);
+                .FirstOrDefaultAsync(pm => pm.PaymentMethodId == paymentMethodId.Value
+                    && pm.CustomerId == customerId && pm.IsActive && !pm.IsDeleted);
 
-            if (savedMethod != null && !string.IsNullOrEmpty(savedMethod.PaymobCardToken))
-            {
-                var directChargePayload = new
-                {
-                    source = new
-                    {
-                        identifier = savedMethod.PaymobCardToken,
-                        subtype = "TOKEN"
-                    },
-                    payment_token = paymentKey
-                };
-
-                var chargeResponse = await client.PostAsJsonAsync($"{_settings.BaseUrl}/api/acceptance/payments/pay", directChargePayload);
-                if (chargeResponse.IsSuccessStatusCode)
-                {
-                    var chargeResult = await chargeResponse.Content.ReadFromJsonAsync<JsonElement>();
-                    
-                    var success = false;
-                    if (chargeResult.TryGetProperty("success", out var successProp) && successProp.ValueKind == JsonValueKind.True)
-                    {
-                        success = true;
-                    }
-                    else if (chargeResult.TryGetProperty("success", out var successPropStr) && successPropStr.ValueKind == JsonValueKind.String && successPropStr.GetString() == "true")
-                    {
-                        success = true;
-                    }
-
-                    var transactionId = chargeResult.TryGetProperty("id", out var idProp) ? idProp.GetRawText() : "";
-
-                    if (success)
-                    {
-                        var now = DateTime.UtcNow;
-
-                        // Create completed Payment record
-                        var completedPayment = new Payment
-                        {
-                            Amount = invoice.TotalAmount,
-                            Currency = currency,
-                            OrderIdFromGateway = paymobOrderId.ToString(),
-                            PaymentStatus = PaymentStatus.Completed,
-                            PaymentGateway = "Paymob",
-                            TransactionId = transactionId,
-                            InvoiceId = invoice.InvoiceId,
-                            PaymentMethodId = savedMethod.PaymentMethodId,
-                            PaymentDate = now,
-                            CreatedAt = now
-                        };
-                        _db.Payments.Add(completedPayment);
-
-                        // Update invoice & order
-                        invoice.InvoiceStatus = InvoiceStatus.Paid;
-                        invoice.PaidAt = now;
-                        invoice.UpdatedAt = now;
-
-                        order.OrderStatus = OrderStatus.Confirmed;
-                        order.UpdatedAt = now;
-
-                        await _db.SaveChangesAsync();
-
-                        // Dispatch employee assignments and triggers
-                        if (order.Package?.PackageName == PackageNames.DoorToDoor)
-                            await _doorToDoorOrderService.AssignEmployeesAfterPaymentAsync(orderId);
-                        else if (order.Package?.PackageName == PackageNames.CarServiceToAirport || order.Package?.PackageName == PackageNames.CarServiceFromAirport)
-                            await _carServiceOrderService.AssignEmployeesAfterPaymentAsync(orderId);
-                        else if (order.Package?.PackageName == PackageNames.TrackingBaggage)
-                        {
-                            var orderService = await _db.OrderServices.FirstOrDefaultAsync(os => os.OrderId == orderId);
-                            if (orderService != null)
-                            {
-                                orderService.ServiceStatus = ServiceStatus.InProgress;
-                                orderService.ActualStartTime = now;
-                                orderService.UpdatedAt = now;
-                                await _db.SaveChangesAsync();
-                            }
-                        }
-
-                        // Generate boarding pass
-                        if (order.Package?.PackageName is PackageNames.DoorToDoor or PackageNames.CarServiceToAirport)
-                        {
-                            _ = Task.Run(async () =>
-                            {
-                                try { await _customerOrderService.GenerateBoardingPassesAsync(orderId); }
-                                catch (Exception ex) { _logger.LogError(ex, "Failed to auto-generate boarding passes for order {OrderId}", orderId); }
-                            });
-                        }
-
-                        // Push Notification
-                        _db.Notifications.Add(new Notification
-                        {
-                            UserId = customerId,
-                            UserType = UserType.Customer,
-                            NotificationType = NotificationType.OrderUpdated,
-                            Title = "Payment successful",
-                            Message = $"Your payment of {invoice.TotalAmount} EGP for order #{orderId} has been successfully processed using your saved card.",
-                            NotificationChannel = NotificationChannel.InApp,
-                            OrderId = orderId
-                        });
-                        await _db.SaveChangesAsync();
-
-                        await _pusher.PushToCustomerAsync(
-                            customerId,
-                            "Payment successful",
-                            $"Your payment of {invoice.TotalAmount} EGP for order #{orderId} has been successfully processed using your saved card.",
-                            "PaymentSuccess",
-                            orderId);
-
-                        // Return Success directly without iframe!
-                        return new PaymentInitiationResponse
-                        {
-                            Success = true,
-                            PaymentKey = paymentKey,
-                            IframeUrl = string.Empty, // Empty indicates direct payment completed!
-                            OrderId = orderId,
-                            Amount = invoice.TotalAmount
-                        };
-                    }
-                    else
-                    {
-                        var failMsg = "Token charge was rejected by the gateway";
-                        if (chargeResult.TryGetProperty("data", out var dataObj) && dataObj.TryGetProperty("message", out var msgProp))
-                        {
-                            failMsg = msgProp.GetString() ?? failMsg;
-                        }
-
-                        return new PaymentInitiationResponse
-                        {
-                            Success = false,
-                            ErrorMessage = failMsg,
-                            OrderId = orderId,
-                            Amount = invoice.TotalAmount
-                        };
-                    }
-                }
-                else
-                {
-                    return new PaymentInitiationResponse
-                    {
-                        Success = false,
-                        ErrorMessage = "Failed to charge saved card. Direct payment gateway call failed.",
-                        OrderId = orderId,
-                        Amount = invoice.TotalAmount
-                    };
-                }
-            }
+            if (savedMethod?.PaymobCardToken != null)
+                cardTokens = new List<string> { savedMethod.PaymobCardToken };
         }
 
-        // Create new Payment record (old failed payments remain as-is for audit)
+        // Create Intention (single API call replaces old 3-step flow)
+        // Append timestamp to special_reference to ensure uniqueness on retries
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var specialRef = $"{orderId}_{timestamp}";
+        var result = await CreateIntentionAsync(
+            amountCents, currency, specialRef,
+            customer.Firstname, customer.Lastname, customer.Email, customer.PhoneNumber,
+            cardTokens);
+
+        if (result == null)
+            return new PaymentInitiationResponse { Success = false, ErrorMessage = "Failed to create payment intention", OrderId = orderId, Amount = invoice.TotalAmount };
+
+        var intentionData = result.Value;
+        var clientSecret = intentionData.GetProperty("client_secret").GetString()!;
+        var intentionOrderId = intentionData.GetProperty("intention_order_id").GetRawText();
+
+        // Extract payment key from the response
+        var paymentKey = "";
+        if (intentionData.TryGetProperty("payment_keys", out var keys) && keys.GetArrayLength() > 0)
+            paymentKey = keys[0].GetProperty("key").GetString() ?? "";
+
+        // Create Payment record
         var payment = new Payment
         {
             Amount = invoice.TotalAmount,
             Currency = currency,
-            OrderIdFromGateway = paymobOrderId.ToString(),
+            OrderIdFromGateway = intentionOrderId,
             PaymentStatus = PaymentStatus.Pending,
             PaymentGateway = "Paymob",
             InvoiceId = invoice.InvoiceId,
-            PaymentMethodId = await GetOrCreatePaymentMethodIdAsync(customerId)
+            PaymentMethodId = paymentMethodId ?? await GetOrCreatePaymentMethodIdAsync(customerId)
         };
         _db.Payments.Add(payment);
         await _db.SaveChangesAsync();
 
-        var iframeUrl = $"{_settings.BaseUrl}/api/acceptance/iframes/{_settings.IframeId}?payment_token={paymentKey}";
+        // If paying with saved card token, charge directly via Pay API
+        if (cardTokens != null && cardTokens.Count > 0 && !string.IsNullOrEmpty(paymentKey))
+        {
+            var (payRedirectUrl, payApiResponse) = await PayWithSavedTokenAsync(paymentKey, cardTokens[0]);
 
+            if (payRedirectUrl != null) // null = failed, fallback to iframe
+            {
+                return new PaymentInitiationResponse
+                {
+                    Success = true,
+                    ClientSecret = clientSecret,
+                    PaymentKey = paymentKey,
+                    IframeUrl = string.Empty,
+                    RedirectUrl = string.IsNullOrEmpty(payRedirectUrl) ? null : payRedirectUrl,
+                    OrderId = orderId,
+                    Amount = invoice.TotalAmount,
+                    ErrorMessage = null
+                };
+            }
+            _logger.LogWarning("Pay-with-token failed for order {OrderId}, falling back to iframe. PayAPI: {Response}", orderId, payApiResponse);
+
+            // Return iframe as fallback BUT include the Pay API response for debugging
+            return new PaymentInitiationResponse
+            {
+                Success = true,
+                ClientSecret = clientSecret,
+                PaymentKey = paymentKey,
+                IframeUrl = $"{_settings.BaseUrl}/api/acceptance/iframes/{_settings.IframeId}?payment_token={paymentKey}",
+                OrderId = orderId,
+                Amount = invoice.TotalAmount,
+                ErrorMessage = $"[PayAPI-Debug] {payApiResponse}"
+            };
+        }
+
+        // Normal flow: new card payment via iframe
         return new PaymentInitiationResponse
         {
             Success = true,
+            ClientSecret = clientSecret,
             PaymentKey = paymentKey,
-            IframeUrl = iframeUrl,
+            IframeUrl = $"{_settings.BaseUrl}/api/acceptance/iframes/{_settings.IframeId}?payment_token={paymentKey}",
             OrderId = orderId,
             Amount = invoice.TotalAmount
         };
     }
 
-    public async Task<PaymentInitiationResponse> InitiateSaveCardAsync(int customerId)
+    // ==================== Save Card (Zero-Amount) ====================
+
+    public async Task<SaveCardResponse> InitiateSaveCardAsync(int customerId)
     {
         var customer = await _db.Customers.FindAsync(customerId)
             ?? throw new KeyNotFoundException("Customer not found");
 
-        var client = _httpClientFactory.CreateClient("Paymob");
-
         try
         {
-            // Step 1: Auth Token
-            var authPayload = new { api_key = _settings.ApiKey };
-            var authResponse = await client.PostAsJsonAsync($"{_settings.BaseUrl}/api/auth/tokens", authPayload);
-            var authContent = await authResponse.Content.ReadAsStringAsync();
-            if (!authResponse.IsSuccessStatusCode)
-            {
-                _logger.LogError("SaveCard Step1 Auth failed: {StatusCode} - {Body}", authResponse.StatusCode, authContent);
-                return new PaymentInitiationResponse { Success = false, ErrorMessage = $"Paymob auth failed: {authResponse.StatusCode}" };
-            }
-            var authResult = JsonSerializer.Deserialize<JsonElement>(authContent);
-            var authToken = authResult.GetProperty("token").GetString()!;
-
-            // Step 2: Register Order with 100 cents (verification amount)
             var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            var orderPayload = new
-            {
-                auth_token = authToken,
-                delivery_needed = false,
-                amount_cents = 100,
-                currency = "EGP",
-                merchant_order_id = $"card_save_{customerId}_{timestamp}",
-                items = Array.Empty<object>()
-            };
-            var orderResponse = await client.PostAsJsonAsync($"{_settings.BaseUrl}/api/ecommerce/orders", orderPayload);
-            var orderContent = await orderResponse.Content.ReadAsStringAsync();
-            if (!orderResponse.IsSuccessStatusCode)
-            {
-                _logger.LogError("SaveCard Step2 Order failed: {StatusCode} - {Body}", orderResponse.StatusCode, orderContent);
-                return new PaymentInitiationResponse { Success = false, ErrorMessage = $"Paymob order registration failed: {orderResponse.StatusCode}" };
-            }
-            var orderResult = JsonSerializer.Deserialize<JsonElement>(orderContent);
-            var paymobOrderId = orderResult.GetProperty("id").GetInt64();
+            var specialRef = $"card_save_{customerId}_{timestamp}";
 
-            // Step 3: Generate Payment Key
-            var paymentKeyPayload = new
-            {
-                auth_token = authToken,
-                amount_cents = 100,
-                expiration = 3600,
-                order_id = paymobOrderId,
-                currency = "EGP",
-                integration_id = _settings.IntegrationId,
-                billing_data = new
-                {
-                    first_name = string.IsNullOrEmpty(customer.Firstname) ? "Customer" : customer.Firstname,
-                    last_name = string.IsNullOrEmpty(customer.Lastname) ? "User" : customer.Lastname,
-                    email = string.IsNullOrEmpty(customer.Email) ? "customer@travora.com" : customer.Email,
-                    phone_number = string.IsNullOrEmpty(customer.PhoneNumber) ? "01000000000" : customer.PhoneNumber,
-                    apartment = "NA",
-                    floor = "NA",
-                    street = "NA",
-                    building = "NA",
-                    shipping_method = "NA",
-                    postal_code = "NA",
-                    city = "NA",
-                    country = "EG",
-                    state = "NA"
-                }
-            };
-            var paymentKeyResponse = await client.PostAsJsonAsync($"{_settings.BaseUrl}/api/acceptance/payment_keys", paymentKeyPayload);
-            var paymentKeyContent = await paymentKeyResponse.Content.ReadAsStringAsync();
-            if (!paymentKeyResponse.IsSuccessStatusCode)
-            {
-                _logger.LogError("SaveCard Step3 PaymentKey failed: {StatusCode} - {Body}", paymentKeyResponse.StatusCode, paymentKeyContent);
-                return new PaymentInitiationResponse { Success = false, ErrorMessage = $"Paymob payment key failed: {paymentKeyResponse.StatusCode}" };
-            }
-            var paymentKeyResult = JsonSerializer.Deserialize<JsonElement>(paymentKeyContent);
-            var paymentKey = paymentKeyResult.GetProperty("token").GetString()!;
+            var (result, errorDetail) = await CreateIntentionWithErrorAsync(
+                100, "EGP", specialRef, // 1 EGP — auto-refunded after card is saved
+                customer.Firstname, customer.Lastname, customer.Email, customer.PhoneNumber,
+                saveCard: true);
 
-            var iframeUrl = $"{_settings.BaseUrl}/api/acceptance/iframes/{_settings.IframeId}?payment_token={paymentKey}";
+            if (result == null)
+                return new SaveCardResponse { Success = false, ErrorMessage = $"Failed to create save-card intention: {errorDetail}" };
 
-            return new PaymentInitiationResponse
+            var intentionData = result.Value;
+            var clientSecret = intentionData.GetProperty("client_secret").GetString()!;
+            var paymentKey = "";
+            if (intentionData.TryGetProperty("payment_keys", out var keys) && keys.GetArrayLength() > 0)
+                paymentKey = keys[0].GetProperty("key").GetString() ?? "";
+
+            return new SaveCardResponse
             {
                 Success = true,
+                ClientSecret = clientSecret,
                 PaymentKey = paymentKey,
-                IframeUrl = iframeUrl,
-                OrderId = 0,
-                Amount = 0
+                IframeUrl = $"{_settings.BaseUrl}/api/acceptance/iframes/{_settings.IframeId}?payment_token={paymentKey}"
             };
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "InitiateSaveCardAsync failed for customer {CustomerId}", customerId);
-            return new PaymentInitiationResponse { Success = false, ErrorMessage = $"Card save initiation failed: {ex.Message}" };
+            return new SaveCardResponse { Success = false, ErrorMessage = $"Card save initiation failed: {ex.Message}" };
         }
     }
 
-    public async Task HandleWebhookAsync(System.Text.Json.JsonElement payload, string hmacFromPaymob)
+    // ==================== Webhook Handler ====================
+
+    public async Task HandleWebhookAsync(JsonElement payload, string hmacFromPaymob)
     {
         _logger.LogInformation("Webhook received. HMAC length: {HmacLength}", hmacFromPaymob?.Length ?? 0);
 
         // Diagnostic: store the webhook payload
         lock (_lock)
         {
-            _lastWebhooks.Add(new
-            {
-                ReceivedAt = DateTime.UtcNow,
-                Hmac = hmacFromPaymob,
-                Payload = payload.ToString()
-            });
-            // Keep only last 5 webhooks
+            _lastWebhooks.Add(new { ReceivedAt = DateTime.UtcNow, Hmac = hmacFromPaymob, Payload = payload.ToString() });
             while (_lastWebhooks.Count > 5) _lastWebhooks.RemoveAt(0);
         }
 
-        // 1. Refund Filter: ignore request if it concerns Refund
         var type = payload.TryGetProperty("type", out var t) ? t.GetString() : "";
+
+        // Route by webhook type
+        if (string.Equals(type, "TOKEN", StringComparison.OrdinalIgnoreCase))
+        {
+            await HandleTokenCallbackAsync(payload, hmacFromPaymob ?? "");
+            return;
+        }
+
         if (string.Equals(type, "REFUND", StringComparison.OrdinalIgnoreCase))
             return;
 
+        // Transaction callback
+        await HandleTransactionCallbackAsync(payload, hmacFromPaymob ?? "");
+    }
+
+    // ==================== Token Callback (Card Saved) ====================
+
+    private async Task HandleTokenCallbackAsync(JsonElement payload, string hmacFromPaymob)
+    {
         if (!payload.TryGetProperty("obj", out var obj))
             return;
 
-        // Additional confirmation to ignore payments that have been refunded
-        if (obj.TryGetProperty("is_refunded", out var isRef) && isRef.ValueKind == System.Text.Json.JsonValueKind.True)
+        // HMAC verification for TOKEN type
+        // Fields in lexicographic order: card_subtype, created_at, email, id, masked_pan, merchant_id, order_id, token
+        var cardSubtype = obj.TryGetProperty("card_subtype", out var cs) ? cs.GetString() ?? "" : "";
+        var createdAt = obj.TryGetProperty("created_at", out var ca) ? ca.GetString() ?? "" : "";
+        var email = obj.TryGetProperty("email", out var em) ? em.GetString() ?? "" : "";
+        var id = obj.TryGetProperty("id", out var idp) ? idp.GetRawText() : "";
+        var maskedPan = obj.TryGetProperty("masked_pan", out var mp) ? mp.GetString() ?? "" : "";
+        var merchantId = obj.TryGetProperty("merchant_id", out var mi) ? mi.GetRawText() : "";
+        var orderId = obj.TryGetProperty("order_id", out var oi) ? oi.GetString() ?? "" : "";
+        var token = obj.TryGetProperty("token", out var tk) ? tk.GetString() ?? "" : "";
+
+        var concatenated = cardSubtype + createdAt + email + id + maskedPan + merchantId + orderId + token;
+        var computedHmac = ComputeHmacSha512(concatenated, _settings.HmacSecret);
+
+        if (!string.IsNullOrEmpty(hmacFromPaymob) && !string.Equals(computedHmac, hmacFromPaymob, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning("TOKEN HMAC Mismatch! Computed: {Computed}, Received: {Received}", computedHmac, hmacFromPaymob);
+            return; // Silent fail for token callbacks
+        }
+
+        _logger.LogInformation("Token callback received: token={Token}, maskedPan={Pan}, subtype={Subtype}, orderId={OrderId}",
+            token, maskedPan, cardSubtype, orderId);
+
+        if (string.IsNullOrEmpty(token)) return;
+
+        // Try to find the customer from the special_reference (order_id field in token callback)
+        // For card_save flows: special_reference = "card_save_{customerId}_{timestamp}"
+        // For order payments: special_reference = "{orderId}"
+        int? customerId = null;
+
+        if (orderId.StartsWith("card_save_"))
+        {
+            var parts = orderId.Split('_');
+            if (parts.Length >= 3 && int.TryParse(parts[2], out var cid))
+                customerId = cid;
+        }
+        else
+        {
+            // order_id in TOKEN webhook is the Paymob order ID, not Travora's.
+            // Look up via Payment.OrderIdFromGateway → Invoice → Order → CustomerId
+            var payment = await _db.Payments
+                .Include(p => p.Invoice)
+                    .ThenInclude(i => i.Order)
+                .FirstOrDefaultAsync(p => p.OrderIdFromGateway == orderId);
+            customerId = payment?.Invoice?.Order?.CustomerId;
+
+            // Fallback: try as a Travora order ID (for backward compatibility)
+            if (customerId == null && int.TryParse(orderId, out var parsedOrderId))
+            {
+                var order = await _db.Orders.FirstOrDefaultAsync(o => o.OrderId == parsedOrderId);
+                customerId = order?.CustomerId;
+            }
+        }
+
+        // Last resort: look up customer by email from the token callback payload
+        if (customerId == null && !string.IsNullOrEmpty(email))
+        {
+            var customer = await _db.Customers.FirstOrDefaultAsync(c => c.Email == email);
+            customerId = customer?.CustomerId;
+            if (customerId != null)
+                _logger.LogInformation("Resolved customer {CustomerId} via email fallback for TOKEN callback", customerId);
+        }
+
+        if (customerId == null)
+        {
+            _logger.LogWarning("TOKEN callback: could not resolve customer. order_id={OrderId}, email={Email}", orderId, email);
+            return;
+        }
+
+        // Check if this card already exists (by last4 only — brand may vary between callbacks)
+        var lastFour = maskedPan.Length >= 4 ? maskedPan[^4..] : "0000";
+        var existingCard = await _db.PaymentMethods.FirstOrDefaultAsync(pm =>
+            pm.CustomerId == customerId && pm.CardLastFour == lastFour
+            && pm.IsActive && !pm.IsDeleted);
+
+        if (existingCard != null)
+        {
+            // Always update the token to the latest one
+            existingCard.PaymobCardToken = token;
+            if (!string.IsNullOrEmpty(cardSubtype) && cardSubtype != "card")
+                existingCard.CardBrand = cardSubtype; // Update brand if we get a better value
+            existingCard.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            _logger.LogInformation("Updated PaymentMethod {Id} with latest token for customer {CustomerId}",
+                existingCard.PaymentMethodId, customerId);
+            return;
+        }
+
+        var nowUtc = DateTime.UtcNow;
+        var hasCards = await _db.PaymentMethods.AnyAsync(pm => pm.CustomerId == customerId && pm.IsActive && !pm.IsDeleted);
+
+        var paymentMethod = new PaymentMethod
+        {
+            CustomerId = customerId.Value,
+            CardLastFour = lastFour,
+            CardBrand = cardSubtype,
+            CardHolderName = "Saved Card",
+            PaymentFunding = cardSubtype.ToLower() switch
+            {
+                "debit" => PaymentFunding.Debit,
+                "prepaid" => PaymentFunding.Prepaid,
+                _ => PaymentFunding.Credit
+            },
+            PaymobCardToken = token,
+            IsDefault = !hasCards,
+            IsActive = true,
+            IsDeleted = false,
+            AddedAt = nowUtc,
+            CreatedAt = nowUtc
+        };
+        _db.PaymentMethods.Add(paymentMethod);
+        await _db.SaveChangesAsync();
+
+        _logger.LogInformation("Card token saved for customer {CustomerId}: last4={Last4}, brand={Brand}",
+            customerId, lastFour, cardSubtype);
+
+        // Notification
+        _db.Notifications.Add(new Notification
+        {
+            UserId = customerId.Value,
+            UserType = UserType.Customer,
+            NotificationType = NotificationType.OrderUpdated,
+            Title = "Card saved successfully",
+            Message = $"Your card ending in {lastFour} has been successfully added to your profile.",
+            NotificationChannel = NotificationChannel.InApp,
+            OrderId = 0
+        });
+        await _db.SaveChangesAsync();
+
+        await _pusher.PushToCustomerAsync(
+            customerId.Value, "Card saved successfully",
+            $"Your card ending in {lastFour} has been successfully added to your profile.",
+            "CardSaved", 0);
+    }
+
+    // ==================== Transaction Callback ====================
+
+    private async Task HandleTransactionCallbackAsync(JsonElement payload, string hmacFromPaymob)
+    {
+        if (!payload.TryGetProperty("obj", out var obj))
             return;
 
-        // 2. Assemble HMAC in strict alphabetical order and extract raw values from JSON
+        if (obj.TryGetProperty("is_refunded", out var isRef) && isRef.ValueKind == JsonValueKind.True)
+            return;
+
+        // HMAC verification (Transaction type — alphabetical field order)
         var amount_cents = obj.GetProperty("amount_cents").GetRawText();
         var created_at = obj.GetProperty("created_at").GetString();
         var currency = obj.GetProperty("currency").GetString();
         var error_occured = obj.GetProperty("error_occured").GetBoolean().ToString().ToLower();
         var has_parent_transaction = obj.GetProperty("has_parent_transaction").GetBoolean().ToString().ToLower();
-        var id = obj.GetProperty("id").GetRawText();
+        var txId = obj.GetProperty("id").GetRawText();
         var integration_id = obj.GetProperty("integration_id").GetRawText();
         var is_3d_secure = obj.GetProperty("is_3d_secure").GetBoolean().ToString().ToLower();
         var is_auth = obj.GetProperty("is_auth").GetBoolean().ToString().ToLower();
@@ -461,13 +653,11 @@ public class PaymobService : IPaymobService
         var success_bool = obj.GetProperty("success").GetBoolean();
         var success = success_bool.ToString().ToLower();
 
-        // Concatenate variables
         var concatenated = amount_cents + created_at + currency + error_occured + has_parent_transaction +
-                        id + integration_id + is_3d_secure + is_auth + is_capture + is_refunded +
+                        txId + integration_id + is_3d_secure + is_auth + is_capture + is_refunded +
                         is_standalone_payment + is_voided + order_id + owner + pending +
                         source_data_pan + source_data_sub_type + source_data_type + success;
 
-        // Encryption and comparison
         var computedHmac = ComputeHmacSha512(concatenated, _settings.HmacSecret);
 
         if (!string.Equals(computedHmac, hmacFromPaymob, StringComparison.OrdinalIgnoreCase))
@@ -476,106 +666,119 @@ public class PaymobService : IPaymobService
             throw new UnauthorizedAccessException("Invalid HMAC signature");
         }
 
-        // 3. Extract remaining data to update the database
+        // Extract special_reference (maps to our orderId or card_save reference)
         var merchantOrderIdStr = obj.GetProperty("order").GetProperty("merchant_order_id").GetString() ?? "";
-        var transactionId = id;
-        var paymobOrderId = order_id;
 
-        // Try to get token
-        string? cardToken = null;
-        if (obj.GetProperty("source_data").TryGetProperty("token", out var tokenProp))
+        // Also check special_reference (Intention API uses this)
+        if (string.IsNullOrEmpty(merchantOrderIdStr) && obj.TryGetProperty("order", out var orderObj)
+            && orderObj.TryGetProperty("special_reference", out var specRef))
         {
-            cardToken = tokenProp.GetString();
+            merchantOrderIdStr = specRef.GetString() ?? "";
         }
 
-        // Handle Card Saving Hook (Zero amount checkout / Add card beforehand)
+        var transactionId = txId;
+        var paymobOrderId = order_id;
+
+        // Try to get token from source_data (legacy flow)
+        string? cardToken = null;
+        if (obj.GetProperty("source_data").TryGetProperty("token", out var tokenProp))
+            cardToken = tokenProp.GetString();
+
+        // Handle Card Save transaction
         if (merchantOrderIdStr.StartsWith("card_save_"))
         {
-            _logger.LogInformation("Card save webhook received: merchant_order_id={MerchantOrderId}, success={Success}, token={Token}, pan={Pan}",
-                merchantOrderIdStr, success_bool, cardToken ?? "NULL", source_data_pan);
+            _logger.LogInformation("Card save transaction callback: merchant_order_id={Id}, success={Success}",
+                merchantOrderIdStr, success_bool);
 
-            var parts = merchantOrderIdStr.Split('_');
-            if (parts.Length >= 3 && int.TryParse(parts[2], out var customerId))
+            if (!success_bool)
             {
-                if (success_bool)
+                var parts = merchantOrderIdStr.Split('_');
+                if (parts.Length >= 3 && int.TryParse(parts[2], out var custId))
+                    _logger.LogWarning("Card save payment failed for customer {CustomerId}", custId);
+                return;
+            }
+
+            // Save card from TRANSACTION callback (fallback when TOKEN callback is unavailable)
+            var saveParts = merchantOrderIdStr.Split('_');
+            if (saveParts.Length >= 3 && int.TryParse(saveParts[2], out var customerId))
+            {
+                var lastFour = source_data_pan.Length >= 4 ? source_data_pan[^4..] : source_data_pan;
+                var cardBrand = source_data_sub_type;
+
+                // Get cardholder name from billing_data in webhook, fallback to customer DB
+                var holderName = "Saved Card";
+                if (obj.TryGetProperty("order", out var orderData)
+                    && orderData.TryGetProperty("shipping_data", out var shipData))
                 {
-                    // Check for duplicate: if token exists, check by token; otherwise check by pan
-                    bool exists;
-                    if (!string.IsNullOrEmpty(cardToken))
-                    {
-                        exists = await _db.PaymentMethods.AnyAsync(pm => pm.CustomerId == customerId && pm.PaymobCardToken == cardToken && pm.IsActive && !pm.IsDeleted);
-                    }
-                    else
-                    {
-                        var lastFour = source_data_pan.Length >= 4 ? source_data_pan[^4..] : "0000";
-                        exists = await _db.PaymentMethods.AnyAsync(pm => pm.CustomerId == customerId && pm.CardLastFour == lastFour && pm.CardBrand == source_data_type && pm.IsActive && !pm.IsDeleted);
-                    }
-
-                    if (!exists)
-                    {
-                        var nowUtc = DateTime.UtcNow;
-                        var hasCards = await _db.PaymentMethods.AnyAsync(pm => pm.CustomerId == customerId && pm.IsActive && !pm.IsDeleted);
-
-                        var paymentMethod = new PaymentMethod
-                        {
-                            CustomerId = customerId,
-                            CardLastFour = source_data_pan.Length >= 4 ? source_data_pan[^4..] : "0000",
-                            CardBrand = source_data_type,
-                            CardHolderName = "Saved Card",
-                            PaymentFunding = source_data_sub_type.ToLower() switch
-                            {
-                                "debit" => PaymentFunding.Debit,
-                                "prepaid" => PaymentFunding.Prepaid,
-                                _ => PaymentFunding.Credit
-                            },
-                            PaymobCardToken = cardToken, // Will be null if tokenization not enabled yet
-                            IsDefault = !hasCards,
-                            IsActive = true,
-                            IsDeleted = false,
-                            AddedAt = nowUtc,
-                            CreatedAt = nowUtc
-                        };
-                        _db.PaymentMethods.Add(paymentMethod);
-                        await _db.SaveChangesAsync();
-
-                        _logger.LogInformation("Card saved for customer {CustomerId}: last4={Last4}, brand={Brand}, hasToken={HasToken}",
-                            customerId, paymentMethod.CardLastFour, paymentMethod.CardBrand, !string.IsNullOrEmpty(cardToken));
-
-                        // Notification
-                        _db.Notifications.Add(new Notification
-                        {
-                            UserId = customerId,
-                            UserType = UserType.Customer,
-                            NotificationType = NotificationType.OrderUpdated,
-                            Title = "Card saved successfully",
-                            Message = $"Your card ending in {paymentMethod.CardLastFour} has been successfully added to your profile.",
-                            NotificationChannel = NotificationChannel.InApp,
-                            OrderId = 0
-                        });
-                        await _db.SaveChangesAsync();
-
-                        await _pusher.PushToCustomerAsync(
-                            customerId,
-                            "Card saved successfully",
-                            $"Your card ending in {paymentMethod.CardLastFour} has been successfully added to your profile.",
-                            "CardSaved",
-                            0);
-                    }
-                    else
-                    {
-                        _logger.LogInformation("Card already exists for customer {CustomerId}, skipping save.", customerId);
-                    }
+                    var fn = shipData.TryGetProperty("first_name", out var fnp) ? fnp.GetString() ?? "" : "";
+                    var ln = shipData.TryGetProperty("last_name", out var lnp) ? lnp.GetString() ?? "" : "";
+                    if (!string.IsNullOrEmpty(fn) && fn != "NA")
+                        holderName = $"{fn} {ln}".Trim();
                 }
-                else
+                if (holderName == "Saved Card")
                 {
-                    _logger.LogWarning("Card save webhook received with success=false for customer {CustomerId}", customerId);
+                    var cust = await _db.Customers.FindAsync(customerId);
+                    if (cust != null)
+                        holderName = $"{cust.Firstname} {cust.Lastname}".Trim();
+                }
+
+                // Check for duplicate
+                var exists = await _db.PaymentMethods.AnyAsync(pm =>
+                    pm.CustomerId == customerId && pm.CardLastFour == lastFour
+                    && pm.CardBrand == cardBrand && pm.IsActive && !pm.IsDeleted);
+
+                if (!exists)
+                {
+                    var nowUtc = DateTime.UtcNow;
+                    var hasCards = await _db.PaymentMethods.AnyAsync(pm =>
+                        pm.CustomerId == customerId && pm.IsActive && !pm.IsDeleted);
+
+                    var paymentMethod = new PaymentMethod
+                    {
+                        CustomerId = customerId,
+                        CardLastFour = lastFour,
+                        CardBrand = cardBrand,
+                        CardHolderName = holderName,
+                        PaymentFunding = cardBrand.ToLower() switch
+                        {
+                            "debit" => PaymentFunding.Debit,
+                            "prepaid" => PaymentFunding.Prepaid,
+                            _ => PaymentFunding.Credit
+                        },
+                        PaymobCardToken = cardToken,
+                        IsDefault = !hasCards,
+                        IsActive = true,
+                        IsDeleted = false,
+                        AddedAt = nowUtc,
+                        CreatedAt = nowUtc
+                    };
+                    _db.PaymentMethods.Add(paymentMethod);
+                    await _db.SaveChangesAsync();
+
+                    _logger.LogInformation("Card saved from TRANSACTION for customer {CustomerId}: last4={Last4}, brand={Brand}, holder={Holder}",
+                        customerId, lastFour, cardBrand, holderName);
+
+                    await _pusher.PushToCustomerAsync(customerId, "Card saved successfully",
+                        $"Your card ending in {lastFour} has been successfully added.",
+                        "CardSaved", 0);
                 }
             }
+
+            // Auto-refund the verification charge back to the customer
+            if (int.TryParse(amount_cents, out var refundAmount) && refundAmount > 0)
+            {
+                _logger.LogInformation("Auto-refunding card-save verification charge: txId={TxId}, amount={Amount} cents", txId, refundAmount);
+                _ = Task.Run(() => RefundTransactionAsync(txId, refundAmount));
+            }
+
             return;
         }
 
-        if (!int.TryParse(merchantOrderIdStr, out var orderId))
-            return; // Unknown order
+        // Regular order payment
+        // special_reference format: "{orderId}" (legacy) or "{orderId}_{timestamp}" (new)
+        var orderIdPart = merchantOrderIdStr.Contains('_') ? merchantOrderIdStr.Split('_')[0] : merchantOrderIdStr;
+        if (!int.TryParse(orderIdPart, out var orderId))
+            return;
 
         var order = await _db.Orders.Include(o => o.Invoices).FirstOrDefaultAsync(o => o.OrderId == orderId);
         if (order == null) return;
@@ -588,7 +791,6 @@ public class PaymobService : IPaymobService
 
         if (success_bool)
         {
-            // Payment successful
             invoice.InvoiceStatus = InvoiceStatus.Paid;
             invoice.PaidAt = now;
             invoice.UpdatedAt = now;
@@ -602,7 +804,7 @@ public class PaymobService : IPaymobService
                 payment.TransactionId = transactionId;
                 payment.UpdatedAt = now;
 
-                // Update payment card data
+                // Update card data on payment method
                 var paymentMethod = await _db.PaymentMethods.FirstOrDefaultAsync(pm => pm.PaymentMethodId == payment.PaymentMethodId);
                 if (paymentMethod != null)
                 {
@@ -615,16 +817,13 @@ public class PaymobService : IPaymobService
                         _ => PaymentFunding.Credit
                     };
                     if (!string.IsNullOrEmpty(cardToken))
-                    {
                         paymentMethod.PaymobCardToken = cardToken;
-                    }
                     paymentMethod.UpdatedAt = now;
                 }
             }
         }
         else
         {
-            // Payment failed
             invoice.InvoiceStatus = InvoiceStatus.Failed;
             invoice.UpdatedAt = now;
 
@@ -632,11 +831,9 @@ public class PaymobService : IPaymobService
             {
                 payment.PaymentStatus = PaymentStatus.Failed;
                 payment.TransactionId = transactionId;
-                
                 var gatewayMsg = "Payment failed";
                 if (obj.TryGetProperty("data", out var dataObj) && dataObj.TryGetProperty("message", out var msgProp))
                     gatewayMsg = msgProp.GetString() ?? "Payment failed";
-                    
                 payment.GatewayResponse = gatewayMsg;
                 payment.UpdatedAt = now;
             }
@@ -644,82 +841,74 @@ public class PaymobService : IPaymobService
 
         await _db.SaveChangesAsync();
 
-        // Customer notification for payment result
+        // Customer notification
+        await SendPaymentNotificationAsync(order.CustomerId, orderId, invoice.TotalAmount, success_bool);
+
+        // Post-payment processing (assign employees, generate passes)
         if (success_bool)
-        {
-            _db.Notifications.Add(new Notification
-            {
-                UserId = order.CustomerId,
-                UserType = UserType.Customer,
-                NotificationType = NotificationType.OrderUpdated,
-                Title = "Payment successful",
-                Message = $"Your payment of {invoice.TotalAmount} EGP for order #{orderId} has been received",
-                NotificationChannel = NotificationChannel.InApp,
-                OrderId = orderId
-            });
-            await _db.SaveChangesAsync();
+            await ProcessPostPaymentAsync(orderId);
+    }
 
-            await _pusher.PushToCustomerAsync(
-                order.CustomerId,
-                "Payment successful",
-                $"Your payment of {invoice.TotalAmount} EGP for order #{orderId} has been received",
-                "PaymentSuccess",
-                orderId);
-        }
-        else
-        {
-            _db.Notifications.Add(new Notification
-            {
-                UserId = order.CustomerId,
-                UserType = UserType.Customer,
-                NotificationType = NotificationType.OrderUpdated,
-                Title = "Payment failed",
-                Message = $"Your payment for order #{orderId} was not successful. Please try again.",
-                NotificationChannel = NotificationChannel.InApp,
-                OrderId = orderId
-            });
-            await _db.SaveChangesAsync();
+    // ==================== Post-Payment Processing ====================
 
-            await _pusher.PushToCustomerAsync(
-                order.CustomerId,
-                "Payment failed",
-                $"Your payment for order #{orderId} was not successful. Please try again.",
-                "PaymentFailed",
-                orderId);
+    private async Task ProcessPostPaymentAsync(int orderId)
+    {
+        var order = await _db.Orders.Include(o => o.Package).FirstOrDefaultAsync(o => o.OrderId == orderId);
+        if (order?.Package == null) return;
+
+        var packageName = order.Package.PackageName;
+
+        if (packageName == PackageNames.DoorToDoor)
+            await _doorToDoorOrderService.AssignEmployeesAfterPaymentAsync(orderId);
+        else if (packageName == PackageNames.CarServiceToAirport || packageName == PackageNames.CarServiceFromAirport)
+            await _carServiceOrderService.AssignEmployeesAfterPaymentAsync(orderId);
+        else if (packageName == PackageNames.TrackingBaggage)
+        {
+            var orderService = await _db.OrderServices.FirstOrDefaultAsync(os => os.OrderId == orderId);
+            if (orderService != null)
+            {
+                orderService.ServiceStatus = ServiceStatus.InProgress;
+                orderService.ActualStartTime = DateTime.UtcNow;
+                orderService.UpdatedAt = DateTime.UtcNow;
+                await _db.SaveChangesAsync();
+            }
         }
 
-        // 4. Complete services and assign employees after payment
-        if (success_bool)
+        // Generate boarding passes
+        if (packageName is PackageNames.DoorToDoor or PackageNames.CarServiceToAirport)
         {
-            var orderWithPackage = await _db.Orders.Include(o => o.Package).FirstOrDefaultAsync(o => o.OrderId == orderId);
-
-            if (orderWithPackage?.Package?.PackageName == PackageNames.DoorToDoor)
-                await _doorToDoorOrderService.AssignEmployeesAfterPaymentAsync(orderId);
-            else if (orderWithPackage?.Package?.PackageName == PackageNames.CarServiceToAirport || orderWithPackage?.Package?.PackageName == PackageNames.CarServiceFromAirport)
-                await _carServiceOrderService.AssignEmployeesAfterPaymentAsync(orderId);
-            else if (orderWithPackage?.Package?.PackageName == PackageNames.TrackingBaggage)
+            _ = Task.Run(async () =>
             {
-                var orderService = await _db.OrderServices.FirstOrDefaultAsync(os => os.OrderId == orderId);
-                if (orderService != null)
-                {
-                    orderService.ServiceStatus = ServiceStatus.InProgress;
-                    orderService.ActualStartTime = DateTime.UtcNow;
-                    orderService.UpdatedAt = DateTime.UtcNow;
-                    await _db.SaveChangesAsync();
-                }
-            }
-
-            // Generate boarding pass
-            if (orderWithPackage?.Package?.PackageName is PackageNames.DoorToDoor or PackageNames.CarServiceToAirport)
-            {
-                _ = Task.Run(async () =>
-                {
-                    try { await _customerOrderService.GenerateBoardingPassesAsync(orderId); }
-                    catch (Exception ex) { _logger.LogError(ex, "Failed to auto-generate boarding passes for order {OrderId}", orderId); }
-                });
-            }
+                try { await _customerOrderService.GenerateBoardingPassesAsync(orderId); }
+                catch (Exception ex) { _logger.LogError(ex, "Failed to auto-generate boarding passes for order {OrderId}", orderId); }
+            });
         }
     }
+
+    private async Task SendPaymentNotificationAsync(int customerId, int orderId, decimal amount, bool success)
+    {
+        var title = success ? "Payment successful" : "Payment failed";
+        var message = success
+            ? $"Your payment of {amount} EGP for order #{orderId} has been received"
+            : $"Your payment for order #{orderId} was not successful. Please try again.";
+        var eventType = success ? "PaymentSuccess" : "PaymentFailed";
+
+        _db.Notifications.Add(new Notification
+        {
+            UserId = customerId,
+            UserType = UserType.Customer,
+            NotificationType = NotificationType.OrderUpdated,
+            Title = title,
+            Message = message,
+            NotificationChannel = NotificationChannel.InApp,
+            OrderId = orderId
+        });
+        await _db.SaveChangesAsync();
+        await _pusher.PushToCustomerAsync(customerId, title, message, eventType, orderId);
+    }
+
+    // ==================== Payment Status ====================
+
     public async Task<PaymentStatusResponse> GetPaymentStatusAsync(int orderId)
     {
         var order = await _db.Orders
@@ -727,9 +916,7 @@ public class PaymobService : IPaymobService
             .FirstOrDefaultAsync(o => o.OrderId == orderId)
             ?? throw new KeyNotFoundException("Order not found");
 
-        var invoice = order.Invoices
-            .OrderByDescending(i => i.CreatedAt)
-            .FirstOrDefault();
+        var invoice = order.Invoices.OrderByDescending(i => i.CreatedAt).FirstOrDefault();
 
         return new PaymentStatusResponse
         {
@@ -741,7 +928,7 @@ public class PaymobService : IPaymobService
         };
     }
 
-    // ===== Helpers =====
+    // ==================== Helpers ====================
 
     private static string ComputeHmacSha512(string data, string secret)
     {

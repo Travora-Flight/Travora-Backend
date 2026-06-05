@@ -26,8 +26,6 @@ public class PaymentMethodService : IPaymentMethodService
                 CardHolderName = pm.CardHolderName,
                 CardLastFour = pm.CardLastFour,
                 CardBrand = pm.CardBrand,
-                CardExpiryMonth = pm.CardExpiryMonth,
-                CardExpiryYear = pm.CardExpiryYear,
                 PaymentFunding = pm.PaymentFunding.ToString(),
                 IsDefault = pm.IsDefault
             })

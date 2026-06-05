@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Travora.Application.DTOs.Admin.Requests;
 using Travora.Application.Interfaces;
+using Travora.Domain.Entities;
 using Travora.Domain.Enums;
 using Travora.Infrastructure.Data;
 
@@ -86,8 +87,12 @@ public class AdminRequestService : IAdminRequestService
     {
         var order = await _db.Orders
             .Include(o => o.Customer)
+            .Include(o => o.Package)
             .Include(o => o.PickupLocation)
             .Include(o => o.DeliveryLocation)
+            .Include(o => o.CustomsDeclarations)
+                .ThenInclude(cd => cd.CustomsItems)
+                    .ThenInclude(ci => ci.Invoices)
             .Include(o => o.OrderServices)
                 .ThenInclude(os => os.AssignedEmployee)
             .Include(o => o.OrderServices)
@@ -98,29 +103,106 @@ public class AdminRequestService : IAdminRequestService
 
         var assignedEmp = order.OrderServices.FirstOrDefault(os => os.AssignedEmployee != null)?.AssignedEmployee;
         
-        // Mock timeline based on real data
+        // Real timeline based on actual timestamps
         var timeline = new List<TimelineItem>();
-        timeline.Add(new TimelineItem { Event = "Request Sent", Time = order.CreatedAt.ToString("hh:mm tt"), IsDone = true });
         
-        if (assignedEmp != null)
+        // 1. Request Sent
+        timeline.Add(new TimelineItem 
+        { 
+            Event = "Request Sent", 
+            Time = order.CreatedAt.ToString("hh:mm tt"), 
+            IsDone = true 
+        });
+        
+        // 2. Assign Employee
+        var assignedService = order.OrderServices
+            .Where(os => os.AssignedAt.HasValue)
+            .OrderBy(os => os.AssignedAt)
+            .FirstOrDefault();
+        var assignTime = assignedService?.AssignedAt;
+        
+        timeline.Add(new TimelineItem
         {
-            timeline.Add(new TimelineItem { Event = "Assign Employee", Time = order.UpdatedAt?.ToString("hh:mm tt") ?? order.CreatedAt.ToString("hh:mm tt"), IsDone = true });
-            
-            if (order.OrderStatus == OrderStatus.InProgress || order.OrderStatus == OrderStatus.Completed)
-                timeline.Add(new TimelineItem { Event = "Begin to Execute", Time = order.UpdatedAt?.ToString("hh:mm tt") ?? order.CreatedAt.ToString("hh:mm tt"), IsDone = true });
-            else
-                timeline.Add(new TimelineItem { Event = "Begin to Execute", Time = null, IsDone = false });
-        }
-        else
-        {
-            timeline.Add(new TimelineItem { Event = "Assign Employee", Time = null, IsDone = false });
-            timeline.Add(new TimelineItem { Event = "Begin to Execute", Time = null, IsDone = false });
-        }
+            Event = "Assign Employee",
+            Time = assignTime?.ToString("hh:mm tt"),
+            IsDone = assignTime.HasValue
+        });
 
-        if (order.OrderStatus == OrderStatus.Completed)
-            timeline.Add(new TimelineItem { Event = "Request Done", Time = order.UpdatedAt?.ToString("hh:mm tt") ?? order.CreatedAt.ToString("hh:mm tt"), IsDone = true });
+        // 3. Begin to Execute
+        var startedService = order.OrderServices
+            .Where(os => os.ActualStartTime.HasValue)
+            .OrderBy(os => os.ActualStartTime)
+            .FirstOrDefault();
+        var executeTime = startedService?.ActualStartTime;
+
+        timeline.Add(new TimelineItem
+        {
+            Event = "Begin to Execute",
+            Time = executeTime?.ToString("hh:mm tt"),
+            IsDone = executeTime.HasValue
+        });
+
+        // 4. Request Done
+        var lastCompletedService = order.OrderServices
+            .Where(os => os.ActualEndTime.HasValue)
+            .OrderByDescending(os => os.ActualEndTime)
+            .FirstOrDefault();
+        var doneTime = lastCompletedService?.ActualEndTime ?? (order.OrderStatus == OrderStatus.Completed ? order.UpdatedAt : null);
+
+        timeline.Add(new TimelineItem
+        {
+            Event = "Request Done",
+            Time = (order.OrderStatus == OrderStatus.Completed && doneTime.HasValue) ? doneTime.Value.ToString("hh:mm tt") : null,
+            IsDone = order.OrderStatus == OrderStatus.Completed
+        });
+
+        // Customs details logic
+        AdminCustomsDetailsDto? customsDetails = null;
+        var packageName = order.Package?.PackageName;
+
+        if (packageName == Travora.Domain.Constants.PackageNames.DoorToDoor)
+        {
+            var declaration = order.CustomsDeclarations.FirstOrDefault();
+            if (declaration != null && declaration.CustomsType == Domain.Enums.CustomsType.RedField)
+            {
+                customsDetails = new AdminCustomsDetailsDto
+                {
+                    HasCustoms = true,
+                    CustomsType = "RedField",
+                    TotalDeclaredValue = declaration.TotalDeclaredValue,
+                    TotalCustomsFee = declaration.TotalCustomsFee,
+                    Notes = declaration.Notes,
+                    Items = declaration.CustomsItems.Select(ci => new AdminCustomsItemDto
+                    {
+                        ItemDescription = ci.ItemDescription,
+                        Category = ci.ExternalCategoryName ?? string.Empty,
+                        Quantity = ci.Quantity,
+                        DeclaredValue = ci.DeclaredValue,
+                        TotalValue = ci.TotalValue,
+                        CustomsRatePercentage = ci.CustomsRatePercentage,
+                        CustomsFee = ci.TotalCustomsValue,
+                        InvoiceUrls = ci.Invoices.Select(inv => inv.InvoicePath).ToList()
+                    }).ToList()
+                };
+            }
+            else
+            {
+                customsDetails = new AdminCustomsDetailsDto
+                {
+                    HasCustoms = false,
+                    CustomsType = "GreenField",
+                    CustomsMessage = "Green line selected, no customs fees apply"
+                };
+            }
+        }
         else
-            timeline.Add(new TimelineItem { Event = "Request Done", Time = null, IsDone = false });
+        {
+            customsDetails = new AdminCustomsDetailsDto
+            {
+                HasCustoms = false,
+                CustomsMessage = "No customs for this service"
+            };
+        }
 
         return new RequestDetailResponse
         {
@@ -135,10 +217,11 @@ public class AdminRequestService : IAdminRequestService
             },
             ServiceDetails = new ServiceDetails
             {
-                ServiceType = order.PackageId > 0 ? "Package" : (order.OrderServices.FirstOrDefault()?.PackageService?.Service?.ServiceName ?? "Unknown Service"),
+                PackageType = order.Package?.PackageName ?? (order.OrderServices.FirstOrDefault()?.PackageService?.Service?.ServiceName ?? "Unknown Service"),
                 AssignedEmployee = assignedEmp != null ? $"{assignedEmp.Firstname} {assignedEmp.Lastname}" : "Not Assigned"
             },
-            Timeline = timeline
+            Timeline = timeline,
+            CustomsDetails = customsDetails
         };
     }
 
@@ -195,5 +278,108 @@ public class AdminRequestService : IAdminRequestService
         order.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
         return true;
+    }
+
+    public async Task<IEnumerable<UnassignedServiceDto>> GetUnassignedServicesAsync()
+    {
+        var services = await _db.OrderServices
+            .Include(os => os.Order).ThenInclude(o => o.Customer)
+            .Include(os => os.Order).ThenInclude(o => o.Package)
+            .Include(os => os.Order).ThenInclude(o => o.PickupLocation)
+            .Include(os => os.PackageService).ThenInclude(ps => ps.Service)
+            .Where(os => os.AssignedEmployeeId == null 
+                         && os.ServiceStatus == ServiceStatus.Pending
+                         && os.Order.Package.PackageCode != Travora.Domain.Constants.PackageCodes.TrackingBaggage)
+            .ToListAsync();
+
+        return services.Select(os => new UnassignedServiceDto
+        {
+            OrderServiceId = os.OrderServiceId,
+            OrderId = os.OrderId,
+            PackageName = os.Order.Package?.PackageName ?? "Unknown Package",
+            ServiceName = os.PackageService?.Service?.ServiceName ?? "Unknown Service",
+            ExecutionPhase = os.PackageService?.ExecutionPhase.ToString() ?? string.Empty,
+            ScheduledStartTime = os.ScheduledStartTime,
+            ScheduledEndTime = os.ScheduledEndTime,
+            CustomerName = os.Order.Customer != null ? $"{os.Order.Customer.Firstname} {os.Order.Customer.Lastname}" : "Unknown",
+            City = os.Order.PickupLocation?.City ?? string.Empty
+        }).ToList();
+    }
+
+    public async Task<IEnumerable<AvailableEmployeeDto>> GetAvailableEmployeesForServiceAsync(int orderServiceId)
+    {
+        var os = await _db.OrderServices
+            .Include(s => s.PackageService).ThenInclude(ps => ps.Service)
+            .FirstOrDefaultAsync(s => s.OrderServiceId == orderServiceId)
+            ?? throw new KeyNotFoundException("Order service not found");
+
+        var phase = os.PackageService?.ExecutionPhase;
+        var needsDriver = phase is ExecutionPhase.Pickup or ExecutionPhase.Delivery;
+        var needsHandler = phase is ExecutionPhase.DepartureCheckin or ExecutionPhase.ArrivalCheckin;
+
+        if (needsHandler)
+        {
+            var handlers = await _db.Employees
+                .Where(e => e.JobRole == JobRole.BaggageHandler && e.IsActive && !e.IsDeleted)
+                .Include(e => e.AssignedOrderServices)
+                .ToListAsync();
+
+            return handlers.Select(h => new AvailableEmployeeDto
+            {
+                EmployeeId = h.EmployeeId,
+                Name = $"{h.Firstname} {h.Lastname}",
+                Role = h.JobRole.ToString(),
+                Shift = h.ShiftType.ToString(),
+                VehicleDetails = null
+            }).ToList();
+        }
+        else if (needsDriver)
+        {
+            var slotStart = os.ScheduledStartTime.TimeOfDay;
+            var slotEnd = os.ScheduledEndTime.TimeOfDay;
+            var date = os.ScheduledStartTime.Date;
+
+            var drivers = await _db.Employees
+                .Include(e => e.Vehicle)
+                .Include(e => e.AssignedOrderServices)
+                .Where(e => e.JobRole == JobRole.Driver && e.IsActive && !e.IsDeleted && e.VehicleId != null)
+                .ToListAsync();
+
+            var availableDrivers = drivers.Where(d =>
+                IsShiftCovering(d.ShiftType, slotStart, slotEnd) &&
+                !HasConflict(d, date, slotStart, slotEnd));
+
+            return availableDrivers.Select(d => new AvailableEmployeeDto
+            {
+                EmployeeId = d.EmployeeId,
+                Name = $"{d.Firstname} {d.Lastname}",
+                Role = d.JobRole.ToString(),
+                Shift = d.ShiftType.ToString(),
+                VehicleDetails = d.Vehicle != null ? $"{d.Vehicle.Brand} {d.Vehicle.Model} ({d.Vehicle.PlateNumber})" : null
+            }).ToList();
+        }
+
+        return new List<AvailableEmployeeDto>();
+    }
+
+    private bool IsShiftCovering(ShiftType shift, TimeSpan slotStart, TimeSpan slotEnd)
+    {
+        return shift switch
+        {
+            ShiftType.Morning => slotStart >= TimeSpan.FromHours(8) && slotEnd <= TimeSpan.FromHours(16),
+            ShiftType.Evening => slotStart >= TimeSpan.FromHours(16) && slotEnd <= TimeSpan.FromHours(24),
+            ShiftType.Night => (slotStart >= TimeSpan.FromHours(22) || slotStart < TimeSpan.FromHours(8)), 
+            ShiftType.rotating => true,
+            _ => false
+        };
+    }
+
+    private bool HasConflict(Employee driver, DateTime date, TimeSpan slotStart, TimeSpan slotEnd)
+    {
+        return driver.AssignedOrderServices.Any(os =>
+            os.ScheduledStartTime.Date == date &&
+            os.ScheduledStartTime.TimeOfDay < slotEnd &&
+            os.ScheduledEndTime.TimeOfDay > slotStart &&
+            os.ServiceStatus != ServiceStatus.Completed);
     }
 }

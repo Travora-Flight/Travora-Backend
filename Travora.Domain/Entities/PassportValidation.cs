@@ -31,14 +31,12 @@ public class PassportValidation : IHasTimestamps
     public string? CheckDateOfBirth { get; set; }
     public string? CheckExpirationDate { get; set; }
     public string? CheckComposite { get; set; }
-    public string? CheckPersonalNumber { get; set; }
 
     // --- MRZ Validity Flags ---
     public bool? ValidNumber { get; set; }
     public bool? ValidDateOfBirth { get; set; }
     public bool? ValidExpirationDate { get; set; }
     public bool? ValidComposite { get; set; }
-    public bool? ValidPersonalNumber { get; set; }
 
     // --- Extracted Passport Data ---
     public string? ExtractedPassportNumber { get; set; }
@@ -48,7 +46,6 @@ public class PassportValidation : IHasTimestamps
     public DateTime? ExtractedDateOfBirth { get; set; }
     public DateTime? ExtractedExpiryDate { get; set; }
     public string? ExtractedGender { get; set; }
-    public string? ExtractedPersonalNumber { get; set; }
 
     // --- Audit ---
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

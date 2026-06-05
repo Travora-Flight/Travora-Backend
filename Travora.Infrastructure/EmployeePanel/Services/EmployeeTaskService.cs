@@ -13,11 +13,30 @@ public class EmployeeTaskService : IEmployeeTaskService
 {
     private readonly ApplicationDbContext _db;
     private readonly INotificationPusher _pusher;
+    private readonly IRefundService _refundService;
 
-    public EmployeeTaskService(ApplicationDbContext db, INotificationPusher pusher)
+    // Predefined cancellation reasons for the customs employee
+    private static readonly List<CancelReasonDto> CancelReasons = new()
+    {
+        new CancelReasonDto
+        {
+            Id = 1,
+            Title = "Incorrect customs declaration",
+            Description = "Customer declared fewer items than the actual count"
+        },
+        new CancelReasonDto
+        {
+            Id = 2,
+            Title = "Undeclared customs items",
+            Description = "Customer has customs items but did not declare them"
+        }
+    };
+
+    public EmployeeTaskService(ApplicationDbContext db, INotificationPusher pusher, IRefundService refundService)
     {
         _db = db;
         _pusher = pusher;
+        _refundService = refundService;
     }
 
     public async Task<TaskDetailResponse> GetTaskDetailAsync(int employeeId, int orderServiceId)
@@ -592,6 +611,148 @@ public class EmployeeTaskService : IEmployeeTaskService
         {
             TotalCompleted = totalCompleted,
             Tasks = tasks
+        };
+    }
+
+    // ========================================================
+    // GET /api/v1/employee/tasks/cancel-reasons
+    // ========================================================
+    public List<CancelReasonDto> GetCancelReasons() => CancelReasons;
+
+    // ========================================================
+    // PATCH /api/v1/employee/tasks/{orderServiceId}/cancel
+    // ========================================================
+    public async Task<EmployeeCancelTaskResponse> CancelTaskAsync(
+        int employeeId, int orderServiceId, EmployeeCancelTaskRequest request)
+    {
+        // Validate reason
+        var reason = CancelReasons.FirstOrDefault(r => r.Id == request.ReasonId);
+        if (reason == null)
+            return new EmployeeCancelTaskResponse { Success = false, Message = "Invalid cancellation reason" };
+
+        var os = await _db.OrderServices
+            .Include(x => x.PackageService).ThenInclude(ps => ps.Service)
+            .Include(x => x.Order).ThenInclude(o => o.OrderServices)
+            .Include(x => x.Order).ThenInclude(o => o.Invoices)
+            .Include(x => x.Order).ThenInclude(o => o.CustomsDeclarations)
+            .Include(x => x.Order).ThenInclude(o => o.Customer)
+            .FirstOrDefaultAsync(x => x.OrderServiceId == orderServiceId);
+
+        if (os == null)
+            return new EmployeeCancelTaskResponse { Success = false, Message = "Task not found" };
+
+        if (os.AssignedEmployeeId != employeeId)
+            return new EmployeeCancelTaskResponse { Success = false, Message = "Unauthorized" };
+
+        if (os.ServiceStatus != ServiceStatus.InProgress)
+            return new EmployeeCancelTaskResponse { Success = false, Message = "Task must be in progress to cancel" };
+
+        var currentPhase = os.PackageService?.ExecutionPhase;
+        if (currentPhase != ExecutionPhase.ArrivalCheckin)
+            return new EmployeeCancelTaskResponse { Success = false, Message = "Only arrival/customs tasks can be cancelled by employee" };
+
+        var now = DateTime.UtcNow;
+        var order = os.Order;
+        var customerId = order.CustomerId;
+        var customerName = $"{order.Customer.Firstname} {order.Customer.Lastname}";
+
+        // ===== Cancel the order and all pending/assigned services =====
+        order.OrderStatus = OrderStatus.Cancelled;
+        order.CancellationReason = $"[Employee] {reason.Title}" + (string.IsNullOrEmpty(request.Notes) ? "" : $" - {request.Notes}");
+        order.UpdatedAt = now;
+
+        foreach (var svc in order.OrderServices)
+        {
+            if (svc.ServiceStatus is ServiceStatus.Pending or ServiceStatus.Assigned or ServiceStatus.InProgress)
+            {
+                svc.ServiceStatus = ServiceStatus.Cancelled;
+                svc.UpdatedAt = now;
+            }
+        }
+
+        // ===== Refund logic based on reason =====
+        decimal refundAmount = 0;
+        string? refundType = null;
+        bool refundSuccess = false;
+
+        if (request.ReasonId == 1) // Customs mismatch — refund customs fees ONLY
+        {
+            var declaration = order.CustomsDeclarations.FirstOrDefault();
+            if (declaration != null && declaration.TotalCustomsFee > 0)
+            {
+                refundAmount = declaration.TotalCustomsFee;
+                refundType = "customs_fees_only";
+
+                // Save order cancellation first so the refund service can process it
+                await _db.SaveChangesAsync();
+
+                // Execute partial refund through Paymob immediately
+                var refundResult = await _refundService.ProcessEmployeeRefundAsync(
+                    order.OrderId, refundAmount, $"Customs fee refund: {reason.Title}");
+
+                refundSuccess = refundResult.Success;
+            }
+        }
+        // ReasonId == 2 (No declaration) — NO refund at all, customer's fault
+
+        // ===== Notification to customer =====
+        var notifTitle = "Order Cancelled";
+        var notifMessage = request.ReasonId == 1
+            ? $"Your order has been cancelled due to an incorrect customs declaration. "
+              + $"The customs fees of {refundAmount:F2} EGP will be refunded. "
+              + "Please bring your passport and collect your bags from the airport."
+            : "Your order has been cancelled because undeclared customs items were found. "
+              + "Please bring your passport and collect your bags from the airport.";
+
+        _db.Notifications.Add(new Notification
+        {
+            UserId = customerId,
+            UserType = UserType.Customer,
+            NotificationType = NotificationType.OrderUpdated,
+            Title = notifTitle,
+            Message = notifMessage,
+            NotificationChannel = NotificationChannel.InApp,
+            OrderId = order.OrderId
+        });
+
+        // ===== Notify assigned employees on other services =====
+        var otherAssigned = order.OrderServices
+            .Where(s => s.OrderServiceId != orderServiceId && s.AssignedEmployeeId.HasValue)
+            .ToList();
+
+        foreach (var svc in otherAssigned)
+        {
+            var empId = svc.AssignedEmployeeId!.Value;
+            _db.Notifications.Add(new Notification
+            {
+                UserId = empId,
+                UserType = UserType.Employee,
+                NotificationType = NotificationType.OrderUpdated,
+                Title = "Order Cancelled",
+                Message = $"Order #{order.OrderId} has been cancelled by customs handler",
+                NotificationChannel = NotificationChannel.InApp,
+                OrderId = order.OrderId
+            });
+            await _pusher.PushToEmployeeAsync(empId, "Order Cancelled",
+                $"Order #{order.OrderId} has been cancelled by customs handler",
+                "OrderCancelled", order.OrderId);
+        }
+
+        await _db.SaveChangesAsync();
+
+        // Push notification to customer
+        await _pusher.PushToCustomerAsync(customerId, notifTitle, notifMessage, "OrderCancelled", order.OrderId);
+
+        return new EmployeeCancelTaskResponse
+        {
+            Success = true,
+            Message = request.ReasonId == 1
+                ? refundSuccess
+                    ? $"Order cancelled. Customs fees of {refundAmount:F2} EGP have been refunded."
+                    : $"Order cancelled. Customs fee refund of {refundAmount:F2} EGP failed — admin has been notified."
+                : "Order cancelled. No refund issued.",
+            RefundAmount = refundAmount,
+            RefundType = refundType
         };
     }
 

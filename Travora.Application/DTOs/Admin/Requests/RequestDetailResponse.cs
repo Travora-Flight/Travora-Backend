@@ -7,4 +7,5 @@ public class RequestDetailResponse
     public ClientInfo ClientInfo { get; set; } = new();
     public ServiceDetails ServiceDetails { get; set; } = new();
     public List<TimelineItem> Timeline { get; set; } = new();
+    public AdminCustomsDetailsDto? CustomsDetails { get; set; }
 }

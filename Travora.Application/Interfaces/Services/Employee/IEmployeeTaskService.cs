@@ -8,4 +8,6 @@ public interface IEmployeeTaskService
     Task<TaskActionResponse> StartTaskAsync(int employeeId, int orderServiceId);
     Task<TaskActionResponse> CompleteTaskAsync(int employeeId, int orderServiceId);
     Task<CompletedTasksResponse> GetCompletedTasksAsync(int employeeId, int page, int pageSize);
+    List<CancelReasonDto> GetCancelReasons();
+    Task<EmployeeCancelTaskResponse> CancelTaskAsync(int employeeId, int orderServiceId, EmployeeCancelTaskRequest request);
 }

@@ -11,16 +11,13 @@ namespace Travora.API.Controllers;
 public class CustomerPaymentMethodController : ControllerBase
 {
     private readonly IPaymentMethodService _paymentMethodService;
-    private readonly Travora.Application.Interfaces.Services.Customer.ICustomerProfileService _profileService;
     private readonly IPaymobService _paymobService;
 
     public CustomerPaymentMethodController(
         IPaymentMethodService paymentMethodService,
-        Travora.Application.Interfaces.Services.Customer.ICustomerProfileService profileService,
         IPaymobService paymobService)
     {
         _paymentMethodService = paymentMethodService;
-        _profileService = profileService;
         _paymobService = paymobService;
     }
 
@@ -33,21 +30,9 @@ public class CustomerPaymentMethodController : ControllerBase
         return Ok(result);
     }
 
-    [HttpPost]
-    [ProducesResponseType(typeof(AddPaymentMethodResponseWrapper), StatusCodes.Status200OK)]
-    public async Task<IActionResult> AddPaymentMethod([FromBody] Travora.Application.DTOs.Customer.Profile.AddPaymentMethodRequest request)
-    {
-        var customerId = int.Parse(User.FindFirstValue("customerId")!);
-        var (success, message, data) = await _profileService.AddPaymentMethodAsync(customerId, request);
-        
-        if (!success)
-            return BadRequest(new { success, message });
-
-        return Ok(new AddPaymentMethodResponseWrapper { Success = success, Message = message, Data = data });
-    }
 
     [HttpPost("initiate-save")]
-    [ProducesResponseType(typeof(Travora.Application.DTOs.Payments.PaymentInitiationResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Travora.Application.DTOs.Payments.SaveCardResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> InitiateSaveCard()
     {
         var customerId = int.Parse(User.FindFirstValue("customerId")!);
@@ -78,12 +63,7 @@ public class CustomerPaymentMethodController : ControllerBase
     }
 }
 
-public class AddPaymentMethodResponseWrapper
-{
-    public bool Success { get; set; }
-    public string Message { get; set; } = string.Empty;
-    public object? Data { get; set; } // Could be explicitly typed if we know the DTO
-}
+
 
 public class PaymentMethodGenericResponse
 {

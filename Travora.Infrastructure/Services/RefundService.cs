@@ -316,11 +316,32 @@ public class RefundService : IRefundService
         }
         catch
         {
-            // Paymob failed → mark refund as failed, don't change Order
+            // Paymob failed → mark refund as failed
             refund.RefundStatus = RefundStatus.Failed;
             refund.ProcessedAt = now;
             refund.ProcessedByAdminId = adminId;
             refund.UpdatedAt = now;
+
+            // Notify ALL active admins about the failed refund
+            var adminIds = await _db.Admins
+                .Where(a => a.IsActive)
+                .Select(a => a.AdminId)
+                .ToListAsync();
+
+            foreach (var aid in adminIds)
+            {
+                _db.Notifications.Add(new Notification
+                {
+                    UserId = aid,
+                    UserType = UserType.Admin,
+                    NotificationType = NotificationType.OrderUpdated,
+                    Title = "Refund Failed — Action Required",
+                    Message = $"Refund of {amount:F2} EGP for order #{refund.OrderId} failed. Reason: {refund.Reason}. Please review and retry.",
+                    NotificationChannel = NotificationChannel.InApp,
+                    OrderId = refund.OrderId
+                });
+            }
+
             await _db.SaveChangesAsync();
 
             return new RefundResponse
@@ -379,5 +400,78 @@ public class RefundService : IRefundService
             Status = RefundStatus.Rejected.ToString(),
             Message = "Refund request rejected"
         };
+    }
+
+    /// <summary>
+    /// Employee-initiated partial refund — goes directly to Paymob, no admin approval.
+    /// If no invoice/payment found, notifies admins without creating a refund record.
+    /// </summary>
+    public async Task<RefundResponse> ProcessEmployeeRefundAsync(int orderId, decimal amount, string reason)
+    {
+        var order = await _db.Orders
+            .Include(o => o.Invoices)
+            .FirstOrDefaultAsync(o => o.OrderId == orderId);
+
+        if (order == null)
+            return new RefundResponse { Success = false, Message = "Order not found" };
+
+        var invoice = order.Invoices.FirstOrDefault(i => i.InvoiceStatus == InvoiceStatus.Paid);
+        var payment = invoice != null
+            ? await _db.Payments.FirstOrDefaultAsync(p => p.InvoiceId == invoice.InvoiceId && p.PaymentStatus == PaymentStatus.Completed)
+            : null;
+
+        // If no paid invoice or payment → notify admins (no refund record without payment)
+        if (invoice == null || payment == null)
+        {
+            var failReason = invoice == null ? "No paid invoice found" : "No completed payment found";
+
+            var adminIds = await _db.Admins
+                .Where(a => a.IsActive)
+                .Select(a => a.AdminId)
+                .ToListAsync();
+
+            foreach (var aid in adminIds)
+            {
+                _db.Notifications.Add(new Notification
+                {
+                    UserId = aid,
+                    UserType = UserType.Admin,
+                    NotificationType = NotificationType.OrderUpdated,
+                    Title = "Refund Failed — Action Required",
+                    Message = $"Refund of {amount:F2} EGP for order #{orderId} could not be processed. {failReason}. Please review manually.",
+                    NotificationChannel = NotificationChannel.InApp,
+                    OrderId = orderId
+                });
+            }
+
+            await _db.SaveChangesAsync();
+
+            return new RefundResponse { Success = false, Message = failReason };
+        }
+
+        // Validate refund amount
+        if (amount > invoice.TotalAmount)
+            return new RefundResponse { Success = false, Message = "Refund amount exceeds invoice total" };
+
+        var refund = new Refund
+        {
+            RefundAmount = amount,
+            RefundStatus = RefundStatus.Requested,
+            Reason = reason,
+            OrderId = orderId,
+            PaymentId = payment.PaymentId,
+            Order = order,
+            Payment = payment
+        };
+        _db.Refunds.Add(refund);
+
+        // Execute immediately through Paymob (partial refund)
+        return await ExecutePaymobRefundAsync(
+            refund,
+            amount,
+            adminId: null,
+            title: "Customs fees refunded",
+            message: $"Amount of {amount:F2} EGP has been refunded for customs fees",
+            isPartial: true);
     }
 }

@@ -20,12 +20,10 @@ public class PassportOcrResult
     public string? CheckDateOfBirth { get; set; }
     public string? CheckExpirationDate { get; set; }
     public string? CheckComposite { get; set; }
-    public string? CheckPersonalNumber { get; set; }
 
     // Validity flags
     public bool? ValidNumber { get; set; }
     public bool? ValidDateOfBirth { get; set; }
     public bool? ValidExpirationDate { get; set; }
-    public bool? ValidComposite { get; set; }
-    public bool? ValidPersonalNumber { get; set; }
+    public bool? CustomValidComposite { get; set; }
 }

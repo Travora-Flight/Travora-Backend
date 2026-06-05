@@ -52,4 +52,21 @@ public class EmployeeTasksController : ControllerBase
         var response = await _taskService.GetCompletedTasksAsync(employeeId, page, pageSize);
         return Ok(response);
     }
+
+    [HttpGet("cancel-reasons")]
+    [ProducesResponseType(typeof(List<Travora.Application.DTOs.Employee.Tasks.CancelReasonDto>), StatusCodes.Status200OK)]
+    public IActionResult GetCancelReasons()
+    {
+        var reasons = _taskService.GetCancelReasons();
+        return Ok(reasons);
+    }
+
+    [HttpPatch("{orderServiceId}/cancel")]
+    [ProducesResponseType(typeof(Travora.Application.DTOs.Employee.Tasks.EmployeeCancelTaskResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> CancelTask(int orderServiceId, [FromBody] Travora.Application.DTOs.Employee.Tasks.EmployeeCancelTaskRequest request)
+    {
+        var employeeId = int.Parse(User.FindFirstValue("employeeId")!);
+        var response = await _taskService.CancelTaskAsync(employeeId, orderServiceId, request);
+        return Ok(response);
+    }
 }
