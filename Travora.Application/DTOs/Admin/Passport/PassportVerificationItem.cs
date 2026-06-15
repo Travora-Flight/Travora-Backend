@@ -14,4 +14,5 @@ public class PassportVerificationItem
     public string Gender { get; set; } = string.Empty;
     public decimal OcrConfidenceScore { get; set; }
     public bool ManualReviewRequired { get; set; }
+    public string ReviewReason { get; set; } = string.Empty;
 }

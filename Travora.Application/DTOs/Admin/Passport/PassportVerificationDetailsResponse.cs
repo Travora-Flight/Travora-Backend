@@ -19,4 +19,5 @@ public class PassportVerificationDetailsResponse
     
     // Original Passport Info entered by user
     public PassportInfoDetails PassportInfo { get; set; } = new();
+    public string ReviewReason { get; set; } = string.Empty;
 }

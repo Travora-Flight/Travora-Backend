@@ -84,10 +84,13 @@ public class AdminPassportService : IAdminPassportService
                 DateOfBirth = x.c.DateOfBirth.ToString("dd/MM/yyyy"),
                 ExpiryDate = x.c.PassportExpiryDate.ToString("dd/MM/yyyy")
             },
-            Status = x.d.VerificationStatus.ToString().ToLower(),
+            Status = (x.d.VerificationStatus == VerificationStatus.UnderReview || x.d.VerificationStatus == VerificationStatus.Pending) 
+                ? "pending" 
+                : x.d.VerificationStatus.ToString().ToLower(),
             Gender = x.c.Gender,
             OcrConfidenceScore = Math.Round(x.p.OcrConfidenceScore, 2),
-            ManualReviewRequired = x.p.ManualReviewRequired
+            ManualReviewRequired = x.p.ManualReviewRequired,
+            ReviewReason = DetermineReviewReason(x.p.ValidScore)
         }).ToList();
 
         return new PassportVerificationListResponse
@@ -139,10 +142,13 @@ public class AdminPassportService : IAdminPassportService
             Mobile = item.c.PhoneNumber,
             Email = item.c.Email,
             PassportImageUrl = item.d.FilePath,
-            Status = item.d.VerificationStatus.ToString().ToLower(),
+            Status = (item.d.VerificationStatus == VerificationStatus.UnderReview || item.d.VerificationStatus == VerificationStatus.Pending) 
+                ? "pending" 
+                : item.d.VerificationStatus.ToString().ToLower(),
             Gender = item.c.Gender,
             OcrConfidenceScore = Math.Round(item.p.OcrConfidenceScore, 2),
             ManualReviewRequired = item.p.ManualReviewRequired,
+            ReviewReason = DetermineReviewReason(item.p.ValidScore),
             PassportInfo = new PassportInfoDetails
             {
                 PassportNumber = item.c.PassportNumber,
@@ -238,7 +244,7 @@ public class AdminPassportService : IAdminPassportService
             UserType = UserType.Customer,
             NotificationType = NotificationType.AccountAlert,
             Title = "Passport Rejected",
-            Message = $"Passport rejected. Reason: {request.Reason}",
+            Message = $"Your passport has been rejected, {request.Reason}. Please contact support for more information.",
             IsRead = false,
             SentAt = DateTime.UtcNow
         };
@@ -246,5 +252,21 @@ public class AdminPassportService : IAdminPassportService
 
         await _db.SaveChangesAsync();
         return true;
+    }
+
+    private string DetermineReviewReason(int? validScore)
+    {
+        if (!validScore.HasValue) return string.Empty;
+
+        if (validScore.Value >= 65 && validScore.Value <= 85)
+        {
+            return "The passport image quality is medium/low; the OCR system may have misread some characters.";
+        }
+        else if (validScore.Value > 85)
+        {
+            return "The manual inputs entered by the user do not match the details extracted from the passport.";
+        }
+
+        return string.Empty;
     }
 }
