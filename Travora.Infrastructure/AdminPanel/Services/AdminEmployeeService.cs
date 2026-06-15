@@ -62,7 +62,8 @@ public class AdminEmployeeService : IAdminEmployeeService
                 Status = e.IsActive ? "active" : "inactive",
                 Email = e.Email,
                 ShiftType = e.ShiftType.ToString().ToLower(),
-                JobRole = e.JobRole.ToString().ToLower()
+                JobRole = e.JobRole.ToString().ToLower(),
+                CheckpointId = e.JobRole == JobRole.BaggageHandler ? e.CheckpointId : null
             })
             .ToListAsync();
 

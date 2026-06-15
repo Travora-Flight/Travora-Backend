@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Travora.Application.DTOs.Admin.Employees;
 
 public class EmployeeListResponse
@@ -9,4 +11,7 @@ public class EmployeeListResponse
     public string Email { get; set; } = string.Empty;
     public string ShiftType { get; set; } = string.Empty;
     public string JobRole { get; set; } = string.Empty;
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? CheckpointId { get; set; }
 }
