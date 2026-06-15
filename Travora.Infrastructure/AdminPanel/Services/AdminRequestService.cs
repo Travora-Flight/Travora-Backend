@@ -16,7 +16,7 @@ public class AdminRequestService : IAdminRequestService
         _db = db;
     }
 
-    public async Task<RequestPagedResponse> GetRequestsAsync(string? search, string? filter, string? status, int page, int pageSize)
+    public async Task<RequestPagedResponse> GetRequestsAsync(string? search, RequestTimeFilter filter, string? status, int page, int pageSize)
     {
         var query = _db.Orders
             .Include(o => o.Customer)
@@ -35,18 +35,12 @@ public class AdminRequestService : IAdminRequestService
 
         // 2. Filter (Time)
         var now = DateTime.UtcNow;
-        if (!string.IsNullOrWhiteSpace(filter))
+        query = filter switch
         {
-            if (filter.Equals("today", StringComparison.OrdinalIgnoreCase))
-            {
-                query = query.Where(o => o.CreatedAt.Date == now.Date);
-            }
-            else if (filter.Equals("this_week", StringComparison.OrdinalIgnoreCase))
-            {
-                var startOfWeek = now.Date.AddDays(-(int)now.DayOfWeek);
-                query = query.Where(o => o.CreatedAt.Date >= startOfWeek);
-            }
-        }
+            RequestTimeFilter.Today => query.Where(o => o.CreatedAt.Date == now.Date),
+            RequestTimeFilter.ThisWeek => query.Where(o => o.CreatedAt.Date >= now.Date.AddDays(-(int)now.DayOfWeek)),
+            _ => query // RequestTimeFilter.All — no time filtering
+        };
 
         // 3. Status
         if (!string.IsNullOrWhiteSpace(status))
@@ -232,6 +226,12 @@ public class AdminRequestService : IAdminRequestService
             .FirstOrDefaultAsync(o => o.OrderId == orderId)
             ?? throw new KeyNotFoundException("Order not found");
 
+        if (order.OrderStatus == OrderStatus.Cancelled)
+            throw new InvalidOperationException("Cannot assign an employee to a cancelled order");
+
+        if (order.OrderStatus == OrderStatus.Completed)
+            throw new InvalidOperationException("Cannot assign an employee to a completed order");
+
         var employee = await _db.Employees.FindAsync(request.EmployeeId)
             ?? throw new KeyNotFoundException("Employee not found");
 
@@ -289,7 +289,13 @@ public class AdminRequestService : IAdminRequestService
             .Include(os => os.PackageService).ThenInclude(ps => ps.Service)
             .Where(os => os.AssignedEmployeeId == null 
                          && os.ServiceStatus == ServiceStatus.Pending
-                         && os.Order.Package.PackageCode != Travora.Domain.Constants.PackageCodes.TrackingBaggage)
+                         && os.Order.Package.PackageCode != Travora.Domain.Constants.PackageCodes.TrackingBaggage
+                         && (os.Order.OrderStatus == OrderStatus.Confirmed 
+                             || os.Order.OrderStatus == OrderStatus.InProgress 
+                             || os.Order.OrderStatus == OrderStatus.rescheduled)
+                         && !os.Order.OrderServices.Any(other => 
+                             other.PackageService.ExecutionPhase < os.PackageService.ExecutionPhase 
+                             && other.ServiceStatus != ServiceStatus.Completed))
             .ToListAsync();
 
         return services.Select(os => new UnassignedServiceDto
