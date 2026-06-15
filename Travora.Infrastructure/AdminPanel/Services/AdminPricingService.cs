@@ -305,7 +305,7 @@ public class AdminPricingService : IAdminPricingService
             ?? throw new KeyNotFoundException("Package not found");
 
         if (request.PackageName != null) package.PackageName = request.PackageName;
-        if (request.Discount != null) package.Discount = request.Discount; // Can be null, but request.Discount is decimal?
+        if (request.Discount != null) package.Discount = request.Discount;
 
         if (request.IncludedCompanions.HasValue) package.IncludedCompanionsCount = request.IncludedCompanions.Value;
         if (request.ExtraCompanionPrice.HasValue) package.ExtraCompanionPrice = request.ExtraCompanionPrice.Value;
@@ -319,25 +319,78 @@ public class AdminPricingService : IAdminPricingService
 
         if (request.Services != null)
         {
-            // Fully replace the services mapping
-            _db.RemoveRange(package.PackageServices);
+            // Perform an in-place update of services mapping to prevent FK violations
+            var currentPackageServices = package.PackageServices.ToList();
+
+            // Group requested services to prevent duplicate keys if input contains duplicate service IDs
+            var requestedServicesDict = request.Services
+                .GroupBy(s => s.ServiceId)
+                .ToDictionary(g => g.Key, g => g.First());
+
+            // Determine which services to remove
+            var servicesToRemove = currentPackageServices
+                .Where(ps => !requestedServicesDict.ContainsKey(ps.ServiceId))
+                .ToList();
+
+            // Validate that we are not deleting any services with active/existing customer orders
+            foreach (var psToRemove in servicesToRemove)
+            {
+                var hasOrders = await _db.OrderServices.AnyAsync(os => os.PackageServiceId == psToRemove.PackageServiceId);
+                if (hasOrders)
+                {
+                    var serviceName = await _db.Services
+                        .Where(s => s.ServiceId == psToRemove.ServiceId)
+                        .Select(s => s.ServiceName)
+                        .FirstOrDefaultAsync() ?? "requested service";
+
+                    throw new InvalidOperationException($"Cannot remove the service '{serviceName}' from this package because there are active customer orders depending on it.");
+                }
+            }
+
+            // Remove services that are no longer requested and have no orders
+            if (servicesToRemove.Any())
+            {
+                _db.RemoveRange(servicesToRemove);
+            }
+
             decimal newTotalPrice = 0;
 
-            foreach (var s in request.Services)
+            // Process requested services (Add or Update)
+            foreach (var requestedService in request.Services)
             {
-                var srv = await _db.Services.FindAsync(s.ServiceId);
-                if (srv != null && !s.IsFree)
+                var dbService = await _db.Services.FindAsync(requestedService.ServiceId);
+                if (dbService == null)
                 {
-                    newTotalPrice += srv.BasePrice;
+                    throw new KeyNotFoundException($"Service with ID {requestedService.ServiceId} not found");
                 }
 
-                package.PackageServices.Add(new Travora.Domain.Entities.PackageService
+                if (!requestedService.IsFree)
                 {
-                    ServiceId = s.ServiceId,
-                    ExecutionPhase = MapExecutionPhase(s.Phase),
-                    IncludedInBase = s.IsFree
-                });
+                    newTotalPrice += dbService.BasePrice;
+                }
+
+                var existingPs = currentPackageServices.FirstOrDefault(ps => ps.ServiceId == requestedService.ServiceId);
+
+                if (existingPs != null)
+                {
+                    // In-place update
+                    existingPs.ExecutionPhase = MapExecutionPhase(requestedService.Phase);
+                    existingPs.IncludedInBase = requestedService.IsFree;
+                    existingPs.UpdatedAt = DateTime.UtcNow;
+                }
+                else
+                {
+                    // Add new mapping
+                    package.PackageServices.Add(new Travora.Domain.Entities.PackageService
+                    {
+                        ServiceId = requestedService.ServiceId,
+                        ExecutionPhase = MapExecutionPhase(requestedService.Phase),
+                        IncludedInBase = requestedService.IsFree,
+                        CreatedAt = DateTime.UtcNow
+                    });
+                }
             }
+
             package.TotalBasePrice = newTotalPrice;
         }
 
