@@ -1,8 +1,5 @@
 namespace Travora.Application.DTOs.Employee.Tasks;
 
-/// <summary>
-/// Predefined reason for employee-initiated order cancellation.
-/// </summary>
 public class CancelReasonDto
 {
     public int Id { get; set; }
@@ -12,10 +9,7 @@ public class CancelReasonDto
 
 public class EmployeeCancelTaskRequest
 {
-    /// <summary>Predefined reason ID from GET /cancel-reasons.</summary>
     public int ReasonId { get; set; }
-
-    /// <summary>Optional free-text notes from the employee.</summary>
     public string? Notes { get; set; }
 }
 
