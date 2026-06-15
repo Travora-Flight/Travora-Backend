@@ -123,6 +123,7 @@ public static class ServiceCollectionExtensions
         // App Settings (API integrations)
         services.Configure<AirlineApiSettings>(configuration.GetSection("AirlineApi"));
         services.Configure<AviationEdgeSettings>(configuration.GetSection("AviationEdge"));
+        services.Configure<AdsbExchangeSettings>(configuration.GetSection("AdsbExchange"));
         services.Configure<AviationWeatherSettings>(configuration.GetSection("AviationWeather"));
         services.Configure<Travora.Infrastructure.Configurations.GeocodingSettings>(configuration.GetSection("Geocoding"));
         services.Configure<PassportOcrSettings>(configuration.GetSection("PassportOcr"));
@@ -149,6 +150,20 @@ public static class ServiceCollectionExtensions
                 var baseUrl = aviationEdge.BaseUrl.EndsWith("/") ? aviationEdge.BaseUrl : $"{aviationEdge.BaseUrl}/";
                 client.BaseAddress = new Uri(baseUrl);
                 client.Timeout = TimeSpan.FromSeconds(aviationEdge.TimeoutSeconds);
+            }
+        });
+
+        // ADSBexchange via RapidAPI — real-time ADS-B radar data
+        var adsbSettings = configuration.GetSection("AdsbExchange").Get<AdsbExchangeSettings>();
+        services.AddHttpClient("AdsbExchange", client =>
+        {
+            if (adsbSettings != null)
+            {
+                var baseUrl = adsbSettings.BaseUrl.EndsWith("/") ? adsbSettings.BaseUrl : $"{adsbSettings.BaseUrl}/";
+                client.BaseAddress = new Uri(baseUrl);
+                client.Timeout = TimeSpan.FromSeconds(adsbSettings.TimeoutSeconds);
+                client.DefaultRequestHeaders.Add("X-RapidAPI-Key", adsbSettings.RapidApiKey);
+                client.DefaultRequestHeaders.Add("X-RapidAPI-Host", adsbSettings.RapidApiHost);
             }
         });
 
@@ -206,6 +221,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<Travora.Application.Interfaces.External.Weather.IWeatherCache, Travora.Infrastructure.Caching.WeatherCacheService>();
         services.AddScoped<IAirportDetailsService, Travora.Infrastructure.Services.AirportDetailsService>();
         services.AddScoped<IFlightTrackerService, Travora.Infrastructure.Services.FlightTrackerService>();
+        services.AddScoped<IAdsbExchangeService, Travora.Infrastructure.Services.AdsbExchangeService>();
         
         // Register Draft Order Service (Redis)
         services.AddScoped<Travora.Application.Interfaces.Services.IDraftOrderService, Travora.Infrastructure.Services.DraftOrderService>();
