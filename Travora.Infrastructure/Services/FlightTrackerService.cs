@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Travora.Application.DTOs.Flights.Tracker;
 using Travora.Application.Interfaces;
 using Travora.Application.Interfaces.Services;
@@ -13,6 +14,8 @@ public class FlightTrackerService : IFlightTrackerService
     private readonly IUpstashRedisService _redis;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ApplicationDbContext _db;
+    private readonly IAdsbExchangeService _adsbService;
+    private readonly ILogger<FlightTrackerService> _logger;
     private readonly string _baseUrl;
     private readonly string _apiKey;
 
@@ -20,7 +23,9 @@ public class FlightTrackerService : IFlightTrackerService
     private const string LiveFlightsTimestampKey = "flights:live:timestamp";
     private const string TimetableCachePrefix = "timetable:";
 
-    // Aviation Edge updates every 5-8 min — cache aligned to 5 min
+    // ADSB data updates every ~2s — cache for 8s to align with the mobile app's 10s polling interval
+    private static readonly TimeSpan AdsbCacheTtl = TimeSpan.FromSeconds(8);
+    // Aviation Edge updates every 5-8 min — cache aligned to 5 min (used as fallback)
     private static readonly TimeSpan GlobalCacheTtl = TimeSpan.FromMinutes(5);
     // Timetables are semi-static — 15 min is safe
     private static readonly TimeSpan TimetableTtl = TimeSpan.FromMinutes(15);
@@ -36,56 +41,135 @@ public class FlightTrackerService : IFlightTrackerService
         IUpstashRedisService redis,
         IHttpClientFactory httpClientFactory,
         ApplicationDbContext db,
+        IAdsbExchangeService adsbService,
+        ILogger<FlightTrackerService> logger,
         IConfiguration configuration)
     {
         _redis = redis;
         _httpClientFactory = httpClientFactory;
         _db = db;
+        _adsbService = adsbService;
+        _logger = logger;
         _baseUrl = configuration["AviationEdge:BaseUrl"] ?? "https://aviation-edge.com/v2/public";
         _apiKey = configuration["AviationEdge:ApiKey"] ?? "";
     }
 
     // ========================================================
     // 1) GET /api/v1/flights/live
+    //    Primary: ADSBexchange (real-time radar, ~2s updates)
+    //    Fallback: Aviation Edge (schedule-enriched, 5-8 min updates)
     // ========================================================
     public async Task<ViewportFlightsResponse> GetViewportFlightsAsync(
         decimal minLat, decimal maxLat, decimal minLng, decimal maxLng,
         bool isZoomedIn = false, decimal? centerLat = null, decimal? centerLng = null, int? distance = null)
     {
+        // ----- Step 1: Compute center & radius from viewport bounds -----
+        var cLat = centerLat ?? (minLat + maxLat) / 2;
+        var cLon = centerLng ?? (minLng + maxLng) / 2;
+
+        if (!distance.HasValue)
+        {
+            // Convert bounding box diagonal to NM (1 deg lat ≈ 60 NM)
+            var latSpanNm = (double)(maxLat - minLat) * 60;
+            var lonSpanNm = (double)(maxLng - minLng) * 60 * Math.Cos((double)cLat * Math.PI / 180);
+            var diagonalNm = Math.Sqrt(latSpanNm * latSpanNm + lonSpanNm * lonSpanNm);
+            distance = (int)Math.Clamp(diagonalNm / 2, 5, 250);
+        }
+
+        // ----- Step 2: Check ADSB cache first -----
+        var adsbCacheKey = $"adsb:viewport:{cLat:F1}:{cLon:F1}:{distance}";
+        var cached = await SafeCacheGet(adsbCacheKey);
+        if (!string.IsNullOrEmpty(cached))
+        {
+            var cachedResult = JsonSerializer.Deserialize<ViewportFlightsResponse>(cached, JsonOptions);
+            if (cachedResult != null)
+                return cachedResult;
+        }
+
+        // ----- Step 3: Try ADSBexchange as primary source -----
+        List<ViewportFlightDto>? resultFlights = null;
+        long lastApiUpdate = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        string dataSource = "adsb";
+
+        try
+        {
+            var adsbResults = await _adsbService.GetAircraftInRadiusAsync(
+                (double)cLat, (double)cLon, distance.Value);
+
+            if (adsbResults.Count > 0)
+            {
+                resultFlights = adsbResults
+                    .Where(a => a.Lat >= minLat && a.Lat <= maxLat && a.Lon >= minLng && a.Lon <= maxLng)
+                    .Select(a => new ViewportFlightDto
+                    {
+                        Id = !string.IsNullOrEmpty(a.Callsign) ? a.Callsign : a.Hex,
+                        Lat = a.Lat,
+                        Lng = a.Lon,
+                        Alt = a.AltitudeFt,
+                        Hdg = a.Heading,
+                        Spd = a.SpeedKts,
+                        Gnd = a.IsOnGround,
+                        Sts = a.IsOnGround ? "landed" : "en-route",
+                        Airline = ExtractAirlineFromCallsign(a.Callsign),
+                        Reg = a.Registration,
+                        Dep = string.Empty,  // ADSB doesn't provide departure/arrival
+                        Arr = string.Empty
+                    })
+                    .ToList();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "ADSBexchange primary source failed, falling back to Aviation Edge");
+        }
+
+        // ----- Step 4: Fallback to Aviation Edge if ADSB returned nothing -----
+        if (resultFlights == null || resultFlights.Count == 0)
+        {
+            dataSource = "aviation-edge";
+            resultFlights = await FetchAviationEdgeViewportAsync(
+                minLat, maxLat, minLng, maxLng, cLat, cLon, distance.Value);
+        }
+
+        var response = new ViewportFlightsResponse
+        {
+            Count = resultFlights.Count,
+            LastUpdated = DateTime.UtcNow,
+            LastApiUpdate = lastApiUpdate,
+            Flights = resultFlights
+        };
+
+        // ----- Step 5: Cache the result -----
+        var cacheTtl = dataSource == "adsb" ? AdsbCacheTtl : GlobalCacheTtl;
+        await SafeCacheSet(adsbCacheKey, JsonSerializer.Serialize(response), cacheTtl);
+
+        return response;
+    }
+
+    /// <summary>
+    /// Fallback: fetches viewport flights from Aviation Edge (original logic).
+    /// Only called when ADSBexchange is down or returns no data.
+    /// </summary>
+    private async Task<List<ViewportFlightDto>> FetchAviationEdgeViewportAsync(
+        decimal minLat, decimal maxLat, decimal minLng, decimal maxLng,
+        decimal centerLat, decimal centerLon, int distanceKm)
+    {
         var flightsDict = new Dictionary<string, CachedFlight>(StringComparer.OrdinalIgnoreCase);
 
+        // Try loading from global cache first
         var cached = await SafeCacheGet(LiveFlightsCacheKey);
         if (!string.IsNullOrEmpty(cached))
         {
             var cachedFlights = JsonSerializer.Deserialize<List<CachedFlight>>(cached, JsonOptions);
             if (cachedFlights != null)
-            {
-                foreach(var f in cachedFlights)
-                {
+                foreach (var f in cachedFlights)
                     flightsDict[f.FlightIata] = f;
-                }
-            }
         }
 
-        // If the bounding box is small/localized but center/distance are not provided, auto-calculate them
-        if (!isZoomedIn && (maxLat - minLat) < 40 && (maxLng - minLng) < 40)
+        // Fetch fresh data if cache is empty
+        if (flightsDict.Count == 0)
         {
-            centerLat = (minLat + maxLat) / 2;
-            centerLng = (minLng + maxLng) / 2;
-
-            // Simple distance approximation (1 degree of latitude is roughly 111 km)
-            var latDiffKm = (double)(maxLat - minLat) * 111;
-            var lngDiffKm = (double)(maxLng - minLng) * 111 * Math.Cos((double)centerLat.Value * Math.PI / 180);
-            distance = (int)Math.Max(50, Math.Min(300, Math.Sqrt(latDiffKm * latDiffKm + lngDiffKm * lngDiffKm) / 2));
-            isZoomedIn = true;
-        }
-
-        string url;
-
-        if (isZoomedIn && centerLat.HasValue && centerLng.HasValue && distance.HasValue)
-        {
-            // Zoomed-in: fetch flights near this area and merge (do NOT overwrite global cache)
-            url = $"{_baseUrl}/flights?key={_apiKey}&lat={centerLat}&lng={centerLng}&distance={distance}&limit=200&status=en-route";
+            var url = $"{_baseUrl}/flights?key={_apiKey}&lat={centerLat}&lng={centerLon}&distance={distanceKm}&limit=200&status=en-route";
             try
             {
                 var client = _httpClientFactory.CreateClient("AviationEdge");
@@ -105,46 +189,11 @@ public class FlightTrackerService : IFlightTrackerService
                                 if (parsed != null)
                                     flightsDict[parsed.FlightIata] = parsed;
                             }
-                        }
-                    }
-                }
-            }
-            catch { }
-        }
-        else if (flightsDict.Count == 0)
-        {
-            // Cache miss — fetch global flights, merge with existing, and persist
-            url = $"{_baseUrl}/flights?key={_apiKey}&limit=300&status=en-route";
-            try
-            {
-                var client = _httpClientFactory.CreateClient("AviationEdge");
-                var response = await client.GetAsync(url);
-                if (response.IsSuccessStatusCode)
-                {
-                    var json = await response.Content.ReadAsStringAsync();
-                    if (!json.TrimStart().StartsWith("{"))
-                    {
-                        var rawFlights = JsonSerializer.Deserialize<List<JsonElement>>(json, JsonOptions);
-                        if (rawFlights != null && rawFlights.Count > 0)
-                        {
-                            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
-                            foreach (var f in rawFlights)
-                            {
-                                var parsed = ParseRawFlight(f, now);
-                                if (parsed != null)
-                                    flightsDict[parsed.FlightIata] = parsed;
-                            }
-
-                            // Evict stale flights not seen within the threshold
                             var cutoff = now - (long)StaleFlightThreshold.TotalSeconds;
-                            var activeFlights = flightsDict.Values
-                                .Where(f => f.LastSeen >= cutoff)
-                                .ToList();
-
+                            var activeFlights = flightsDict.Values.Where(f => f.LastSeen >= cutoff).ToList();
                             await SafeCacheSet(LiveFlightsCacheKey, JsonSerializer.Serialize(activeFlights), GlobalCacheTtl);
                             await SafeCacheSet(LiveFlightsTimestampKey, now.ToString(), GlobalCacheTtl);
-
                             flightsDict = activeFlights.ToDictionary(f => f.FlightIata, StringComparer.OrdinalIgnoreCase);
                         }
                     }
@@ -153,38 +202,36 @@ public class FlightTrackerService : IFlightTrackerService
             catch { }
         }
 
-        var resultFlights = flightsDict.Values
+        return flightsDict.Values
             .Where(f => f.Lat >= minLat && f.Lat <= maxLat && f.Lng >= minLng && f.Lng <= maxLng)
             .Select(f => new ViewportFlightDto
             {
-                Id = f.FlightIata,
-                Lat = f.Lat,
-                Lng = f.Lng,
-                Alt = f.Alt,
-                Hdg = f.Hdg,
-                Spd = f.Spd,
-                Gnd = f.Gnd,
-                Sts = f.Sts,
-                Airline = f.Airline,
-                Reg = f.Reg,
-                Dep = f.Dep,
-                Arr = f.Arr
+                Id = f.FlightIata, Lat = f.Lat, Lng = f.Lng, Alt = f.Alt,
+                Hdg = f.Hdg, Spd = f.Spd, Gnd = f.Gnd, Sts = f.Sts,
+                Airline = f.Airline, Reg = f.Reg, Dep = f.Dep, Arr = f.Arr
             })
             .ToList();
+    }
 
-        // Read when the API data was last fetched (for frontend interpolation)
-        long lastApiUpdate = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var tsRaw = await SafeCacheGet(LiveFlightsTimestampKey);
-        if (!string.IsNullOrEmpty(tsRaw) && long.TryParse(tsRaw, out var ts))
-            lastApiUpdate = ts;
+    /// <summary>
+    /// Extracts the airline ICAO code from a callsign (e.g. "MSR779" → "MSR", "UAE201" → "UAE").
+    /// Returns empty if the callsign doesn't follow the standard pattern.
+    /// </summary>
+    private static string ExtractAirlineFromCallsign(string callsign)
+    {
+        if (string.IsNullOrEmpty(callsign) || callsign.Length < 4) return string.Empty;
 
-        return new ViewportFlightsResponse
+        // Standard airline callsigns: 2-3 letter prefix followed by digits
+        int firstDigit = -1;
+        for (int i = 0; i < callsign.Length; i++)
         {
-            Count = resultFlights.Count,
-            LastUpdated = DateTime.UtcNow,
-            LastApiUpdate = lastApiUpdate,
-            Flights = resultFlights
-        };
+            if (char.IsDigit(callsign[i])) { firstDigit = i; break; }
+        }
+
+        if (firstDigit >= 2 && firstDigit <= 3)
+            return callsign[..firstDigit];
+
+        return string.Empty;
     }
 
     // ========================================================
@@ -301,9 +348,10 @@ public class FlightTrackerService : IFlightTrackerService
             try
             {
                 var client = _httpClientFactory.CreateClient("AviationEdge");
+                var searchIata = await ConvertIcaoCallsignToIataAsync(q.ToUpper());
                 string url = q.Length == 2 && q.All(char.IsLetter)
                     ? $"{_baseUrl}/flights?key={_apiKey}&airlineIata={q.ToUpper()}&limit=10"
-                    : $"{_baseUrl}/flights?key={_apiKey}&flightIata={q.ToUpper()}";
+                    : $"{_baseUrl}/flights?key={_apiKey}&flightIata={Uri.EscapeDataString(searchIata)}";
 
                 var response = await client.GetAsync(url);
                 if (response.IsSuccessStatusCode)
@@ -353,21 +401,75 @@ public class FlightTrackerService : IFlightTrackerService
         CachedFlight? liveData = null;
         List<FlightTrailPoint> trail = new();
 
+        // 1. Try to get real-time info from ADSBexchange first, as it is our primary live provider
+        AdsbAircraftDto? adsbLive = null;
         try
         {
-            var cached = await SafeCacheGet(LiveFlightsCacheKey);
-            if (!string.IsNullOrEmpty(cached))
+            // If the key is exactly 6 alphanumeric characters, treat it as ICAO Hex ID
+            if (flightIata.Length == 6 && flightIata.All(char.IsLetterOrDigit))
             {
-                var cachedFlights = JsonSerializer.Deserialize<List<CachedFlight>>(cached, JsonOptions);
-                liveData = cachedFlights?.FirstOrDefault(f => f.FlightIata.Equals(flightIata, StringComparison.OrdinalIgnoreCase));
+                adsbLive = await _adsbService.GetAircraftByIcaoAsync(flightIata);
+            }
+            else
+            {
+                adsbLive = await _adsbService.GetAircraftByCallsignAsync(flightIata);
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error fetching live details from ADSBexchange for {Id}", flightIata);
+        }
 
+        if (adsbLive != null)
+        {
+            liveData = new CachedFlight
+            {
+                FlightIata = !string.IsNullOrEmpty(adsbLive.Callsign) ? adsbLive.Callsign : adsbLive.Hex,
+                Lat = adsbLive.Lat,
+                Lng = adsbLive.Lon,
+                Alt = adsbLive.AltitudeFt,
+                Hdg = adsbLive.Heading,
+                Spd = adsbLive.SpeedKts,
+                Gnd = adsbLive.IsOnGround,
+                Sts = adsbLive.IsOnGround ? "landed" : "en-route",
+                Airline = ExtractAirlineFromCallsign(adsbLive.Callsign),
+                Reg = adsbLive.Registration
+            };
+        }
+
+        // 2. If ADSB failed, fallback to global live cache (Aviation Edge)
+        if (liveData == null)
+        {
+            try
+            {
+                var cached = await SafeCacheGet(LiveFlightsCacheKey);
+                if (!string.IsNullOrEmpty(cached))
+                {
+                    var cachedFlights = JsonSerializer.Deserialize<List<CachedFlight>>(cached, JsonOptions);
+                    liveData = cachedFlights?.FirstOrDefault(f => f.FlightIata.Equals(flightIata, StringComparison.OrdinalIgnoreCase));
+                }
+            }
+            catch { }
+        }
+
+        // Determine what callsign/IATA to use for Aviation Edge query
+        string targetFlight = liveData?.FlightIata ?? flightIata;
+        string regNumber = liveData?.Reg ?? string.Empty;
+
+        // Convert the targetFlight to IATA flight number if it's an ICAO callsign (e.g. MSR779 -> MS779)
+        string iataFlight = await ConvertIcaoCallsignToIataAsync(targetFlight);
+
+        // 3. Query Aviation Edge to enrich flight details (schedules, departure/arrival airports, breadcrumb trail)
         try
         {
             var client = _httpClientFactory.CreateClient("AviationEdge");
-            var url = $"{_baseUrl}/flights?key={_apiKey}&flightIata={Uri.EscapeDataString(flightIata)}";
+            string url = $"{_baseUrl}/flights?key={_apiKey}&flightIata={Uri.EscapeDataString(iataFlight)}";
+            
+            // If we only have registration number from ADSB (e.g. general aviation or military flights)
+            if (string.IsNullOrEmpty(iataFlight) && !string.IsNullOrEmpty(regNumber))
+            {
+                url = $"{_baseUrl}/flights?key={_apiKey}&regNumber={Uri.EscapeDataString(regNumber)}";
+            }
 
             var response = await client.GetAsync(url);
             if (response.IsSuccessStatusCode)
@@ -382,7 +484,7 @@ public class FlightTrackerService : IFlightTrackerService
                         var f = rawFlight.Value;
                         var lastPos = GetLastPosition(f);
 
-                        if (lastPos != null)
+                        if (liveData == null && lastPos != null)
                         {
                             liveData = new CachedFlight
                             {
@@ -400,6 +502,16 @@ public class FlightTrackerService : IFlightTrackerService
                                 Arr = GetNestedString(f, "arrival", "iataCode")
                             };
                         }
+                        else if (liveData != null)
+                        {
+                            // Enrich existing ADSB liveData with departure/arrival/airline from Aviation Edge
+                            if (string.IsNullOrEmpty(liveData.Dep))
+                                liveData.Dep = GetNestedString(f, "departure", "iataCode");
+                            if (string.IsNullOrEmpty(liveData.Arr))
+                                liveData.Arr = GetNestedString(f, "arrival", "iataCode");
+                            if (string.IsNullOrEmpty(liveData.Airline))
+                                liveData.Airline = GetNestedString(f, "airline", "iataCode");
+                        }
 
                         trail = ExtractFlightTrail(f);
                     }
@@ -408,17 +520,18 @@ public class FlightTrackerService : IFlightTrackerService
         }
         catch { }
 
+        // If we still have no liveData, we cannot return flight details
         if (liveData == null) return null;
 
         TimetableData? timetable = null;
         if (!string.IsNullOrEmpty(liveData.Dep))
         {
-            timetable = await GetTimetableDataAsync(liveData.Dep, flightIata);
+            timetable = await GetTimetableDataAsync(liveData.Dep, targetFlight);
         }
 
         var depAirport = await _db.Airports.Include(a => a.City).FirstOrDefaultAsync(a => a.CodeIataAirport == liveData.Dep);
         var arrAirport = await _db.Airports.Include(a => a.City).FirstOrDefaultAsync(a => a.CodeIataAirport == liveData.Arr);
-        var airline = await _db.Airlines.FirstOrDefaultAsync(a => a.CodeIataAirline == liveData.Airline);
+        var airline = await _db.Airlines.FirstOrDefaultAsync(a => a.CodeIataAirline == liveData.Airline || a.CodeIcaoAirline == liveData.Airline);
         var aircraft = !string.IsNullOrEmpty(liveData.Reg)
             ? await _db.Aircrafts.FirstOrDefaultAsync(a => a.NumberRegistration == liveData.Reg)
             : null;
@@ -437,7 +550,7 @@ public class FlightTrackerService : IFlightTrackerService
             Airline = new FlightDetailAirlineDto
             {
                 Name = airline?.NameAirline ?? timetable?.AirlineName ?? liveData.Airline,
-                Iata = liveData.Airline,
+                Iata = airline?.CodeIataAirline ?? liveData.Airline,
                 Logo = airline?.LogoUrl
             },
             Aircraft = new AircraftInfo
@@ -481,6 +594,46 @@ public class FlightTrackerService : IFlightTrackerService
         };
 
         return result;
+    }
+
+    /// <summary>
+    /// Translates a 3-letter ICAO flight callsign (e.g., "MSR779", "UAE201") into its 2-letter IATA format ("MS779", "EK201") 
+    /// by performing a fast lookup against our local Airlines database.
+    /// </summary>
+    private async Task<string> ConvertIcaoCallsignToIataAsync(string callsign)
+    {
+        if (string.IsNullOrEmpty(callsign) || callsign.Length < 4) return callsign;
+
+        // Find the index of the first digit
+        int firstDigitIndex = -1;
+        for (int i = 0; i < callsign.Length; i++)
+        {
+            if (char.IsDigit(callsign[i]))
+            {
+                firstDigitIndex = i;
+                break;
+            }
+        }
+
+        if (firstDigitIndex < 2) return callsign;
+
+        var icaoCode = callsign[..firstDigitIndex];
+        var flightNum = callsign[firstDigitIndex..];
+
+        // If it's already 2-letter, it's likely IATA
+        if (icaoCode.Length == 2) return callsign;
+
+        // Look up ICAO code in our DB
+        var airline = await _db.Airlines
+            .AsNoTracking()
+            .FirstOrDefaultAsync(a => a.CodeIcaoAirline == icaoCode);
+
+        if (airline != null && !string.IsNullOrEmpty(airline.CodeIataAirline))
+        {
+            return $"{airline.CodeIataAirline}{flightNum}";
+        }
+
+        return callsign;
     }
 
     public async Task<AirportViewportResponse> GetAirportsInViewportAsync(
