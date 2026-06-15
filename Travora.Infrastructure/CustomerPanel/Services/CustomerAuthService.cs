@@ -179,9 +179,17 @@ public class CustomerAuthService : ICustomerAuthService
 
                 case CustomerPassportOutcome.AdminReview:
                     // Send to admin — create account as PendingVerification
+                    // We trust and save the OCR-extracted number (if available) to prevent enumeration attacks and DB conflicts.
+                    string ocrNumberForAdmin = (ocrResult.Number ?? "")
+                        .Replace(" ", "").Replace("-", "").Replace(",", "").Trim().ToUpperInvariant();
+
+                    string passportNumberToSave = !string.IsNullOrWhiteSpace(ocrNumberForAdmin) 
+                        ? ocrNumberForAdmin 
+                        : cleanedPassportInput;
+
                     return await CreateCustomerAccount(
                         step1, username, ocrResult, extractedDob, extractedExpiry,
-                        cleanedPassportInput, passportExpiry, cloudinaryUrl, request,
+                        passportNumberToSave, passportExpiry, cloudinaryUrl, request,
                         passportVerified: false);
 
                 case CustomerPassportOutcome.Passed:
