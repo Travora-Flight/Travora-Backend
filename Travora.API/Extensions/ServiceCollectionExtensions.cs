@@ -124,7 +124,7 @@ public static class ServiceCollectionExtensions
         services.Configure<AirlineApiSettings>(configuration.GetSection("AirlineApi"));
         services.Configure<AviationEdgeSettings>(configuration.GetSection("AviationEdge"));
         services.Configure<AdsbExchangeSettings>(configuration.GetSection("AdsbExchange"));
-        services.Configure<AviationWeatherSettings>(configuration.GetSection("AviationWeather"));
+        services.Configure<WeatherApiSettings>(configuration.GetSection("WeatherApi"));
         services.Configure<Travora.Infrastructure.Configurations.GeocodingSettings>(configuration.GetSection("Geocoding"));
         services.Configure<PassportOcrSettings>(configuration.GetSection("PassportOcr"));
         services.Configure<SeedSettings>(configuration.GetSection("SeedSettings"));
@@ -200,24 +200,23 @@ public static class ServiceCollectionExtensions
             }
         });
 
-        // Aviation Weather Http Client
-        services.AddHttpClient("AviationWeather", client =>
+        // WeatherApi Http Client
+        services.AddHttpClient("WeatherApi", client =>
         {
-            var weatherSettings = configuration.GetSection("AviationWeather").Get<AviationWeatherSettings>();
-            if (weatherSettings != null)
+            var baseUrl = configuration["WeatherApi:BaseUrl"] ?? "https://api.weatherapi.com/v1";
+            if (!baseUrl.EndsWith("/"))
             {
-                var baseUrl = weatherSettings.BaseUrl.EndsWith("/") ? weatherSettings.BaseUrl : $"{weatherSettings.BaseUrl}/";
-                client.BaseAddress = new Uri(baseUrl);
+                baseUrl += "/";
             }
-            client.DefaultRequestHeaders.Add("User-Agent", "Travora/1.0");
+            client.BaseAddress = new Uri(baseUrl);
             client.Timeout = TimeSpan.FromSeconds(15);
         });
 
         // Register External Services
         services.AddScoped<Travora.Application.Interfaces.External.IAirlineService, Travora.Infrastructure.ExternalServices.Communication.AirlineService>();
 
-        // Aviation Weather Services
-        services.AddScoped<Travora.Application.Interfaces.External.Weather.IAviationWeatherService, Travora.Infrastructure.ExternalServices.Weather.AviationWeatherApiService>();
+        // Weather Services
+        services.AddScoped<Travora.Application.Interfaces.External.Weather.IWeatherService, Travora.Infrastructure.ExternalServices.Weather.WeatherApiService>();
         services.AddScoped<Travora.Application.Interfaces.External.Weather.IWeatherCache, Travora.Infrastructure.Caching.WeatherCacheService>();
         services.AddScoped<IAirportDetailsService, Travora.Infrastructure.Services.AirportDetailsService>();
         services.AddScoped<IFlightTrackerService, Travora.Infrastructure.Services.FlightTrackerService>();
