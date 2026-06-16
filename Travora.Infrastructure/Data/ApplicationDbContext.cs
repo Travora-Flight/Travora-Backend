@@ -20,7 +20,6 @@ public class ApplicationDbContext : DbContext
     public DbSet<Flight> Flights => Set<Flight>();
     public DbSet<FlightPositionHistory> FlightPositionHistories => Set<FlightPositionHistory>();
     public DbSet<FlightPrediction> FlightPredictions => Set<FlightPrediction>();
-    public DbSet<CodeShareFlight> CodeShareFlights => Set<CodeShareFlight>();
     public DbSet<SavedFlight> SavedFlights => Set<SavedFlight>();
     public DbSet<BoardingPass> BoardingPasses => Set<BoardingPass>();
 
@@ -68,7 +67,6 @@ public class ApplicationDbContext : DbContext
 
     // ===== Weather =====
     public DbSet<WeatherSnapshot> WeatherSnapshots => Set<WeatherSnapshot>();
-    public DbSet<CloudLayer> CloudLayers => Set<CloudLayer>();
 
     // ===== Others =====
     public DbSet<Feedback> Feedbacks => Set<Feedback>();

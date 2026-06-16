@@ -27,5 +27,4 @@ public class Airline : IHasTimestamps
     public Airport? HubAirport { get; set; }
     public ICollection<Aircraft> Aircrafts { get; set; } = new List<Aircraft>();
     public ICollection<Flight> Flights { get; set; } = new List<Flight>();
-    public ICollection<CodeShareFlight> MarketingFlights { get; set; } = new List<CodeShareFlight>();
 }
