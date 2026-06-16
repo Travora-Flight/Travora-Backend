@@ -11,13 +11,21 @@ public class WeatherSnapshotConfiguration : IEntityTypeConfiguration<WeatherSnap
         builder.HasKey(w => w.WeatherSnapshotId);
         builder.Property(w => w.IcaoId).HasMaxLength(5).IsRequired();
         builder.Property(w => w.Temperature).HasPrecision(6, 2);
-        builder.Property(w => w.Dewpoint).HasPrecision(6, 2);
+        builder.Property(w => w.FeelsLike).HasPrecision(6, 2);
         builder.Property(w => w.WindSpeed).HasPrecision(6, 2);
         builder.Property(w => w.Visibility).HasMaxLength(20);
-        builder.Property(w => w.Altimeter).HasPrecision(8, 2);
-        builder.Property(w => w.MetarType).HasMaxLength(10);
-        builder.Property(w => w.RawObservation).HasMaxLength(500);
-        builder.Property(w => w.CloudCover).HasMaxLength(20);
+        builder.Property(w => w.Altimeter).HasPrecision(8, 2); // pressure_mb
+        builder.Property(w => w.Humidity).IsRequired();
+        
+        builder.Property(w => w.ConditionText).HasMaxLength(100).IsRequired();
+        builder.Property(w => w.ConditionIcon).HasMaxLength(200).IsRequired();
+        builder.Property(w => w.ConditionCode).IsRequired();
+
+        builder.Property(w => w.Sunrise).HasMaxLength(20).IsRequired();
+        builder.Property(w => w.Sunset).HasMaxLength(20).IsRequired();
+        builder.Property(w => w.ChanceOfRain).IsRequired();
+        builder.Property(w => w.MaxTemp).HasPrecision(6, 2);
+        builder.Property(w => w.MinTemp).HasPrecision(6, 2);
 
         builder.HasIndex(w => w.IcaoId);
 

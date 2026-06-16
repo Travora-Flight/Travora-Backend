@@ -9,19 +9,22 @@ public class WeatherDtoExample : IExamplesProvider<WeatherDto>
     {
         return new WeatherDto
         {
-            Temperature = 18,
-            Dewpoint = 12,
-            WindDirection = 60,
-            WindSpeed = 10m,
-            Visibility = "6+",
-            Altimeter = 1018,
-            CloudCover = "CAVOK",
-            FlightCategory = "VFR",
-            MetarType = "METAR",
-            RawObservation = "METAR HECA 112100Z 06010KT CAVOK 18/12 Q1018 NOSIG",
-            Elevation = 142,
-            ReportTime = DateTime.UtcNow,
-            CloudLayers = new List<CloudLayerDto>()
+            Temperature = 32.1m,
+            FeelsLike = 29.9m,
+            WindDirection = 307,
+            WindSpeed = 14.8m,
+            Visibility = "10",
+            Pressure = 1012m,
+            Humidity = 32,
+            ConditionText = "Sunny",
+            ConditionIcon = "https://cdn.weatherapi.com/weather/64x64/day/113.png",
+            ConditionCode = 1000,
+            Sunrise = "05:52 AM",
+            Sunset = "07:57 PM",
+            ChanceOfRain = 0,
+            MaxTemp = 35.0m,
+            MinTemp = 24.0m,
+            ReportTime = DateTime.UtcNow
         };
     }
 }
