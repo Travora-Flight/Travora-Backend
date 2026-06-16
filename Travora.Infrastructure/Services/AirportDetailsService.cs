@@ -14,7 +14,7 @@ namespace Travora.Infrastructure.Services;
 public class AirportDetailsService : IAirportDetailsService
 {
     private readonly ApplicationDbContext _db;
-    private readonly IAviationWeatherService _weatherApi;
+    private readonly IWeatherService _weatherApi;
     private readonly IWeatherCache _weatherCache;
     private readonly IUpstashRedisService _redis;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -30,7 +30,7 @@ public class AirportDetailsService : IAirportDetailsService
 
     public AirportDetailsService(
         ApplicationDbContext db,
-        IAviationWeatherService weatherApi,
+        IWeatherService weatherApi,
         IWeatherCache weatherCache,
         IUpstashRedisService redis,
         IHttpClientFactory httpClientFactory,
@@ -43,7 +43,7 @@ public class AirportDetailsService : IAirportDetailsService
         _httpClientFactory = httpClientFactory;
         _baseUrl = configuration["AviationEdge:BaseUrl"] ?? "https://aviation-edge.com/v2/public";
         _apiKey = configuration["AviationEdge:ApiKey"] ?? "";
-        _cacheTtlMinutes = configuration.GetValue<int>("AviationWeather:CacheTtlMinutes", 30);
+        _cacheTtlMinutes = configuration.GetValue<int>("WeatherApi:CacheTtlMinutes", 30);
     }
 
     public async Task<AirportDetailsResponse> GetAirportDetailsAsync(string code)
@@ -88,58 +88,20 @@ public class AirportDetailsService : IAirportDetailsService
         if (cached != null)
             return cached;
 
-        // Fetch from Aviation Weather API
-        var weather = await _weatherApi.GetMetarAsync(icaoCode);
+        // Query by IATA as primary, fallback to METAR style with ICAO
+        var query = !string.IsNullOrWhiteSpace(airport.CodeIataAirport)
+            ? $"iata:{airport.CodeIataAirport}"
+            : $"metar:{airport.CodeIcaoAirport}";
+
+        // Fetch from Weather API
+        var weather = await _weatherApi.GetWeatherAsync(query);
         if (weather == null)
             return null;
-
-        // Save to DB
-        await SaveWeatherSnapshotAsync(icaoCode, weather);
 
         // Cache in Redis
         await _weatherCache.SetAsync(icaoCode, weather, _cacheTtlMinutes);
 
         return weather;
-    }
-
-    private async Task SaveWeatherSnapshotAsync(string icaoCode, WeatherDto weather)
-    {
-        var snapshot = new WeatherSnapshot
-        {
-            IcaoId = icaoCode,
-            SnapshotTimestamp = DateTime.UtcNow,
-            Temperature = weather.Temperature,
-            Dewpoint = weather.Dewpoint,
-            WindDirection = weather.WindDirection,
-            WindSpeed = weather.WindSpeed,
-            Visibility = weather.Visibility,
-            Altimeter = weather.Altimeter,
-            MetarType = weather.MetarType,
-            RawObservation = weather.RawObservation,
-            Elevation = weather.Elevation,
-            CloudCover = weather.CloudCover,
-            FlightCategory = ParseFlightCategory(weather.FlightCategory),
-            ReportTime = weather.ReportTime,
-            ReceiptTime = DateTime.UtcNow
-        };
-
-        _db.WeatherSnapshots.Add(snapshot);
-        await _db.SaveChangesAsync();
-
-        // Save cloud layers
-        if (weather.CloudLayers.Any())
-        {
-            foreach (var layer in weather.CloudLayers)
-            {
-                _db.CloudLayers.Add(new CloudLayer
-                {
-                    WeatherSnapshotId = snapshot.WeatherSnapshotId,
-                    CoverType = layer.Cover,
-                    BaseAltitudeFeet = layer.Base
-                });
-            }
-            await _db.SaveChangesAsync();
-        }
     }
 
     // ========================================================
@@ -164,6 +126,14 @@ public class AirportDetailsService : IAirportDetailsService
         catch { /* Redis down — continue */ }
 
         var flights = new List<AirportFlightDto>();
+        
+        // Calculate the current local time of the airport using its GMT offset
+        double offsetHours = 0;
+        if (!string.IsNullOrWhiteSpace(airport.GMT))
+        {
+            double.TryParse(airport.GMT, out offsetHours);
+        }
+        var localTime = DateTime.UtcNow.AddHours(offsetHours);
 
         try
         {
@@ -181,21 +151,36 @@ public class AirportDetailsService : IAirportDetailsService
                     var depFlights = JsonSerializer.Deserialize<List<JsonElement>>(depJson, JsonOptions);
                     if (depFlights != null)
                     {
-                        foreach (var f in depFlights.Take(20))
+                        foreach (var f in depFlights)
                         {
                             try
                             {
+                                var schedTimeStr = GetNestedString(f, "departure", "scheduledTime");
+                                if (DateTime.TryParse(schedTimeStr, out var schedDt))
+                                {
+                                    // Filter out flights that scheduled more than 30 minutes ago
+                                    if (schedDt < localTime.AddMinutes(-30))
+                                        continue;
+                                }
+
+                                var depActual = GetNestedStringOrNull(f, "departure", "actualTime");
+                                var depEstimated = GetNestedStringOrNull(f, "departure", "estimatedTime");
+
                                 flights.Add(new AirportFlightDto
                                 {
                                     Destination = GetNestedString(f, "arrival", "iataCode"),
                                     FlightNumber = GetNestedString(f, "flight", "iataNumber"),
-                                    ScheduledTime = ParseTime(GetNestedString(f, "departure", "scheduledTime")),
+                                    ScheduledTime = ParseTime(schedTimeStr),
+                                    Time = ParseTime(depActual ?? depEstimated ?? schedTimeStr),
                                     Gate = GetNestedStringOrNull(f, "departure", "gate")
                                         ?? (GetNestedStringOrNull(f, "departure", "terminal") is string depTerm ? $"T{depTerm}" : "—"),
                                     Type = "Departure",
                                     Status = MapStatus(GetString(f, "status")),
                                     Delay = FormatDelay(GetNestedStringOrNull(f, "departure", "delay"))
                                 });
+
+                                if (flights.Count(fl => fl.Type == "Departure") >= 40)
+                                    break;
                             }
                             catch { /* Skip malformed */ }
                         }
@@ -215,21 +200,36 @@ public class AirportDetailsService : IAirportDetailsService
                     var arrFlights = JsonSerializer.Deserialize<List<JsonElement>>(arrJson, JsonOptions);
                     if (arrFlights != null)
                     {
-                        foreach (var f in arrFlights.Take(20))
+                        foreach (var f in arrFlights)
                         {
                             try
                             {
+                                var schedTimeStr = GetNestedString(f, "arrival", "scheduledTime");
+                                if (DateTime.TryParse(schedTimeStr, out var schedDt))
+                                {
+                                    // Filter out flights that scheduled more than 30 minutes ago
+                                    if (schedDt < localTime.AddMinutes(-30))
+                                        continue;
+                                }
+
+                                var arrActual = GetNestedStringOrNull(f, "arrival", "actualTime");
+                                var arrEstimated = GetNestedStringOrNull(f, "arrival", "estimatedTime");
+
                                 flights.Add(new AirportFlightDto
                                 {
                                     Destination = GetNestedString(f, "departure", "iataCode"),
                                     FlightNumber = GetNestedString(f, "flight", "iataNumber"),
-                                    ScheduledTime = ParseTime(GetNestedString(f, "arrival", "scheduledTime")),
+                                    ScheduledTime = ParseTime(schedTimeStr),
+                                    Time = ParseTime(arrActual ?? arrEstimated ?? schedTimeStr),
                                     Gate = GetNestedStringOrNull(f, "arrival", "gate")
                                         ?? (GetNestedStringOrNull(f, "arrival", "terminal") is string arrTerm ? $"T{arrTerm}" : "—"),
                                     Type = "Arrival",
                                     Status = MapStatus(GetString(f, "status")),
                                     Delay = FormatDelay(GetNestedStringOrNull(f, "arrival", "delay"))
                                 });
+
+                                if (flights.Count(fl => fl.Type == "Arrival") >= 40)
+                                    break;
                             }
                             catch { /* Skip malformed */ }
                         }
@@ -309,18 +309,6 @@ public class AirportDetailsService : IAirportDetailsService
             return $"GMT{gmt}";
 
         return $"GMT+{gmt}";
-    }
-
-    private static FlightCategory ParseFlightCategory(string category)
-    {
-        return category?.ToUpper() switch
-        {
-            "VFR" => Domain.Enums.FlightCategory.VFR,
-            "IFR" => Domain.Enums.FlightCategory.IFR,
-            "MVFR" => Domain.Enums.FlightCategory.MVFR,
-            "LIFR" => Domain.Enums.FlightCategory.LIFR,
-            _ => Domain.Enums.FlightCategory.VFR
-        };
     }
 
     // ── JSON Navigation Helpers ──
