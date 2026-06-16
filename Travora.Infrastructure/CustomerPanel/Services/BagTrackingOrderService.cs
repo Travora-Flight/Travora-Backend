@@ -84,10 +84,11 @@ public class BagTrackingOrderService : IBagTrackingOrderService
             return new ValidateFlightResponse { IsValid = false, ErrorMessage = errorMsg };
         }
 
-        // Check if ticket is used in the same package (run after validating ticket ownership)
+        // Cross-service ticket conflict check (after validating ticket ownership)
+        // BagTracking is blocked by PKG001/PKG003/PKG004 — allowed only if PKG002 (CarToAirport) exists
         try
         {
-            await ValidateTicketNotUsedAsync(request.TicketNumber, PackageCodes.TrackingBaggage, PackageNames.TrackingBaggage, cancellationToken);
+            await ValidateTicketNotUsedAsync(request.TicketNumber, cancellationToken);
         }
         catch (InvalidOperationException ex)
         {
@@ -919,18 +920,35 @@ public class BagTrackingOrderService : IBagTrackingOrderService
     // ===================================================================
     // HELPERS
     // ===================================================================
-    private async Task ValidateTicketNotUsedAsync(string ticketNumber, string packageCode, string packageName, CancellationToken cancellationToken)
+    /// <summary>
+    /// Cross-service ticket conflict check for Bag Tracking.
+    ///
+    /// Rules:
+    ///   - BagTracking (PKG004): blocked by PKG001 (DoorToDoor), PKG003 (CarFromAirport), PKG004 (BagTracking).
+    ///   - Allowed if only PKG002 (CarToAirport) exists on the ticket.
+    /// </summary>
+    private async Task ValidateTicketNotUsedAsync(string ticketNumber, CancellationToken cancellationToken)
     {
-        var package = await _context.Packages
-            .FirstOrDefaultAsync(p => p.PackageCode == packageCode, cancellationToken)
-            ?? throw new InvalidOperationException($"Package {packageName} ({packageCode}) not found in DB");
+        // Only these packages block a BagTracking booking
+        var blockingCodes = new[]
+        {
+            PackageCodes.DoorToDoor,
+            PackageCodes.CarServiceFromAirport,
+            PackageCodes.TrackingBaggage
+        };
 
-        var isTicketUsed = await _context.Orders
-            .AnyAsync(o => o.TicketNumber == ticketNumber
-                        && o.PackageId == package.PackageId
-                        && o.OrderStatus != OrderStatus.Cancelled, cancellationToken);
+        var existingOrder = await _context.Orders
+            .AsNoTracking()
+            .Include(o => o.Package)
+            .FirstOrDefaultAsync(
+                o => o.TicketNumber == ticketNumber
+                  && blockingCodes.Contains(o.Package.PackageCode)
+                  && o.OrderStatus != OrderStatus.Cancelled,
+                cancellationToken);
 
-        if (isTicketUsed)
-            throw new InvalidOperationException($"This ticket is already used in {packageName} service.");
+        if (existingOrder != null)
+            throw new InvalidOperationException(
+                $"This ticket is already used in the '{existingOrder.Package.PackageName}' service " +
+                "and cannot be combined with Bag Tracking.");
     }
 }

@@ -84,10 +84,10 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
             return new ValidateFlightResponse { IsValid = false, ErrorMessage = errorMsg };
         }
 
-        // 1.5 Prevent duplicate ticket usage for Door To Door (run after validating ticket ownership)
+        // Prevent booking Door To Door if ANY active order exists for this ticket (cross-service check)
         try
         {
-            await ValidateTicketNotUsedAsync(request.TicketNumber, PackageCodes.DoorToDoor, PackageNames.DoorToDoor, cancellationToken);
+            await ValidateTicketNotUsedAsync(request.TicketNumber, cancellationToken);
         }
         catch (InvalidOperationException ex)
         {
@@ -1485,18 +1485,19 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         }
     }
 
-    private async Task ValidateTicketNotUsedAsync(string ticketNumber, string packageCode, string packageName, CancellationToken cancellationToken)
+    
+    private async Task ValidateTicketNotUsedAsync(string ticketNumber, CancellationToken cancellationToken)
     {
-        var package = await _context.Packages
-            .FirstOrDefaultAsync(p => p.PackageCode == packageCode, cancellationToken)
-            ?? throw new InvalidOperationException($"Package {packageName} ({packageCode}) not found in DB");
+        var existingOrder = await _context.Orders
+            .AsNoTracking()
+            .Include(o => o.Package)
+            .FirstOrDefaultAsync(
+                o => o.TicketNumber == ticketNumber
+                  && o.OrderStatus != Domain.Enums.OrderStatus.Cancelled,
+                cancellationToken);
 
-        var isTicketUsed = await _context.Orders
-            .AnyAsync(o => o.TicketNumber == ticketNumber 
-                        && o.PackageId == package.PackageId 
-                        && o.OrderStatus != Domain.Enums.OrderStatus.Cancelled, cancellationToken);
-
-        if (isTicketUsed)
-            throw new InvalidOperationException($"This ticket is already used in {packageName} service.");
+        if (existingOrder != null)
+            throw new InvalidOperationException(
+                $"This ticket is already used in the '{existingOrder.Package.PackageName}' service.");
     }
 }

@@ -85,17 +85,15 @@ public class CarServiceOrderService : ICarServiceOrderService
             return new CarServiceValidateFlightResponse { IsValid = false, ErrorMessage = errorMsg, ServiceType = request.ServiceType };
         }
 
-        // Check if ticket is used in the same package (after validating ticket belongs to customer)
-        var packageCode = request.ServiceType == CarServiceType.DeliveryToAirport
-            ? PackageCodes.CarServiceToAirport
-            : PackageCodes.CarServiceFromAirport;
-        var packageName = request.ServiceType == CarServiceType.DeliveryToAirport
-            ? PackageNames.CarServiceToAirport
-            : PackageNames.CarServiceFromAirport;
-
+        // Cross-service ticket conflict check (after validating ticket ownership)
+        // CarToAirport: blocked by ALL packages | CarFromAirport: blocked by all EXCEPT BagTracking
         try
         {
-            await ValidateTicketNotUsedAsync(request.TicketNumber, packageCode, packageName, cancellationToken);
+            var targetPackageCode = request.ServiceType == CarServiceType.DeliveryToAirport
+                ? PackageCodes.CarServiceToAirport
+                : PackageCodes.CarServiceFromAirport;
+
+            await ValidateTicketNotUsedAsync(request.TicketNumber, targetPackageCode, cancellationToken);
         }
         catch (InvalidOperationException ex)
         {
@@ -1557,18 +1555,40 @@ public class CarServiceOrderService : ICarServiceOrderService
             !HasConflict(d, date, slotStart, slotEnd));
     }
 
-    private async Task ValidateTicketNotUsedAsync(string ticketNumber, string packageCode, string packageName, CancellationToken cancellationToken)
+    
+    private async Task ValidateTicketNotUsedAsync(
+        string ticketNumber,
+        string targetPackageCode,
+        CancellationToken cancellationToken)
     {
-        var package = await _context.Packages
-            .FirstOrDefaultAsync(p => p.PackageCode == packageCode, cancellationToken)
-            ?? throw new InvalidOperationException($"Package {packageName} ({packageCode}) not found in DB");
+        // Determine which existing packages block this booking
+        string[] blockingCodes = targetPackageCode == PackageCodes.CarServiceToAirport
+            ? new[]
+            {
+                PackageCodes.DoorToDoor,
+                PackageCodes.CarServiceToAirport,
+                PackageCodes.CarServiceFromAirport,
+                PackageCodes.TrackingBaggage
+            }
+            : new[]   // CarServiceFromAirport — only blocked by non-BagTracking packages
+            {
+                PackageCodes.DoorToDoor,
+                PackageCodes.CarServiceToAirport,
+                PackageCodes.CarServiceFromAirport
+            };
 
-        var isTicketUsed = await _context.Orders
-            .AnyAsync(o => o.TicketNumber == ticketNumber
-                        && o.PackageId == package.PackageId
-                        && o.OrderStatus != OrderStatus.Cancelled, cancellationToken);
+        var existingOrder = await _context.Orders
+            .AsNoTracking()
+            .Include(o => o.Package)
+            .FirstOrDefaultAsync(
+                o => o.TicketNumber == ticketNumber
+                  && blockingCodes.Contains(o.Package.PackageCode)
+                  && o.OrderStatus != OrderStatus.Cancelled,
+                cancellationToken);
 
-        if (isTicketUsed)
-            throw new InvalidOperationException($"This ticket is already used in {packageName} service.");
+        if (existingOrder != null)
+            throw new InvalidOperationException(
+                $"This ticket is already used in the '{existingOrder.Package.PackageName}' service " +
+                "and cannot be combined with this Car Service booking.");
     }
 }
