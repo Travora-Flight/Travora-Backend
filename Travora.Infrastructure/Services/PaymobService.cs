@@ -603,12 +603,22 @@ public class PaymobService : IPaymobService
         var hasCards = await _db.PaymentMethods.AnyAsync(pm =>
             pm.CustomerId == customerId && pm.IsActive && !pm.IsDeleted);
 
+        // Format a display name if not provided (e.g. "Visa •••• 4242")
+        var finalHolderName = holderName;
+        if (string.IsNullOrEmpty(finalHolderName) || finalHolderName == "Saved Card")
+        {
+            var displayBrand = string.IsNullOrEmpty(cardBrand) || cardBrand.ToLower() == "card" 
+                ? "Card" 
+                : char.ToUpper(cardBrand[0]) + cardBrand[1..].ToLower();
+            finalHolderName = $"{displayBrand} •••• {lastFour}";
+        }
+
         var paymentMethod = new PaymentMethod
         {
             CustomerId = customerId,
             CardLastFour = lastFour,
             CardBrand = cardBrand,
-            CardHolderName = holderName ?? "Saved Card",
+            CardHolderName = finalHolderName,
             PaymentFunding = cardBrand.ToLower() switch
             {
                 "debit" => PaymentFunding.Debit,
@@ -736,9 +746,13 @@ public class PaymobService : IPaymobService
                 var holderName = ResolveHolderName(obj);
                 if (holderName == "Saved Card")
                 {
-                    var cust = await _db.Customers.FindAsync(customerId);
-                    if (cust != null)
-                        holderName = $"{cust.Firstname} {cust.Lastname}".Trim();
+                    // Instead of using the customer's database name (which might be a nickname),
+                    // generate a clean name based on the card itself (e.g., "Visa •••• 4242")
+                    var displayBrand = string.IsNullOrEmpty(cardBrand) || cardBrand.ToLower() == "card" 
+                        ? "Card" 
+                        : char.ToUpper(cardBrand[0]) + cardBrand[1..].ToLower();
+                    
+                    holderName = $"{displayBrand} •••• {lastFour}";
                 }
 
                 await UpsertSavedCardAsync(customerId, lastFour, cardBrand, cardToken, holderName);
