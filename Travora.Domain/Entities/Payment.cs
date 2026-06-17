@@ -19,10 +19,15 @@ public class Payment : IHasTimestamps
 
     // Foreign keys
     public int InvoiceId { get; set; }
-    public int PaymentMethodId { get; set; }
+
+    /// <summary>
+    /// Nullable: only set when the customer pays with a previously saved card.
+    /// One-time card payments do not create or reference a PaymentMethod.
+    /// </summary>
+    public int? PaymentMethodId { get; set; }
 
     // Navigation properties
     public Invoice Invoice { get; set; } = null!;
-    public PaymentMethod PaymentMethod { get; set; } = null!;
+    public PaymentMethod? PaymentMethod { get; set; }
     public ICollection<Refund> Refunds { get; set; } = new List<Refund>();
 }

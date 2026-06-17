@@ -349,6 +349,8 @@ public class PaymobService : IPaymobService
             paymentKey = keys[0].GetProperty("key").GetString() ?? "";
 
         // Create Payment record
+        // PaymentMethodId is only set when the customer explicitly chooses a saved card.
+        // One-time payments do NOT create or reference a PaymentMethod record.
         var payment = new Payment
         {
             Amount = invoice.TotalAmount,
@@ -357,7 +359,7 @@ public class PaymobService : IPaymobService
             PaymentStatus = PaymentStatus.Pending,
             PaymentGateway = "Paymob",
             InvoiceId = invoice.InvoiceId,
-            PaymentMethodId = paymentMethodId ?? await GetOrCreatePaymentMethodIdAsync(customerId)
+            PaymentMethodId = paymentMethodId
         };
         _db.Payments.Add(payment);
         await _db.SaveChangesAsync();
@@ -510,85 +512,110 @@ public class PaymobService : IPaymobService
 
         if (string.IsNullOrEmpty(token)) return;
 
-        // Try to find the customer from the special_reference (order_id field in token callback)
-        // For card_save flows: special_reference = "card_save_{customerId}_{timestamp}"
-        // For order payments: special_reference = "{orderId}"
-        int? customerId = null;
+        var lastFour = maskedPan.Length >= 4 ? maskedPan[^4..] : "0000";
 
+        // ── Strategy 1: orderId IS the special_reference (e.g. "card_save_5_17180...")
         if (orderId.StartsWith("card_save_"))
         {
             var parts = orderId.Split('_');
-            if (parts.Length >= 3 && int.TryParse(parts[2], out var cid))
-                customerId = cid;
-        }
-        else
-        {
-            // order_id in TOKEN webhook is the Paymob order ID, not Travora's.
-            // Look up via Payment.OrderIdFromGateway → Invoice → Order → CustomerId
-            var payment = await _db.Payments
-                .Include(p => p.Invoice)
-                    .ThenInclude(i => i.Order)
-                .FirstOrDefaultAsync(p => p.OrderIdFromGateway == orderId);
-            customerId = payment?.Invoice?.Order?.CustomerId;
-
-            // Fallback: try as a Travora order ID (for backward compatibility)
-            if (customerId == null && int.TryParse(orderId, out var parsedOrderId))
+            if (parts.Length >= 3 && int.TryParse(parts[2], out var directCustomerId))
             {
-                var order = await _db.Orders.FirstOrDefaultAsync(o => o.OrderId == parsedOrderId);
-                customerId = order?.CustomerId;
+                await UpsertSavedCardAsync(directCustomerId, lastFour, cardSubtype, token);
+                return;
             }
-        }
 
-        // Last resort: look up customer by email from the token callback payload
-        if (customerId == null && !string.IsNullOrEmpty(email))
-        {
-            var customer = await _db.Customers.FirstOrDefaultAsync(c => c.Email == email);
-            customerId = customer?.CustomerId;
-            if (customerId != null)
-                _logger.LogInformation("Resolved customer {CustomerId} via email fallback for TOKEN callback", customerId);
-        }
-
-        if (customerId == null)
-        {
-            _logger.LogWarning("TOKEN callback: could not resolve customer. order_id={OrderId}, email={Email}", orderId, email);
+            _logger.LogWarning("TOKEN callback: could not parse customerId from card_save reference. orderId={OrderId}", orderId);
             return;
         }
 
-        // Check if this card already exists (by last4 only — brand may vary between callbacks)
-        var lastFour = maskedPan.Length >= 4 ? maskedPan[^4..] : "0000";
+        // ── Strategy 2: orderId is a Paymob internal ID (e.g. "78432165")
+        //    Find the customer via email, then check if they have a pending card_save
+        //    (a PaymentMethod with null token created by the TRANSACTION callback).
+        //    Regular payments do NOT create PaymentMethod records, so this is safe.
+        if (!string.IsNullOrEmpty(email))
+        {
+            var customer = await _db.Customers.FirstOrDefaultAsync(c => c.Email == email);
+            if (customer != null)
+            {
+                var pendingCard = await _db.PaymentMethods.FirstOrDefaultAsync(pm =>
+                    pm.CustomerId == customer.CustomerId
+                    && pm.CardLastFour == lastFour
+                    && pm.PaymobCardToken == null
+                    && pm.IsActive && !pm.IsDeleted);
+
+                if (pendingCard != null)
+                {
+                    _logger.LogInformation(
+                        "TOKEN callback: found pending card_save for customer {CustomerId} via email lookup. Updating token.",
+                        customer.CustomerId);
+
+                    pendingCard.PaymobCardToken = token;
+                    if (!string.IsNullOrEmpty(cardSubtype) && cardSubtype != "card")
+                        pendingCard.CardBrand = cardSubtype;
+                    pendingCard.UpdatedAt = DateTime.UtcNow;
+                    await _db.SaveChangesAsync();
+                    return;
+                }
+            }
+        }
+
+        // ── No match: regular payment TOKEN callback — ignore safely
+        _logger.LogInformation("TOKEN callback: no card_save flow matched (orderId={OrderId}). Skipping.", orderId);
+    }
+
+    /// <summary>
+    /// Creates or updates a saved card for a customer. Used by both TOKEN and TRANSACTION callbacks.
+    /// </summary>
+    private async Task UpsertSavedCardAsync(int customerId, string lastFour, string cardBrand, string? cardToken,
+        string? holderName = null)
+    {
+        var customerExists = await _db.Customers.AnyAsync(c => c.CustomerId == customerId);
+        if (!customerExists)
+        {
+            _logger.LogWarning("UpsertSavedCard: customer {CustomerId} not found.", customerId);
+            return;
+        }
+
+        // Check for an existing card with the same last4
         var existingCard = await _db.PaymentMethods.FirstOrDefaultAsync(pm =>
             pm.CustomerId == customerId && pm.CardLastFour == lastFour
             && pm.IsActive && !pm.IsDeleted);
 
         if (existingCard != null)
         {
-            // Always update the token to the latest one
-            existingCard.PaymobCardToken = token;
-            if (!string.IsNullOrEmpty(cardSubtype) && cardSubtype != "card")
-                existingCard.CardBrand = cardSubtype; // Update brand if we get a better value
+            // Update token only if we actually have one (TOKEN callback)
+            if (!string.IsNullOrEmpty(cardToken))
+                existingCard.PaymobCardToken = cardToken;
+            if (!string.IsNullOrEmpty(cardBrand) && cardBrand != "card")
+                existingCard.CardBrand = cardBrand;
+            if (!string.IsNullOrEmpty(holderName))
+                existingCard.CardHolderName = holderName;
             existingCard.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync();
-            _logger.LogInformation("Updated PaymentMethod {Id} with latest token for customer {CustomerId}",
-                existingCard.PaymentMethodId, customerId);
+
+            _logger.LogInformation("Updated PaymentMethod {Id} for customer {CustomerId} (token={HasToken})",
+                existingCard.PaymentMethodId, customerId, !string.IsNullOrEmpty(cardToken));
             return;
         }
 
+        // Create new card
         var nowUtc = DateTime.UtcNow;
-        var hasCards = await _db.PaymentMethods.AnyAsync(pm => pm.CustomerId == customerId && pm.IsActive && !pm.IsDeleted);
+        var hasCards = await _db.PaymentMethods.AnyAsync(pm =>
+            pm.CustomerId == customerId && pm.IsActive && !pm.IsDeleted);
 
         var paymentMethod = new PaymentMethod
         {
-            CustomerId = customerId.Value,
+            CustomerId = customerId,
             CardLastFour = lastFour,
-            CardBrand = cardSubtype,
-            CardHolderName = "Saved Card",
-            PaymentFunding = cardSubtype.ToLower() switch
+            CardBrand = cardBrand,
+            CardHolderName = holderName ?? "Saved Card",
+            PaymentFunding = cardBrand.ToLower() switch
             {
                 "debit" => PaymentFunding.Debit,
                 "prepaid" => PaymentFunding.Prepaid,
                 _ => PaymentFunding.Credit
             },
-            PaymobCardToken = token,
+            PaymobCardToken = cardToken,
             IsDefault = !hasCards,
             IsActive = true,
             IsDeleted = false,
@@ -598,13 +625,13 @@ public class PaymobService : IPaymobService
         _db.PaymentMethods.Add(paymentMethod);
         await _db.SaveChangesAsync();
 
-        _logger.LogInformation("Card token saved for customer {CustomerId}: last4={Last4}, brand={Brand}",
-            customerId, lastFour, cardSubtype);
+        _logger.LogInformation("Saved new PaymentMethod for customer {CustomerId}: last4={Last4}, brand={Brand}, token={HasToken}",
+            customerId, lastFour, cardBrand, !string.IsNullOrEmpty(cardToken));
 
-        // Notification
+        // Notify the customer
         _db.Notifications.Add(new Notification
         {
-            UserId = customerId.Value,
+            UserId = customerId,
             UserType = UserType.Customer,
             NotificationType = NotificationType.OrderUpdated,
             Title = "Card saved successfully",
@@ -615,7 +642,7 @@ public class PaymobService : IPaymobService
         await _db.SaveChangesAsync();
 
         await _pusher.PushToCustomerAsync(
-            customerId.Value, "Card saved successfully",
+            customerId, "Card saved successfully",
             $"Your card ending in {lastFour} has been successfully added to your profile.",
             "CardSaved", 0);
     }
@@ -698,23 +725,15 @@ public class PaymobService : IPaymobService
                 return;
             }
 
-            // Save card from TRANSACTION callback (fallback when TOKEN callback is unavailable)
+            // Save or update the card via shared upsert logic.
+            // Token may be null here (common with Intention API) — the TOKEN callback will fill it in.
             var saveParts = merchantOrderIdStr.Split('_');
             if (saveParts.Length >= 3 && int.TryParse(saveParts[2], out var customerId))
             {
                 var lastFour = source_data_pan.Length >= 4 ? source_data_pan[^4..] : source_data_pan;
                 var cardBrand = source_data_sub_type;
 
-                // Get cardholder name from billing_data in webhook, fallback to customer DB
-                var holderName = "Saved Card";
-                if (obj.TryGetProperty("order", out var orderData)
-                    && orderData.TryGetProperty("shipping_data", out var shipData))
-                {
-                    var fn = shipData.TryGetProperty("first_name", out var fnp) ? fnp.GetString() ?? "" : "";
-                    var ln = shipData.TryGetProperty("last_name", out var lnp) ? lnp.GetString() ?? "" : "";
-                    if (!string.IsNullOrEmpty(fn) && fn != "NA")
-                        holderName = $"{fn} {ln}".Trim();
-                }
+                var holderName = ResolveHolderName(obj);
                 if (holderName == "Saved Card")
                 {
                     var cust = await _db.Customers.FindAsync(customerId);
@@ -722,46 +741,7 @@ public class PaymobService : IPaymobService
                         holderName = $"{cust.Firstname} {cust.Lastname}".Trim();
                 }
 
-                // Check for duplicate
-                var exists = await _db.PaymentMethods.AnyAsync(pm =>
-                    pm.CustomerId == customerId && pm.CardLastFour == lastFour
-                    && pm.CardBrand == cardBrand && pm.IsActive && !pm.IsDeleted);
-
-                if (!exists)
-                {
-                    var nowUtc = DateTime.UtcNow;
-                    var hasCards = await _db.PaymentMethods.AnyAsync(pm =>
-                        pm.CustomerId == customerId && pm.IsActive && !pm.IsDeleted);
-
-                    var paymentMethod = new PaymentMethod
-                    {
-                        CustomerId = customerId,
-                        CardLastFour = lastFour,
-                        CardBrand = cardBrand,
-                        CardHolderName = holderName,
-                        PaymentFunding = cardBrand.ToLower() switch
-                        {
-                            "debit" => PaymentFunding.Debit,
-                            "prepaid" => PaymentFunding.Prepaid,
-                            _ => PaymentFunding.Credit
-                        },
-                        PaymobCardToken = cardToken,
-                        IsDefault = !hasCards,
-                        IsActive = true,
-                        IsDeleted = false,
-                        AddedAt = nowUtc,
-                        CreatedAt = nowUtc
-                    };
-                    _db.PaymentMethods.Add(paymentMethod);
-                    await _db.SaveChangesAsync();
-
-                    _logger.LogInformation("Card saved from TRANSACTION for customer {CustomerId}: last4={Last4}, brand={Brand}, holder={Holder}",
-                        customerId, lastFour, cardBrand, holderName);
-
-                    await _pusher.PushToCustomerAsync(customerId, "Card saved successfully",
-                        $"Your card ending in {lastFour} has been successfully added.",
-                        "CardSaved", 0);
-                }
+                await UpsertSavedCardAsync(customerId, lastFour, cardBrand, cardToken, holderName);
             }
 
             // Auto-refund the verification charge back to the customer
@@ -804,21 +784,24 @@ public class PaymobService : IPaymobService
                 payment.TransactionId = transactionId;
                 payment.UpdatedAt = now;
 
-                // Update card data on payment method
-                var paymentMethod = await _db.PaymentMethods.FirstOrDefaultAsync(pm => pm.PaymentMethodId == payment.PaymentMethodId);
-                if (paymentMethod != null)
+                // Only refresh metadata on an existing saved card (paid with a saved card).
+                // Do NOT save new card tokens from regular one-time payments.
+                if (payment.PaymentMethodId.HasValue)
                 {
-                    if (source_data_pan.Length >= 4) paymentMethod.CardLastFour = source_data_pan[^4..];
-                    paymentMethod.CardBrand = source_data_type;
-                    paymentMethod.PaymentFunding = source_data_sub_type.ToLower() switch
+                    var paymentMethod = await _db.PaymentMethods
+                        .FirstOrDefaultAsync(pm => pm.PaymentMethodId == payment.PaymentMethodId.Value);
+                    if (paymentMethod != null)
                     {
-                        "debit" => PaymentFunding.Debit,
-                        "prepaid" => PaymentFunding.Prepaid,
-                        _ => PaymentFunding.Credit
-                    };
-                    if (!string.IsNullOrEmpty(cardToken))
-                        paymentMethod.PaymobCardToken = cardToken;
-                    paymentMethod.UpdatedAt = now;
+                        if (source_data_pan.Length >= 4) paymentMethod.CardLastFour = source_data_pan[^4..];
+                        paymentMethod.CardBrand = source_data_type;
+                        paymentMethod.PaymentFunding = source_data_sub_type.ToLower() switch
+                        {
+                            "debit" => PaymentFunding.Debit,
+                            "prepaid" => PaymentFunding.Prepaid,
+                            _ => PaymentFunding.Credit
+                        };
+                        paymentMethod.UpdatedAt = now;
+                    }
                 }
             }
         }
@@ -939,26 +922,23 @@ public class PaymobService : IPaymobService
         return BitConverter.ToString(hashBytes).Replace("-", "").ToLower();
     }
 
-    private async Task<int> GetOrCreatePaymentMethodIdAsync(int customerId)
+    /// <summary>
+    /// Extracts cardholder name from Paymob webhook payload's shipping_data.
+    /// Returns "Saved Card" if no usable name is found.
+    /// </summary>
+    private static string ResolveHolderName(JsonElement obj)
     {
-        var existing = await _db.PaymentMethods
-            .FirstOrDefaultAsync(pm => pm.CustomerId == customerId && pm.IsActive && pm.PaymentFunding == PaymentFunding.Credit);
-
-        if (existing != null)
-            return existing.PaymentMethodId;
-
-        var paymentMethod = new PaymentMethod
+        if (obj.TryGetProperty("order", out var orderData)
+            && orderData.TryGetProperty("shipping_data", out var shipData))
         {
-            CustomerId = customerId,
-            PaymentFunding = PaymentFunding.Credit,
-            CardLastFour = "0000",
-            CardHolderName = "Paymob",
-            CardBrand = "Paymob",
-            IsDefault = true,
-            IsActive = true
-        };
-        _db.PaymentMethods.Add(paymentMethod);
-        await _db.SaveChangesAsync();
-        return paymentMethod.PaymentMethodId;
+            var fn = shipData.TryGetProperty("first_name", out var fnp) ? fnp.GetString() ?? "" : "";
+            var ln = shipData.TryGetProperty("last_name", out var lnp) ? lnp.GetString() ?? "" : "";
+            if (!string.IsNullOrEmpty(fn) && fn != "NA")
+                return $"{fn} {ln}".Trim();
+        }
+
+        return "Saved Card";
     }
+
+
 }

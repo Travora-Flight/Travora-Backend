@@ -17,7 +17,10 @@ public class PaymentMethodService : IPaymentMethodService
     public async Task<PaymentMethodsResponse> GetCustomerPaymentMethodsAsync(int customerId)
     {
         var methods = await _db.PaymentMethods
-            .Where(pm => pm.CustomerId == customerId && pm.IsActive && !pm.IsDeleted)
+            .Where(pm => pm.CustomerId == customerId
+                && pm.IsActive && !pm.IsDeleted
+                && pm.PaymobCardToken != null        // Must have a valid token to be usable
+                && pm.CardLastFour != "0000")         // Exclude legacy placeholder records
             .OrderByDescending(pm => pm.IsDefault)
             .ThenBy(pm => pm.AddedAt)
             .Select(pm => new PaymentMethodDto

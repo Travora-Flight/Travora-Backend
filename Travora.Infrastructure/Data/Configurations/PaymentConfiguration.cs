@@ -24,6 +24,7 @@ public class PaymentConfiguration : IEntityTypeConfiguration<Payment>
         builder.HasOne(p => p.PaymentMethod)
             .WithMany(pm => pm.Payments)
             .HasForeignKey(p => p.PaymentMethodId)
-            .OnDelete(DeleteBehavior.Restrict);
+            .IsRequired(false)
+            .OnDelete(DeleteBehavior.SetNull);
     }
 }
