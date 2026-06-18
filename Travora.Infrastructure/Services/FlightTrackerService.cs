@@ -73,11 +73,11 @@ public class FlightTrackerService : IFlightTrackerService
             var latSpanNm = (double)(maxLat - minLat) * 60;
             var lonSpanNm = (double)(maxLng - minLng) * 60 * Math.Cos((double)cLat * Math.PI / 180);
             var diagonalNm = Math.Sqrt(latSpanNm * latSpanNm + lonSpanNm * lonSpanNm);
-            distance = (int)Math.Clamp(diagonalNm / 2, 5, 350);
+            distance = (int)Math.Clamp(diagonalNm / 2, 5, 750);
         }
         else
         {
-            distance = Math.Clamp(distance.Value, 5, 350);
+            distance = Math.Clamp(distance.Value, 5, 750);
         }
 
         // ----- Step 2: Try ADSB cache first (Raw aircraft list) -----
@@ -392,23 +392,40 @@ public class FlightTrackerService : IFlightTrackerService
                         var client = _httpClientFactory.CreateClient("AviationEdge");
                         string aeUrl = $"{_baseUrl}/flights?key={_apiKey}&flightIata={Uri.EscapeDataString(searchIata)}";
                         var aeResponse = await client.GetAsync(aeUrl);
+                        string aeJson = "";
                         if (aeResponse.IsSuccessStatusCode)
                         {
-                            var aeJson = await aeResponse.Content.ReadAsStringAsync();
-                            if (!aeJson.TrimStart().StartsWith("{"))
+                            aeJson = await aeResponse.Content.ReadAsStringAsync();
+                        }
+
+                        // Fallback: If query by flightIata failed or returned empty/error, try query by flightIcao
+                        if ((string.IsNullOrEmpty(aeJson) || aeJson.Contains("error") || aeJson.Trim() == "[]") && !string.IsNullOrEmpty(adsbAircraft.Callsign))
+                        {
+                            var icaoUrl = $"{_baseUrl}/flights?key={_apiKey}&flightIcao={Uri.EscapeDataString(adsbAircraft.Callsign.ToUpper())}";
+                            var icaoResponse = await client.GetAsync(icaoUrl);
+                            if (icaoResponse.IsSuccessStatusCode)
                             {
-                                var aeFlights = JsonSerializer.Deserialize<List<JsonElement>>(aeJson, JsonOptions);
-                                if (aeFlights != null && aeFlights.Count > 0)
+                                var icaoJson = await icaoResponse.Content.ReadAsStringAsync();
+                                if (!string.IsNullOrEmpty(icaoJson) && !icaoJson.Contains("error") && icaoJson.Trim() != "[]")
                                 {
-                                    var first = aeFlights[0];
-                                    depIata = GetNestedString(first, "departure", "iataCode");
-                                    arrIata = GetNestedString(first, "arrival", "iataCode");
-                                    depScheduled = ParseTimeFromScheduled(GetNestedString(first, "departure", "scheduledTime"));
-                                    depActual = ParseTimeFromScheduled(GetNestedString(first, "departure", "actualTime") ?? GetNestedString(first, "departure", "estimatedTime"));
-                                    arrScheduled = ParseTimeFromScheduled(GetNestedString(first, "arrival", "scheduledTime"));
-                                    arrEstimated = ParseTimeFromScheduled(GetNestedString(first, "arrival", "estimatedTime") ?? GetNestedString(first, "arrival", "actualTime"));
-                                    icaoModel = GetNestedString(first, "aircraft", "icaoCode") ?? GetNestedString(first, "aircraft", "iataCode");
+                                    aeJson = icaoJson;
                                 }
+                            }
+                        }
+
+                        if (!string.IsNullOrEmpty(aeJson) && !aeJson.TrimStart().StartsWith("{"))
+                        {
+                            var aeFlights = JsonSerializer.Deserialize<List<JsonElement>>(aeJson, JsonOptions);
+                            if (aeFlights != null && aeFlights.Count > 0)
+                            {
+                                var first = aeFlights[0];
+                                depIata = GetNestedString(first, "departure", "iataCode");
+                                arrIata = GetNestedString(first, "arrival", "iataCode");
+                                depScheduled = ParseTimeFromScheduled(GetNestedString(first, "departure", "scheduledTime"));
+                                depActual = ParseTimeFromScheduled(GetNestedString(first, "departure", "actualTime") ?? GetNestedString(first, "departure", "estimatedTime"));
+                                arrScheduled = ParseTimeFromScheduled(GetNestedString(first, "arrival", "scheduledTime"));
+                                arrEstimated = ParseTimeFromScheduled(GetNestedString(first, "arrival", "estimatedTime") ?? GetNestedString(first, "arrival", "actualTime"));
+                                icaoModel = GetNestedString(first, "aircraft", "icaoCode") ?? GetNestedString(first, "aircraft", "iataCode");
                             }
                         }
                     }
@@ -444,33 +461,52 @@ public class FlightTrackerService : IFlightTrackerService
                     : $"{_baseUrl}/flights?key={_apiKey}&flightIata={Uri.EscapeDataString(searchIata)}";
 
                 var response = await client.GetAsync(url);
+                string json = "";
                 if (response.IsSuccessStatusCode)
                 {
-                    var json = await response.Content.ReadAsStringAsync();
-                    if (!json.TrimStart().StartsWith("{"))
+                    json = await response.Content.ReadAsStringAsync();
+                }
+
+                // Fallback: If query by flightIata failed or returned empty/error, try query by flightIcao
+                if (!(q.Length == 2 && q.All(char.IsLetter)) && 
+                    (string.IsNullOrEmpty(json) || json.Contains("error") || json.Trim() == "[]") && 
+                    !string.IsNullOrEmpty(q))
+                {
+                    var icaoUrl = $"{_baseUrl}/flights?key={_apiKey}&flightIcao={Uri.EscapeDataString(q.ToUpper())}";
+                    var icaoResponse = await client.GetAsync(icaoUrl);
+                    if (icaoResponse.IsSuccessStatusCode)
                     {
-                        var flights = JsonSerializer.Deserialize<List<JsonElement>>(json, JsonOptions);
-                        if (flights != null && flights.Count > 0)
+                        var icaoJson = await icaoResponse.Content.ReadAsStringAsync();
+                        if (!string.IsNullOrEmpty(icaoJson) && !icaoJson.Contains("error") && icaoJson.Trim() != "[]")
                         {
-                            result.Flights.AddRange(flights.Take(5).Select(f =>
-                            {
-                                var lastPos = GetLastPosition(f);
-                                return new FlightSearchItem
-                                {
-                                    FlightIata = GetNestedString(f, "flight", "iataNumber"),
-                                    AirlineIata = GetNestedString(f, "airline", "iataCode"),
-                                    Registration = GetNestedString(f, "aircraft", "regNumber"),
-                                    Status = GetString(f, "status"),
-                                    Altitude = lastPos.HasValue
-                                        ? GetDecimalFromElement(lastPos.Value, "altitude")
-                                        : GetNestedDecimal(f, "geography", "altitude"),
-                                    DepartureIata = GetNestedString(f, "departure", "iataCode"),
-                                    ArrivalIata = GetNestedString(f, "arrival", "iataCode"),
-                                    AircraftModel = GetNestedString(f, "aircraft", "icaoCode") ?? GetNestedString(f, "aircraft", "iataCode")
-                                };
-                            })
-                            .Where(f => !string.IsNullOrEmpty(f.FlightIata)));
+                            json = icaoJson;
                         }
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(json) && !json.TrimStart().StartsWith("{"))
+                {
+                    var flights = JsonSerializer.Deserialize<List<JsonElement>>(json, JsonOptions);
+                    if (flights != null && flights.Count > 0)
+                    {
+                        result.Flights.AddRange(flights.Take(5).Select(f =>
+                        {
+                            var lastPos = GetLastPosition(f);
+                            return new FlightSearchItem
+                            {
+                                FlightIata = GetNestedString(f, "flight", "iataNumber"),
+                                AirlineIata = GetNestedString(f, "airline", "iataCode"),
+                                Registration = GetNestedString(f, "aircraft", "regNumber"),
+                                Status = GetString(f, "status"),
+                                Altitude = lastPos.HasValue
+                                    ? GetDecimalFromElement(lastPos.Value, "altitude")
+                                    : GetNestedDecimal(f, "geography", "altitude"),
+                                DepartureIata = GetNestedString(f, "departure", "iataCode"),
+                                ArrivalIata = GetNestedString(f, "arrival", "iataCode"),
+                                AircraftModel = GetNestedString(f, "aircraft", "icaoCode") ?? GetNestedString(f, "aircraft", "iataCode")
+                            };
+                        })
+                        .Where(f => !string.IsNullOrEmpty(f.FlightIata)));
                     }
                 }
             }

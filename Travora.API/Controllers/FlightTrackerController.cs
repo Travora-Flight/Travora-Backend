@@ -11,10 +11,12 @@ namespace Travora.API.Controllers;
 public class FlightTrackerController : ControllerBase
 {
     private readonly IFlightTrackerService _trackerService;
+    private readonly IAirportDetailsService _airportDetailsService;
 
-    public FlightTrackerController(IFlightTrackerService trackerService)
+    public FlightTrackerController(IFlightTrackerService trackerService, IAirportDetailsService airportDetailsService)
     {
         _trackerService = trackerService;
+        _airportDetailsService = airportDetailsService;
     }
 
     /// <summary>
@@ -81,6 +83,25 @@ public class FlightTrackerController : ControllerBase
             return NotFound(new FlightTrackerGenericErrorResponse { Error = "Flight not found" });
 
         return Ok(result);
+    }
+
+    /// <summary>
+    /// Get full airport details by IATA code.
+    /// </summary>
+    [HttpGet("/api/v1/airports/{code}/details")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetAirportDetails(string code)
+    {
+        try
+        {
+            var result = await _airportDetailsService.GetAirportDetailsAsync(code.ToUpper());
+            return Ok(result);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
     }
 }
 
