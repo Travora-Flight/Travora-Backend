@@ -17,5 +17,6 @@ internal class CachedFlight
     public string Dep { get; set; } = string.Empty;
     public string Arr { get; set; } = string.Empty;
     public string Reg { get; set; } = string.Empty;
+    public string AircraftType { get; set; } = string.Empty;
     public long LastSeen { get; set; }
 }

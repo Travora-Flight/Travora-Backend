@@ -214,7 +214,7 @@ public class AdsbExchangeService : IAdsbExchangeService
     {
         if (el.TryGetProperty(prop, out var val))
         {
-            if (val.TryGetDecimal(out var d)) return d;
+            if (val.ValueKind == JsonValueKind.Number && val.TryGetDecimal(out var d)) return d;
             if (decimal.TryParse(val.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var p)) return p;
         }
         return 0;
@@ -224,7 +224,7 @@ public class AdsbExchangeService : IAdsbExchangeService
     {
         if (el.TryGetProperty(prop, out var val))
         {
-            if (val.TryGetDouble(out var d)) return d;
+            if (val.ValueKind == JsonValueKind.Number && val.TryGetDouble(out var d)) return d;
             if (double.TryParse(val.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var p)) return p;
         }
         return 0;

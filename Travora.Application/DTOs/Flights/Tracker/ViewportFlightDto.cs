@@ -32,11 +32,7 @@ public class ViewportFlightDto
     /// <summary>Airline IATA code</summary>
     public string Airline { get; set; } = string.Empty;
 
-    /// <summary>Departure airport IATA</summary>
-    public string Dep { get; set; } = string.Empty;
 
-    /// <summary>Arrival airport IATA</summary>
-    public string Arr { get; set; } = string.Empty;
 
     /// <summary>Aircraft registration number</summary>
     public string Reg { get; set; } = string.Empty;

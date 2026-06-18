@@ -125,8 +125,6 @@ public class AirportDetailsService : IAirportDetailsService
         }
         catch { /* Redis down — continue */ }
 
-        var flights = new List<AirportFlightDto>();
-        
         // Calculate the current local time of the airport using its GMT offset
         double offsetHours = 0;
         if (!string.IsNullOrWhiteSpace(airport.GMT))
@@ -135,115 +133,48 @@ public class AirportDetailsService : IAirportDetailsService
         }
         var localTime = DateTime.UtcNow.AddHours(offsetHours);
 
-        try
+        var departuresTask = FetchTimetableFlightsAsync(iataCode, "departure", localTime);
+        var arrivalsTask = FetchTimetableFlightsAsync(iataCode, "arrival", localTime);
+
+        await Task.WhenAll(departuresTask, arrivalsTask);
+
+        var departures = departuresTask.Result;
+        var arrivals = arrivalsTask.Result;
+
+        var flights = departures.Concat(arrivals).OrderBy(f => f.ScheduledTime).ToList();
+
+        // 2) Enrich flights with matching airline logos from local DB
+        if (flights.Any())
         {
-            var client = _httpClientFactory.CreateClient("AviationEdge");
-
-            // Fetch departures
-            var depUrl = $"{_baseUrl}/timetable?key={_apiKey}&iataCode={Uri.EscapeDataString(iataCode)}&type=departure";
-            var depResponse = await client.GetAsync(depUrl);
-
-            if (depResponse.IsSuccessStatusCode)
+            var airlineIatas = flights.Select(f => f.AirlineIata).Where(code => !string.IsNullOrEmpty(code)).Distinct().ToList();
+            if (airlineIatas.Any())
             {
-                var depJson = await depResponse.Content.ReadAsStringAsync();
-                if (!depJson.TrimStart().StartsWith("{"))
+                var airlinesList = await _db.Airlines
+                    .Where(a => airlineIatas.Contains(a.CodeIataAirline))
+                    .ToListAsync();
+
+                var airlinesDict = new Dictionary<string, Airline>(StringComparer.OrdinalIgnoreCase);
+                foreach (var airline in airlinesList)
                 {
-                    var depFlights = JsonSerializer.Deserialize<List<JsonElement>>(depJson, JsonOptions);
-                    if (depFlights != null)
+                    if (!string.IsNullOrEmpty(airline.CodeIataAirline))
                     {
-                        foreach (var f in depFlights)
-                        {
-                            try
-                            {
-                                var schedTimeStr = GetNestedString(f, "departure", "scheduledTime");
-                                if (DateTime.TryParse(schedTimeStr, out var schedDt))
-                                {
-                                    // Filter out flights that scheduled more than 30 minutes ago
-                                    if (schedDt < localTime.AddMinutes(-30))
-                                        continue;
-                                }
-
-                                var depActual = GetNestedStringOrNull(f, "departure", "actualTime");
-                                var depEstimated = GetNestedStringOrNull(f, "departure", "estimatedTime");
-
-                                flights.Add(new AirportFlightDto
-                                {
-                                    Destination = GetNestedString(f, "arrival", "iataCode"),
-                                    FlightNumber = GetNestedString(f, "flight", "iataNumber"),
-                                    ScheduledTime = ParseTime(schedTimeStr),
-                                    Time = ParseTime(depActual ?? depEstimated ?? schedTimeStr),
-                                    Gate = GetNestedStringOrNull(f, "departure", "gate")
-                                        ?? (GetNestedStringOrNull(f, "departure", "terminal") is string depTerm ? $"T{depTerm}" : "—"),
-                                    Type = "Departure",
-                                    Status = MapStatus(GetString(f, "status")),
-                                    Delay = FormatDelay(GetNestedStringOrNull(f, "departure", "delay"))
-                                });
-
-                                if (flights.Count(fl => fl.Type == "Departure") >= 40)
-                                    break;
-                            }
-                            catch { /* Skip malformed */ }
-                        }
+                        airlinesDict.TryAdd(airline.CodeIataAirline, airline);
                     }
                 }
-            }
 
-            // Fetch arrivals
-            var arrUrl = $"{_baseUrl}/timetable?key={_apiKey}&iataCode={Uri.EscapeDataString(iataCode)}&type=arrival";
-            var arrResponse = await client.GetAsync(arrUrl);
-
-            if (arrResponse.IsSuccessStatusCode)
-            {
-                var arrJson = await arrResponse.Content.ReadAsStringAsync();
-                if (!arrJson.TrimStart().StartsWith("{"))
+                foreach (var f in flights)
                 {
-                    var arrFlights = JsonSerializer.Deserialize<List<JsonElement>>(arrJson, JsonOptions);
-                    if (arrFlights != null)
+                    if (airlinesDict.TryGetValue(f.AirlineIata, out var matchedAirline) && !string.IsNullOrEmpty(matchedAirline.LogoUrl))
                     {
-                        foreach (var f in arrFlights)
-                        {
-                            try
-                            {
-                                var schedTimeStr = GetNestedString(f, "arrival", "scheduledTime");
-                                if (DateTime.TryParse(schedTimeStr, out var schedDt))
-                                {
-                                    // Filter out flights that scheduled more than 30 minutes ago
-                                    if (schedDt < localTime.AddMinutes(-30))
-                                        continue;
-                                }
-
-                                var arrActual = GetNestedStringOrNull(f, "arrival", "actualTime");
-                                var arrEstimated = GetNestedStringOrNull(f, "arrival", "estimatedTime");
-
-                                flights.Add(new AirportFlightDto
-                                {
-                                    Destination = GetNestedString(f, "departure", "iataCode"),
-                                    FlightNumber = GetNestedString(f, "flight", "iataNumber"),
-                                    ScheduledTime = ParseTime(schedTimeStr),
-                                    Time = ParseTime(arrActual ?? arrEstimated ?? schedTimeStr),
-                                    Gate = GetNestedStringOrNull(f, "arrival", "gate")
-                                        ?? (GetNestedStringOrNull(f, "arrival", "terminal") is string arrTerm ? $"T{arrTerm}" : "—"),
-                                    Type = "Arrival",
-                                    Status = MapStatus(GetString(f, "status")),
-                                    Delay = FormatDelay(GetNestedStringOrNull(f, "arrival", "delay"))
-                                });
-
-                                if (flights.Count(fl => fl.Type == "Arrival") >= 40)
-                                    break;
-                            }
-                            catch { /* Skip malformed */ }
-                        }
+                        f.AirlineLogoUrl = matchedAirline.LogoUrl;
+                    }
+                    else if (!string.IsNullOrEmpty(f.AirlineIata))
+                    {
+                        f.AirlineLogoUrl = $"https://pics.avs.io/200/200/{f.AirlineIata.ToUpper()}@2x.png";
                     }
                 }
             }
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[AirportDetails] ❌ Timetable API error: {ex.Message}");
-        }
-
-        // Sort by scheduled time
-        flights = flights.OrderBy(f => f.ScheduledTime).ToList();
 
         // Cache in Redis (5 min TTL)
         try
@@ -254,6 +185,96 @@ public class AirportDetailsService : IAirportDetailsService
         catch { /* Redis down — continue */ }
 
         return (flights, flights.Count);
+    }
+
+    private async Task<List<AirportFlightDto>> FetchTimetableFlightsAsync(string iataCode, string type, DateTime localTime)
+    {
+        var flightsList = new List<AirportFlightDto>();
+        try
+        {
+            var client = _httpClientFactory.CreateClient("AviationEdge");
+            var url = $"{_baseUrl}/timetable?key={_apiKey}&iataCode={Uri.EscapeDataString(iataCode)}&type={type}";
+            var response = await client.GetAsync(url);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var json = await response.Content.ReadAsStringAsync();
+                if (!json.TrimStart().StartsWith("{"))
+                {
+                    var rawFlights = JsonSerializer.Deserialize<List<JsonElement>>(json, JsonOptions);
+                    if (rawFlights != null)
+                    {
+                        foreach (var f in rawFlights)
+                        {
+                            try
+                            {
+                                string schedTimeStr = type == "departure" 
+                                    ? GetNestedString(f, "departure", "scheduledTime")
+                                    : GetNestedString(f, "arrival", "scheduledTime");
+
+                                if (DateTime.TryParse(schedTimeStr, out var schedDt))
+                                {
+                                    // Filter out flights that scheduled more than 30 minutes ago
+                                    if (schedDt < localTime.AddMinutes(-30))
+                                        continue;
+                                }
+
+                                string? actualTime = type == "departure"
+                                    ? GetNestedStringOrNull(f, "departure", "actualTime")
+                                    : GetNestedStringOrNull(f, "arrival", "actualTime");
+
+                                string? estimatedTime = type == "departure"
+                                    ? GetNestedStringOrNull(f, "departure", "estimatedTime")
+                                    : GetNestedStringOrNull(f, "arrival", "estimatedTime");
+
+                                string gate = type == "departure"
+                                    ? GetNestedStringOrNull(f, "departure", "gate") ?? "—"
+                                    : GetNestedStringOrNull(f, "arrival", "gate") ?? "—";
+
+                                string? terminal = type == "departure"
+                                    ? GetNestedStringOrNull(f, "departure", "terminal")
+                                    : GetNestedStringOrNull(f, "arrival", "terminal");
+
+                                string delay = type == "departure"
+                                    ? GetNestedStringOrNull(f, "departure", "delay") ?? ""
+                                    : GetNestedStringOrNull(f, "arrival", "delay") ?? "";
+
+                                string destination = type == "departure"
+                                    ? GetNestedString(f, "arrival", "iataCode")
+                                    : GetNestedString(f, "departure", "iataCode");
+
+                                flightsList.Add(new AirportFlightDto
+                                {
+                                    Destination = destination,
+                                    FlightNumber = GetNestedString(f, "flight", "iataNumber"),
+                                    ScheduledTime = ParseTime(schedTimeStr),
+                                    EstimatedTime = ParseTime(estimatedTime),
+                                    ActualTime = ParseTime(actualTime),
+                                    Time = ParseTime(actualTime ?? estimatedTime ?? schedTimeStr),
+                                    Gate = gate,
+                                    Terminal = terminal,
+                                    Type = type == "departure" ? "Departure" : "Arrival",
+                                    Status = MapStatus(GetString(f, "status")),
+                                    Delay = FormatDelay(delay),
+                                    AirlineName = GetNestedString(f, "airline", "name"),
+                                    AirlineIata = GetNestedString(f, "airline", "iataCode")
+                                });
+
+                                if (flightsList.Count >= 40)
+                                    break;
+                            }
+                            catch { /* Skip malformed */ }
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[AirportDetails] ❌ Timetable {type} API error: {ex.Message}");
+        }
+
+        return flightsList;
     }
 
     // ========================================================

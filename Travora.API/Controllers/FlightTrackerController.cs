@@ -27,12 +27,11 @@ public class FlightTrackerController : ControllerBase
         [FromQuery] decimal maxLat = 90,
         [FromQuery] decimal minLng = -180,
         [FromQuery] decimal maxLng = 180,
-        [FromQuery] bool isZoomedIn = false,
         [FromQuery] decimal? centerLat = null,
         [FromQuery] decimal? centerLng = null,
         [FromQuery] int? distance = null)
     {
-        var result = await _trackerService.GetViewportFlightsAsync(minLat, maxLat, minLng, maxLng, isZoomedIn, centerLat, centerLng, distance);
+        var result = await _trackerService.GetViewportFlightsAsync(minLat, maxLat, minLng, maxLng, centerLat, centerLng, distance);
         return Ok(result);
     }
 
@@ -51,16 +50,7 @@ public class FlightTrackerController : ControllerBase
         return Ok(result);
     }
 
-    /// <summary>
-    /// Get airport departure/arrival timetable.
-    /// </summary>
-    [HttpGet("timetable/{airportCode}")]
-    [ProducesResponseType(typeof(TimetableResponse), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetAirportTimetable(string airportCode, [FromQuery] string type = "departure")
-    {
-        var result = await _trackerService.GetAirportTimetableAsync(airportCode, type);
-        return Ok(result);
-    }
+
 
     /// <summary>
     /// Search for flights and airports by query string.

@@ -29,10 +29,7 @@ public class FlightDetailsResponseExample : IExamplesProvider<FlightDetailsRespo
                 Name = "Cairo International Airport",
                 City = "Cairo",
                 Utc = "UTC+2",
-                Gate = "G2",
-                Terminal = "Terminal 3",
-                ScheduledTime = "10:00",
-                ActualTime = "10:15"
+                ScheduledTime = "10:00"
             },
             Arrival = new FlightDetailAirportDto
             {
@@ -40,10 +37,7 @@ public class FlightDetailsResponseExample : IExamplesProvider<FlightDetailsRespo
                 Name = "Dubai International Airport",
                 City = "Dubai",
                 Utc = "UTC+4",
-                Gate = "D10",
-                Terminal = "Terminal 1",
-                ScheduledTime = "14:30",
-                EstimatedTime = "14:40"
+                ScheduledTime = "14:30"
             },
             Position = new FlightPosition
             {

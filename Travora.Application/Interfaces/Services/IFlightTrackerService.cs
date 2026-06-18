@@ -10,7 +10,7 @@ public interface IFlightTrackerService
     /// </summary>
     Task<ViewportFlightsResponse> GetViewportFlightsAsync(
         decimal minLat, decimal maxLat, decimal minLng, decimal maxLng,
-        bool isZoomedIn = false, decimal? centerLat = null, decimal? centerLng = null, int? distance = null);
+        decimal? centerLat = null, decimal? centerLng = null, int? distance = null);
 
     /// <summary>
     /// Get full flight details including trail, schedule, and aircraft info.
@@ -29,8 +29,4 @@ public interface IFlightTrackerService
     Task<AirportViewportResponse> GetAirportsInViewportAsync(
         decimal minLat, decimal maxLat, decimal minLng, decimal maxLng);
 
-    /// <summary>
-    /// Get airport departure/arrival timetable.
-    /// </summary>
-    Task<TimetableResponse> GetAirportTimetableAsync(string airportCode, string type = "departure");
 }
