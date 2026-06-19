@@ -13,10 +13,6 @@ public interface ICustomerProfileService
     Task<CustomerSettingsResponse> GetSettingsAsync(int customerId);
     Task<bool> UpdateSettingsAsync(int customerId, CustomerSettingsRequest request);
     Task<CustomerOrdersResponse> GetOrdersAsync(int customerId);
-    Task<SavedFlightsResponse> GetSavedFlightsAsync(int customerId);
-    Task<(bool Success, string Message, int? SavedFlightId)> SaveFlightAsync(int customerId, int flightId);
-    Task<(bool Success, string Message)> RemoveSavedFlightAsync(int customerId, int savedFlightId);
-    Task<(bool Success, string Message, bool? NotificationEnabled)> ToggleFlightNotificationAsync(int customerId, int savedFlightId);
     Task<(bool Success, string Message, object? Data)> AddPaymentMethodAsync(int customerId, AddPaymentMethodRequest request);
     Task ChangePasswordAsync(int customerId, string currentPassword, string newPassword, string confirmPassword);
 }

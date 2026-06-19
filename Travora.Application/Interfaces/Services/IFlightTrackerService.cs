@@ -29,4 +29,9 @@ public interface IFlightTrackerService
     Task<AirportViewportResponse> GetAirportsInViewportAsync(
         decimal minLat, decimal maxLat, decimal minLng, decimal maxLng);
 
+    Task<Travora.Application.DTOs.Customer.Profile.SavedFlightsResponse> GetTrackedFlightsAsync(int? customerId, string? guestId);
+    Task<(bool Success, string Message, int? SavedFlightId)> TrackFlightAsync(string flightIata, int? customerId, string? guestId);
+    Task<(bool Success, string Message)> RemoveTrackedFlightAsync(int savedFlightId, int? customerId, string? guestId);
+    Task<(bool Success, string Message, bool? NotificationEnabled)> ToggleTrackedFlightNotificationAsync(int savedFlightId, int? customerId, string? guestId);
+    Task<(bool Success, string Message)> MergeGuestTrackedFlightsAsync(string guestId, int customerId);
 }

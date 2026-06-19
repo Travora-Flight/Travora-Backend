@@ -7,6 +7,7 @@ using Travora.Infrastructure.Data.Seeders;
 using Hangfire;
 using QuestPDF.Infrastructure;
 using Travora.Application.Interfaces.Services.Admin;
+using Travora.Application.Interfaces.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -68,6 +69,16 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
     // By default Hangfire allows local requests only which is fine for dev
     DashboardTitle = "Travora Background Jobs"
 });
+
+using (var scope = app.Services.CreateScope())
+{
+    var recurringJobManager = scope.ServiceProvider.GetRequiredService<IRecurringJobManager>();
+    recurringJobManager.AddOrUpdate<IFlightStatusUpdaterJob>(
+        "flight-status-updater",
+        job => job.UpdateFlightStatusesAsync(),
+        "*/10 * * * *"
+    );
+}
 
 app.MapHub<Travora.API.Hubs.LiveTrackingHub>("/hubs/admin/live-tracking");
 app.MapHub<Travora.API.Hubs.EmployeeHub>("/hubs/employee");

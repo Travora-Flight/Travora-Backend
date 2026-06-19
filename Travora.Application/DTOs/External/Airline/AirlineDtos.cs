@@ -178,6 +178,7 @@ public class AirlineIssueBoardingPassResponse
     public string? BarcodeData { get; set; }
     public string? FlightNumber { get; set; }
     public string? AirlineName { get; set; }
+    public string? AirlineIataCode { get; set; }
     public string? From { get; set; }
     public string? To { get; set; }
     public string? FromCity { get; set; }

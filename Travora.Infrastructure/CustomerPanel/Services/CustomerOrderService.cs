@@ -1006,7 +1006,7 @@ public class CustomerOrderService : ICustomerOrderService
     {
         var order = await _context.Orders
             .Include(o => o.Package)
-            .Include(o => o.Flight)
+            .Include(o => o.Flight).ThenInclude(f => f.Airline)
             .Include(o => o.Customer)
             .Include(o => o.OrderCompanions).ThenInclude(oc => oc.Companion)
             .Include(o => o.BoardingPasses)
@@ -1171,6 +1171,13 @@ public class CustomerOrderService : ICustomerOrderService
         foreach (var t in tasks)
         {
             var result = t.Task.Result;
+            
+            if (string.IsNullOrEmpty(flight.AirlineIataCode) && !string.IsNullOrEmpty(result.AirlineIataCode))
+            {
+                flight.AirlineIataCode = result.AirlineIataCode.Trim();
+                flight.UpdatedAt = DateTime.UtcNow;
+            }
+
             var boardingPass = new Domain.Entities.BoardingPass
             {
                 OrderId = order.OrderId,
@@ -1207,6 +1214,20 @@ public class CustomerOrderService : ICustomerOrderService
             BoardingPasses = order.BoardingPasses.Select(bp => new BoardingPassItem
             {
                 AirlineName = flight.AirlineName,
+                AirlineLogoUrl = !string.IsNullOrEmpty(flight.Airline?.LogoUrl)
+                    ? flight.Airline.LogoUrl
+                    : (!string.IsNullOrEmpty(flight.AirlineIataCode)
+                        ? $"https://pics.avs.io/200/200/{flight.AirlineIataCode.ToUpper()}@2x.png"
+                        : (!string.IsNullOrEmpty(flight.FlightIataNumber) && System.Text.RegularExpressions.Regex.IsMatch(flight.FlightIataNumber, @"^[A-Za-z]{2}"))
+                            ? $"https://pics.avs.io/200/200/{System.Text.RegularExpressions.Regex.Match(flight.FlightIataNumber, @"^[A-Za-z]{2}").Value.ToUpper()}@2x.png"
+                            : (!string.IsNullOrEmpty(flight.FlightNumber) && System.Text.RegularExpressions.Regex.IsMatch(flight.FlightNumber, @"^[A-Za-z]{2}"))
+                                ? $"https://pics.avs.io/200/200/{System.Text.RegularExpressions.Regex.Match(flight.FlightNumber, @"^[A-Za-z]{2}").Value.ToUpper()}@2x.png"
+                                : string.Empty),
+                AirlineIataCode = !string.IsNullOrEmpty(flight.AirlineIataCode)
+                    ? flight.AirlineIataCode
+                    : ((!string.IsNullOrEmpty(flight.FlightNumber) && System.Text.RegularExpressions.Regex.IsMatch(flight.FlightNumber, @"^[A-Za-z]{2}"))
+                        ? System.Text.RegularExpressions.Regex.Match(flight.FlightNumber, @"^[A-Za-z]{2}").Value.ToUpper()
+                        : string.Empty),
                 FlightNumber = flight.FlightNumber,
                 From = flight.DepartureIataCode,
                 FromCity = flight.DepartureAirport?.NameAirport ?? flight.DepartureIataCode,

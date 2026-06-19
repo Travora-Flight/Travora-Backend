@@ -6,6 +6,8 @@ using Travora.Application.DTOs.Flights.Tracker;
 using Travora.Application.Interfaces;
 using Travora.Application.Interfaces.Services;
 using Travora.Infrastructure.Data;
+using Travora.Domain.Entities;
+using Travora.Domain.Enums;
 
 namespace Travora.Infrastructure.Services;
 
@@ -1710,7 +1712,294 @@ public class FlightTrackerService : IFlightTrackerService
         if (reg.StartsWith("A7-")) return "Qatar";
         if (reg.StartsWith("A9C-")) return "Bahrain";
         if (reg.StartsWith("9K-")) return "Kuwait";
-        
+
         return "";
     }
+
+    public async Task<Travora.Application.DTOs.Customer.Profile.SavedFlightsResponse> GetTrackedFlightsAsync(int? customerId, string? guestId)
+    {
+        IQueryable<SavedFlight> query = _db.SavedFlights
+            .Include(sf => sf.Flight)
+                .ThenInclude(f => f.DepartureAirport)
+                    .ThenInclude(a => a.City)
+            .Include(sf => sf.Flight)
+                .ThenInclude(f => f.ArrivalAirport)
+                    .ThenInclude(a => a.City)
+            .Where(sf => sf.IsActive);
+
+        if (customerId.HasValue)
+        {
+            query = query.Where(sf => sf.CustomerId == customerId.Value);
+        }
+        else if (!string.IsNullOrEmpty(guestId))
+        {
+            query = query.Where(sf => sf.GuestId == guestId && sf.CustomerId == null);
+        }
+        else
+        {
+            return new Travora.Application.DTOs.Customer.Profile.SavedFlightsResponse { Message = "No user or guest context provided" };
+        }
+
+        var savedFlights = await query.ToListAsync();
+        if (!savedFlights.Any())
+        {
+            return new Travora.Application.DTOs.Customer.Profile.SavedFlightsResponse { Message = "No Flights Found" };
+        }
+
+        var dtos = savedFlights.Select(sf =>
+        {
+            var f = sf.Flight;
+            string airlineLogoUrl = "";
+            if (f != null)
+            {
+                var code = !string.IsNullOrEmpty(f.AirlineIataCode)
+                    ? f.AirlineIataCode
+                    : (!string.IsNullOrEmpty(f.FlightIataNumber) && System.Text.RegularExpressions.Regex.IsMatch(f.FlightIataNumber, @"^[A-Za-z]+")
+                        ? System.Text.RegularExpressions.Regex.Match(f.FlightIataNumber, @"^[A-Za-z]+").Value
+                        : (!string.IsNullOrEmpty(f.FlightNumber) && System.Text.RegularExpressions.Regex.IsMatch(f.FlightNumber, @"^[A-Za-z]+")
+                            ? System.Text.RegularExpressions.Regex.Match(f.FlightNumber, @"^[A-Za-z]+").Value
+                            : string.Empty));
+
+                if (!string.IsNullOrEmpty(code))
+                {
+                    airlineLogoUrl = $"https://pics.avs.io/200/200/{code.ToUpper()}@2x.png";
+                }
+            }
+
+            return new Travora.Application.DTOs.Customer.Profile.SavedFlightDto
+            {
+                SavedFlightId = sf.SavedFlightId,
+                FlightNumber = f?.FlightNumber ?? string.Empty,
+                FlightIcao = f?.FlightIcaoNumber ?? string.Empty,
+                Registration = f?.AircraftRegistrationNumber ?? string.Empty,
+                FromIata = f?.DepartureIataCode ?? string.Empty,
+                ToIata = f?.ArrivalIataCode ?? string.Empty,
+                DepartureCity = f?.DepartureAirport?.City?.NameCity ?? f?.DepartureAirport?.NameAirport ?? string.Empty,
+                ArrivalCity = f?.ArrivalAirport?.City?.NameCity ?? f?.ArrivalAirport?.NameAirport ?? string.Empty,
+                FlightDate = f?.ScheduledDepartureTime.ToString("dd MMM yyyy") ?? string.Empty,
+                DepartureTime = f?.ScheduledDepartureTime.ToString("hh:mm tt") ?? string.Empty,
+                ArrivalTime = f?.ScheduledArrivalTime.ToString("hh:mm tt") ?? string.Empty,
+                Status = f?.FlightStatus.ToString() ?? "Scheduled",
+                AirlineName = f?.AirlineName ?? string.Empty,
+                AirlineLogoUrl = airlineLogoUrl,
+                NotificationEnabled = sf.NotificationEnabled
+            };
+        }).ToList();
+
+        return new Travora.Application.DTOs.Customer.Profile.SavedFlightsResponse { SavedFlights = dtos };
+    }
+
+    public async Task<(bool Success, string Message, int? SavedFlightId)> TrackFlightAsync(string flightIata, int? customerId, string? guestId)
+    {
+        flightIata = flightIata.Trim().ToUpperInvariant();
+        if (string.IsNullOrEmpty(flightIata))
+        {
+            return (false, "Flight IATA is required", null);
+        }
+
+        var details = await GetFlightDetailsAsync(flightIata);
+        if (details == null)
+        {
+            return (false, $"Flight {flightIata} not found or no active live information available", null);
+        }
+
+        var flight = await _db.Flights.FirstOrDefaultAsync(f => f.FlightIataNumber == details.FlightIata || f.FlightNumber == details.FlightIata);
+        if (flight == null)
+        {
+            var flightStatus = FlightStatus.InAir;
+            var statusStr = details.Status.ToLowerInvariant();
+            if (statusStr.Contains("landed") || statusStr.Contains("arrived"))
+                flightStatus = FlightStatus.Landed;
+            else if (statusStr.Contains("scheduled"))
+                flightStatus = FlightStatus.Scheduled;
+            else if (statusStr.Contains("cancelled"))
+                flightStatus = FlightStatus.Cancelled;
+            else if (statusStr.Contains("delayed"))
+                flightStatus = FlightStatus.Delayed;
+            else if (statusStr.Contains("boarding"))
+                flightStatus = FlightStatus.Boarding;
+            else if (statusStr.Contains("departed"))
+                flightStatus = FlightStatus.Departed;
+
+            var depAirport = await _db.Airports.FirstOrDefaultAsync(a => a.CodeIataAirport == details.Departure.Iata);
+            var arrAirport = await _db.Airports.FirstOrDefaultAsync(a => a.CodeIataAirport == details.Arrival.Iata);
+
+            DateTime depTime = DateTime.UtcNow;
+            if (!string.IsNullOrEmpty(details.Departure.ScheduledTime) && DateTime.TryParse(details.Departure.ScheduledTime, out var dt))
+                depTime = dt;
+
+            DateTime arrTime = DateTime.UtcNow.AddHours(2);
+            if (!string.IsNullOrEmpty(details.Arrival.ScheduledTime) && DateTime.TryParse(details.Arrival.ScheduledTime, out var at))
+                arrTime = at;
+
+            flight = new Flight
+            {
+                FlightNumber = details.FlightIata,
+                FlightIataNumber = details.FlightIata,
+                FlightIcaoNumber = details.Aircraft.Registration ?? string.Empty,
+                FlightStatus = flightStatus,
+                DataSource = "AviationEdge",
+                DepartureIataCode = details.Departure.Iata,
+                ArrivalIataCode = details.Arrival.Iata,
+                ScheduledDepartureTime = depTime,
+                ScheduledArrivalTime = arrTime,
+                AirlineName = details.Airline.Name,
+                AirlineIataCode = details.Airline.Iata,
+                AircraftRegistrationNumber = details.Aircraft.Registration,
+                AircraftModelText = details.Aircraft.Model,
+                AircraftModelCode = details.Aircraft.Type,
+                DepartureAirportId = depAirport?.AirportId,
+                ArrivalAirportId = arrAirport?.AirportId,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            _db.Flights.Add(flight);
+            await _db.SaveChangesAsync();
+        }
+
+        SavedFlight? existing = null;
+        if (customerId.HasValue)
+        {
+            existing = await _db.SavedFlights
+                .FirstOrDefaultAsync(sf => sf.CustomerId == customerId.Value && sf.FlightId == flight.FlightId);
+        }
+        else if (!string.IsNullOrEmpty(guestId))
+        {
+            existing = await _db.SavedFlights
+                .FirstOrDefaultAsync(sf => sf.GuestId == guestId && sf.CustomerId == null && sf.FlightId == flight.FlightId);
+        }
+        else
+        {
+            return (false, "User context or GuestId is required", null);
+        }
+
+        if (existing != null)
+        {
+            if (existing.IsActive)
+            {
+                return (true, "Flight is already being tracked", existing.SavedFlightId);
+            }
+
+            existing.IsActive = true;
+            existing.NotificationEnabled = true;
+            existing.SavedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            return (true, "Flight tracking reactivated", existing.SavedFlightId);
+        }
+
+        var newSavedFlight = new SavedFlight
+        {
+            CustomerId = customerId,
+            GuestId = customerId.HasValue ? null : guestId,
+            FlightId = flight.FlightId,
+            IsActive = true,
+            NotificationEnabled = true,
+            SavedAt = DateTime.UtcNow
+        };
+
+        _db.SavedFlights.Add(newSavedFlight);
+        await _db.SaveChangesAsync();
+
+        return (true, "Flight tracked successfully", newSavedFlight.SavedFlightId);
+    }
+
+    public async Task<(bool Success, string Message)> RemoveTrackedFlightAsync(int savedFlightId, int? customerId, string? guestId)
+    {
+        SavedFlight? savedFlight = null;
+        if (customerId.HasValue)
+        {
+            savedFlight = await _db.SavedFlights
+                .FirstOrDefaultAsync(sf => sf.SavedFlightId == savedFlightId && sf.CustomerId == customerId.Value);
+        }
+        else if (!string.IsNullOrEmpty(guestId))
+        {
+            savedFlight = await _db.SavedFlights
+                .FirstOrDefaultAsync(sf => sf.SavedFlightId == savedFlightId && sf.GuestId == guestId && sf.CustomerId == null);
+        }
+
+        if (savedFlight == null)
+        {
+            return (false, "Tracked flight not found or unauthorized");
+        }
+
+        savedFlight.IsActive = false;
+        await _db.SaveChangesAsync();
+
+        return (true, "Flight untracked successfully");
+    }
+
+    public async Task<(bool Success, string Message, bool? NotificationEnabled)> ToggleTrackedFlightNotificationAsync(int savedFlightId, int? customerId, string? guestId)
+    {
+        SavedFlight? savedFlight = null;
+        if (customerId.HasValue)
+        {
+            savedFlight = await _db.SavedFlights
+                .FirstOrDefaultAsync(sf => sf.SavedFlightId == savedFlightId && sf.CustomerId == customerId.Value && sf.IsActive);
+        }
+        else if (!string.IsNullOrEmpty(guestId))
+        {
+            savedFlight = await _db.SavedFlights
+                .FirstOrDefaultAsync(sf => sf.SavedFlightId == savedFlightId && sf.GuestId == guestId && sf.CustomerId == null && sf.IsActive);
+        }
+
+        if (savedFlight == null)
+        {
+            return (false, "Tracked flight not found or unauthorized", null);
+        }
+
+        savedFlight.NotificationEnabled = !savedFlight.NotificationEnabled;
+        await _db.SaveChangesAsync();
+
+        return (true, "Notification state toggled successfully", savedFlight.NotificationEnabled);
+    }
+
+    public async Task<(bool Success, string Message)> MergeGuestTrackedFlightsAsync(string guestId, int customerId)
+    {
+        if (string.IsNullOrEmpty(guestId))
+        {
+            return (false, "GuestId is required");
+        }
+
+        var guestFlights = await _db.SavedFlights
+            .Where(sf => sf.GuestId == guestId && sf.CustomerId == null && sf.IsActive)
+            .ToListAsync();
+
+        if (!guestFlights.Any())
+        {
+            return (true, "No guest flights to merge");
+        }
+
+        foreach (var gf in guestFlights)
+        {
+            var customerHasFlight = await _db.SavedFlights
+                .AnyAsync(sf => sf.CustomerId == customerId && sf.FlightId == gf.FlightId && sf.IsActive);
+
+            if (customerHasFlight)
+            {
+                gf.IsActive = false;
+            }
+            else
+            {
+                var customerSoftDeleted = await _db.SavedFlights
+                    .FirstOrDefaultAsync(sf => sf.CustomerId == customerId && sf.FlightId == gf.FlightId && !sf.IsActive);
+
+                if (customerSoftDeleted != null)
+                {
+                    customerSoftDeleted.IsActive = true;
+                    customerSoftDeleted.NotificationEnabled = gf.NotificationEnabled;
+                    customerSoftDeleted.SavedAt = gf.SavedAt;
+                    gf.IsActive = false;
+                }
+                else
+                {
+                    gf.CustomerId = customerId;
+                    gf.GuestId = null;
+                }
+            }
+        }
+
+        await _db.SaveChangesAsync();
+        return (true, "Guest flights merged successfully");
+    }
 }
+

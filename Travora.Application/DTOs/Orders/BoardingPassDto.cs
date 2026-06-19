@@ -8,6 +8,8 @@ public class BoardingPassResponse
 public class BoardingPassItem
 {
     public string AirlineName { get; set; } = string.Empty;
+    public string AirlineLogoUrl { get; set; } = string.Empty;
+    public string AirlineIataCode { get; set; } = string.Empty;
     public string FlightNumber { get; set; } = string.Empty;
     public string From { get; set; } = string.Empty;
     public string FromCity { get; set; } = string.Empty;

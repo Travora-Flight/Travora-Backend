@@ -20,6 +20,7 @@ public class SavedFlightConfiguration : IEntityTypeConfiguration<SavedFlight>
             .HasForeignKey(s => s.FlightId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasIndex(s => new { s.CustomerId, s.FlightId }).IsUnique();
+        builder.HasIndex(s => new { s.CustomerId, s.FlightId }).HasFilter("[CustomerId] IS NOT NULL").IsUnique();
+        builder.HasIndex(s => new { s.GuestId, s.FlightId }).HasFilter("[GuestId] IS NOT NULL").IsUnique();
     }
 }

@@ -42,4 +42,19 @@ public class NotificationPusher : INotificationPusher
         await _hubContext.Clients.Group($"customer_{customerId}")
             .SendAsync("ReceiveNotification", payload);
     }
+
+    public async Task PushToGuestAsync(string guestId, string title, string message, string type, int? orderId)
+    {
+        var payload = new
+        {
+            title,
+            message,
+            type,
+            orderId,
+            sentAt = DateTime.UtcNow
+        };
+
+        await _hubContext.Clients.Group($"guest_{guestId}")
+            .SendAsync("ReceiveNotification", payload);
+    }
 }

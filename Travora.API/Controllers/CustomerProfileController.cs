@@ -109,51 +109,6 @@ public class CustomerProfileController : ControllerBase
         return Ok(result);
     }
 
-    // ENDPOINT 9 — GET flights
-    [HttpGet("flights")]
-    [ProducesResponseType(typeof(Travora.Application.DTOs.Customer.Profile.SavedFlightsResponse), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetFlights()
-    {
-        var result = await _profileService.GetSavedFlightsAsync(GetCustomerId());
-        return Ok(result);
-    }
-
-    // ENDPOINT 10 — POST save flight
-    [HttpPost("flights/{flightId}/save")]
-    [ProducesResponseType(typeof(CustomerProfileSaveFlightResponse), StatusCodes.Status200OK)]
-    public async Task<IActionResult> SaveFlight(int flightId)
-    {
-        var (success, message, savedFlightId) = await _profileService.SaveFlightAsync(GetCustomerId(), flightId);
-
-        if (!success)
-        {
-            if (message.Contains("not found")) return NotFound(new CustomerProfileSaveFlightResponse { Success = success, Message = message });
-            return Conflict(new CustomerProfileSaveFlightResponse { Success = success, Message = message });
-        }
-
-        return Ok(new CustomerProfileSaveFlightResponse { Success = success, SavedFlightId = savedFlightId });
-    }
-
-    // ENDPOINT 11 — DELETE saved flight
-    [HttpDelete("flights/{savedFlightId}")]
-    [ProducesResponseType(typeof(CustomerProfileGenericResponse), StatusCodes.Status200OK)]
-    public async Task<IActionResult> DeleteSavedFlight(int savedFlightId)
-    {
-        var (success, message) = await _profileService.RemoveSavedFlightAsync(GetCustomerId(), savedFlightId);
-        if (!success) return StatusCode(403, new CustomerProfileGenericResponse { Success = success, Message = message });
-        return Ok(new CustomerProfileGenericResponse { Success = success });
-    }
-
-    // ENDPOINT 12 — PATCH toggle notification
-    [HttpPatch("flights/{savedFlightId}/toggle-notification")]
-    [ProducesResponseType(typeof(CustomerProfileToggleNotificationResponse), StatusCodes.Status200OK)]
-    public async Task<IActionResult> ToggleNotification(int savedFlightId)
-    {
-        var (success, message, notificationEnabled) = await _profileService.ToggleFlightNotificationAsync(GetCustomerId(), savedFlightId);
-        if (!success) return NotFound(new CustomerProfileToggleNotificationResponse { Success = success, Message = message });
-        return Ok(new CustomerProfileToggleNotificationResponse { Success = success, NotificationEnabled = notificationEnabled ?? false });
-    }
-
     // ENDPOINT 13 — POST change password
     [HttpPost("change-password")]
     [ProducesResponseType(typeof(CustomerChangePasswordResponse), StatusCodes.Status200OK)]

@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Travora.Infrastructure.Data;
 
@@ -11,9 +12,11 @@ using Travora.Infrastructure.Data;
 namespace Travora.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260618232438_AddGuestFlightTracking")]
+    partial class AddGuestFlightTracking
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1586,6 +1589,67 @@ namespace Travora.Infrastructure.Data.Migrations
                     b.HasIndex("FlightIcaoNumber");
 
                     b.ToTable("Flights");
+                });
+
+            modelBuilder.Entity("Travora.Domain.Entities.FlightPositionHistory", b =>
+                {
+                    b.Property<int>("PositionId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("PositionId"));
+
+                    b.Property<decimal>("Altitude")
+                        .HasPrecision(12, 2)
+                        .HasColumnType("decimal(12,2)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<decimal>("Direction")
+                        .HasPrecision(6, 2)
+                        .HasColumnType("decimal(6,2)");
+
+                    b.Property<int>("FlightId")
+                        .HasColumnType("int");
+
+                    b.Property<decimal>("HorizontalSpeed")
+                        .HasPrecision(10, 2)
+                        .HasColumnType("decimal(10,2)");
+
+                    b.Property<bool>("IsOnGround")
+                        .HasColumnType("bit");
+
+                    b.Property<decimal>("Latitude")
+                        .HasPrecision(10, 6)
+                        .HasColumnType("decimal(10,6)");
+
+                    b.Property<decimal>("Longitude")
+                        .HasPrecision(10, 6)
+                        .HasColumnType("decimal(10,6)");
+
+                    b.Property<DateTime>("PositionTimestamp")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("SequenceOrder")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Squawk")
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<decimal>("VerticalSpeed")
+                        .HasPrecision(10, 2)
+                        .HasColumnType("decimal(10,2)");
+
+                    b.HasKey("PositionId");
+
+                    b.HasIndex("FlightId");
+
+                    b.ToTable("FlightPositionHistories");
                 });
 
             modelBuilder.Entity("Travora.Domain.Entities.FlightPrediction", b =>
@@ -3250,6 +3314,17 @@ namespace Travora.Infrastructure.Data.Migrations
                     b.Navigation("DepartureAirport");
                 });
 
+            modelBuilder.Entity("Travora.Domain.Entities.FlightPositionHistory", b =>
+                {
+                    b.HasOne("Travora.Domain.Entities.Flight", "Flight")
+                        .WithMany("PositionHistory")
+                        .HasForeignKey("FlightId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Flight");
+                });
+
             modelBuilder.Entity("Travora.Domain.Entities.FlightPrediction", b =>
                 {
                     b.HasOne("Travora.Domain.Entities.Flight", "Flight")
@@ -3743,6 +3818,8 @@ namespace Travora.Infrastructure.Data.Migrations
                     b.Navigation("BoardingPasses");
 
                     b.Navigation("Orders");
+
+                    b.Navigation("PositionHistory");
 
                     b.Navigation("Predictions");
 
