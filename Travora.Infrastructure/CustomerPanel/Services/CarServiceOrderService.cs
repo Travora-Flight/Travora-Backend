@@ -25,6 +25,7 @@ public class CarServiceOrderService : ICarServiceOrderService
     private readonly IGeocodingService _geocodingService;
     private readonly INotificationPusher _pusher;
     private readonly IPassportOcrService _ocrService;
+    private readonly IFlightPredictionService _predictionService;
 
     public CarServiceOrderService(
         ApplicationDbContext context,
@@ -33,7 +34,8 @@ public class CarServiceOrderService : ICarServiceOrderService
         IDraftOrderService draftOrderService,
         IGeocodingService geocodingService,
         INotificationPusher pusher,
-        IPassportOcrService ocrService)
+        IPassportOcrService ocrService,
+        IFlightPredictionService predictionService)
     {
         _context = context;
         _airlineService = airlineService;
@@ -42,6 +44,7 @@ public class CarServiceOrderService : ICarServiceOrderService
         _geocodingService = geocodingService;
         _pusher = pusher;
         _ocrService = ocrService;
+        _predictionService = predictionService;
     }
 
     // ===================================================================
@@ -609,7 +612,12 @@ public class CarServiceOrderService : ICarServiceOrderService
             bool isAvailable = true;
             var slotEndUtc = date.Date.Add(end);
 
-            if (absoluteCutoffUtc.HasValue && slotEndUtc > absoluteCutoffUtc.Value)
+            // Skip slots that have already passed today
+            if (date.Date == DateTime.UtcNow.Date && start < DateTime.UtcNow.TimeOfDay)
+            {
+                isAvailable = false;
+            }
+            else if (absoluteCutoffUtc.HasValue && slotEndUtc > absoluteCutoffUtc.Value)
             {
                 isAvailable = false;
             }

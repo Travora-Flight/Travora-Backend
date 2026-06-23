@@ -24,7 +24,8 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
     private readonly IGeocodingService _geocodingService;
     private readonly INotificationPusher _pusher;
     private readonly IPassportOcrService _ocrService;
-
+    private readonly IFlightPredictionService _predictionService;
+ 
     public DoorToDoorOrderService(
         ApplicationDbContext context,
         IAirlineService airlineService,
@@ -32,7 +33,8 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         IDraftOrderService draftOrderService,
         IGeocodingService geocodingService,
         INotificationPusher pusher,
-        IPassportOcrService ocrService)
+        IPassportOcrService ocrService,
+        IFlightPredictionService predictionService)
     {
         _context = context;
         _airlineService = airlineService;
@@ -41,6 +43,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         _geocodingService = geocodingService;
         _pusher = pusher;
         _ocrService = ocrService;
+        _predictionService = predictionService;
     }
 
     public async Task<ValidateFlightResponse> ValidateFlightAsync(int customerId, ValidateFlightRequest request, CancellationToken cancellationToken = default)
@@ -568,7 +571,12 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
             var slotEndUtc = date.Date.Add(end);
             bool isAvailable = true;
 
-            if (absoluteCutoffUtc.HasValue && slotEndUtc > absoluteCutoffUtc.Value)
+            // Skip slots that have already passed today
+            if (date.Date == DateTime.UtcNow.Date && start < DateTime.UtcNow.TimeOfDay)
+            {
+                isAvailable = false;
+            }
+            else if (absoluteCutoffUtc.HasValue && slotEndUtc > absoluteCutoffUtc.Value)
             {
                 isAvailable = false;
             }

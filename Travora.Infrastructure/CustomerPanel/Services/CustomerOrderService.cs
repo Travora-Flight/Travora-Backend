@@ -844,7 +844,12 @@ public class CustomerOrderService : ICustomerOrderService
 
             bool isAvailable = true;
 
-            if (type == RescheduleType.Pickup)
+            // Skip slots that have already passed today
+            if (date.Date == DateTime.UtcNow.Date && start < DateTime.UtcNow.TimeOfDay)
+            {
+                isAvailable = false;
+            }
+            else if (type == RescheduleType.Pickup)
             {
                 if (cutoffTimeSpan.HasValue && end > cutoffTimeSpan.Value)
                 {
