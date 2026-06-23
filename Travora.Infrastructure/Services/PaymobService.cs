@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Travora.Application.DTOs.Payments;
 using Travora.Application.Interfaces.Services;
@@ -26,6 +27,7 @@ public class PaymobService : IPaymobService
     private readonly ICustomerOrderService _customerOrderService;
     private readonly ILogger<PaymobService> _logger;
     private readonly INotificationPusher _pusher;
+    private readonly IServiceScopeFactory _scopeFactory;
 
     // Diagnostic: stores last webhook payloads for debugging (remove in production)
     private static readonly List<object> _lastWebhooks = new();
@@ -40,7 +42,8 @@ public class PaymobService : IPaymobService
         ICarServiceOrderService carServiceOrderService,
         ICustomerOrderService customerOrderService,
         ILogger<PaymobService> logger,
-        INotificationPusher pusher)
+        INotificationPusher pusher,
+        IServiceScopeFactory scopeFactory)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
@@ -50,6 +53,7 @@ public class PaymobService : IPaymobService
         _customerOrderService = customerOrderService;
         _logger = logger;
         _pusher = pusher;
+        _scopeFactory = scopeFactory;
     }
 
     // ==================== Helpers ====================
@@ -850,7 +854,10 @@ public class PaymobService : IPaymobService
 
     private async Task ProcessPostPaymentAsync(int orderId)
     {
-        var order = await _db.Orders.Include(o => o.Package).FirstOrDefaultAsync(o => o.OrderId == orderId);
+        var order = await _db.Orders
+            .Include(o => o.Package)
+            .Include(o => o.Flight)
+            .FirstOrDefaultAsync(o => o.OrderId == orderId);
         if (order?.Package == null) return;
 
         var packageName = order.Package.PackageName;
@@ -869,6 +876,37 @@ public class PaymobService : IPaymobService
                 orderService.UpdatedAt = DateTime.UtcNow;
                 await _db.SaveChangesAsync();
             }
+        }
+
+        // Trigger flight delay prediction immediately in background on successful payment
+        // We create a new DI scope because the current scoped services (DbContext, etc.) will be
+        // disposed when this HTTP request ends, before the background task completes.
+        // We capture only the FlightId (a plain int) to avoid passing a tracked entity across scopes.
+        if (order.FlightId > 0)
+        {
+            var capturedFlightId = order.FlightId;
+            var capturedOrderId = orderId;
+            _ = Task.Run(async () =>
+            {
+                using var scope = _scopeFactory.CreateScope();
+                try
+                {
+                    var scopedDb = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                    var flight = await scopedDb.Flights.FindAsync(capturedFlightId);
+                    if (flight == null)
+                    {
+                        _logger.LogWarning("Flight {FlightId} not found when triggering delay prediction for order {OrderId}", capturedFlightId, capturedOrderId);
+                        return;
+                    }
+
+                    var predictionService = scope.ServiceProvider.GetRequiredService<IFlightPredictionService>();
+                    await predictionService.PredictAndNotifyFlightDelayAsync(flight);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to trigger flight delay prediction for paid order {OrderId}", capturedOrderId);
+                }
+            });
         }
 
         // Generate boarding passes

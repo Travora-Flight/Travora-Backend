@@ -26,6 +26,7 @@ public class BagTrackingOrderService : IBagTrackingOrderService
     private readonly IDraftOrderService _draftOrderService;
     private readonly INotificationPusher _pusher;
     private readonly IPassportOcrService _ocrService;
+    private readonly IFlightPredictionService _predictionService;
 
     public BagTrackingOrderService(
         ApplicationDbContext context,
@@ -33,7 +34,8 @@ public class BagTrackingOrderService : IBagTrackingOrderService
         ICloudinaryService cloudinaryService,
         IDraftOrderService draftOrderService,
         INotificationPusher pusher,
-        IPassportOcrService ocrService)
+        IPassportOcrService ocrService,
+        IFlightPredictionService predictionService)
     {
         _context = context;
         _airlineService = airlineService;
@@ -41,6 +43,7 @@ public class BagTrackingOrderService : IBagTrackingOrderService
         _draftOrderService = draftOrderService;
         _pusher = pusher;
         _ocrService = ocrService;
+        _predictionService = predictionService;
     }
 
     // ===================================================================

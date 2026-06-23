@@ -36,5 +36,4 @@ public class WeatherSnapshot : IHasTimestamps
 
     // Navigation properties
     public Airport Airport { get; set; } = null!;
-    public ICollection<FlightPrediction> FlightPredictions { get; set; } = new List<FlightPrediction>();
 }

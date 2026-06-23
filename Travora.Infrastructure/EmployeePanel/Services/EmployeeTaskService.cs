@@ -58,8 +58,7 @@ public class EmployeeTaskService : IEmployeeTaskService
             throw new UnauthorizedAccessException("Unauthorized");
 
         var now = DateTime.UtcNow;
-        var canStart = os.ServiceStatus == ServiceStatus.Assigned
-            && os.ScheduledStartTime <= now.AddMinutes(30);
+        var canStart = os.CanEmployeeStart(now);
        
         var order = os.Order;
         var location = order.PickupLocation;
@@ -193,17 +192,15 @@ public class EmployeeTaskService : IEmployeeTaskService
         var currentPhase = os.PackageService?.ExecutionPhase;
 
         // Phase-aware CanStart validation
-        switch (currentPhase)
+        if (!os.CanEmployeeStart(now))
         {
-            case ExecutionPhase.Pickup:
-                if (os.ScheduledStartTime > now.AddMinutes(30))
-                    throw new InvalidOperationException("Cannot start yet. You can begin 30 minutes before the scheduled time.");
-                break;
-            case ExecutionPhase.Delivery:
-                if (os.ScheduledStartTime > now.AddHours(4))
-                    throw new InvalidOperationException("Cannot start yet. You can begin 4 hours before the scheduled delivery time.");
-                break;
-            // DepartureCheckin & ArrivalCheckin: can start immediately after assignment
+            var errorMsg = currentPhase switch
+            {
+                ExecutionPhase.Pickup => "Cannot start yet. You can begin 30 minutes before the scheduled time.",
+                ExecutionPhase.Delivery => "Cannot start yet. You can begin 4 hours before the scheduled delivery time.",
+                _ => "Cannot start the task at this time."
+            };
+            throw new InvalidOperationException(errorMsg);
         }
 
         os.ServiceStatus = ServiceStatus.InProgress;

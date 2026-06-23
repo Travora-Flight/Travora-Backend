@@ -78,6 +78,11 @@ using (var scope = app.Services.CreateScope())
         job => job.UpdateFlightStatusesAsync(),
         "*/10 * * * *"
     );
+    recurringJobManager.AddOrUpdate<IFlightDelayPredictionJob>(
+        "flight-delay-predictor",
+        job => job.PredictUpcomingFlightDelaysAsync(),
+        "*/15 * * * *"
+    );
 }
 
 app.MapHub<Travora.API.Hubs.LiveTrackingHub>("/hubs/admin/live-tracking");

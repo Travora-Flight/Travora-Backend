@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Travora.Application.DTOs.Airports;
+using Travora.Application.DTOs.Flights;
 using Travora.Application.Interfaces.External.Weather;
 
 namespace Travora.Infrastructure.ExternalServices.Weather;
@@ -95,6 +96,80 @@ public class WeatherApiService : IWeatherService
         }
     }
 
+    public async Task<PredictionWeatherDto?> GetHourlyWeatherAsync(string query, DateTime dateTimeUtc)
+    {
+        try
+        {
+            var client = _httpClientFactory.CreateClient("WeatherApi");
+            var dateStr = dateTimeUtc.ToString("yyyy-MM-dd");
+            var url = $"forecast.json?key={_apiKey}&q={Uri.EscapeDataString(query)}&dt={dateStr}&aqi=no&alerts=no";
+
+            var response = await client.GetAsync(url);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("WeatherAPI returned status code {StatusCode} for hourly query {Query} and date {Date}", 
+                    response.StatusCode, query, dateStr);
+                return null;
+            }
+
+            var apiResponse = await response.Content.ReadFromJsonAsync<WeatherApiResponse>(new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+
+            var forecastday = apiResponse?.Forecast?.Forecastday?.FirstOrDefault();
+            if (forecastday == null || forecastday.Hour == null || !forecastday.Hour.Any())
+            {
+                _logger.LogWarning("No hourly forecast details found in WeatherAPI response for query {Query} and date {Date}", query, dateStr);
+                return null;
+            }
+
+            // Find the hour that matches dateTimeUtc hour closest
+            var targetHour = dateTimeUtc.Hour;
+            var hourData = forecastday.Hour.FirstOrDefault(h => 
+            {
+                if (DateTime.TryParse(h.Time, out var parsedTime))
+                {
+                    return parsedTime.Hour == targetHour;
+                }
+                return false;
+            }) ?? forecastday.Hour.OrderBy(h => 
+            {
+                if (DateTime.TryParse(h.Time, out var parsedTime))
+                {
+                    return Math.Abs((parsedTime - dateTimeUtc).TotalMinutes);
+                }
+                return double.MaxValue;
+            }).FirstOrDefault();
+
+            if (hourData == null)
+            {
+                return null;
+            }
+
+            return new PredictionWeatherDto
+            {
+                TempF = (double)hourData.Temp_F,
+                WindChillF = (double)hourData.Feelslike_F, // feelslike_f or windchill_f
+                Humidity = hourData.Humidity,
+                WindspeedKmph = (double)hourData.Wind_Kph,
+                WindGustKmph = (double)hourData.Gust_Kph,
+                WinddirDegree = hourData.Wind_Degree,
+                WeatherCode = hourData.Condition?.Code ?? 0,
+                PrecipMM = (double)hourData.Precip_Mm,
+                Visibility = (double)hourData.Vis_Km,
+                Pressure = (double)hourData.Pressure_Mb,
+                Cloudcover = hourData.Cloud,
+                DewPointF = (double)hourData.Dewpoint_F
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching hourly weather data from WeatherAPI for query {Query}", query);
+            return null;
+        }
+    }
+
     // JSON response mapping classes
     private class WeatherApiResponse
     {
@@ -131,6 +206,7 @@ public class WeatherApiService : IWeatherService
     {
         public DayResponse Day { get; set; } = null!;
         public AstroResponse Astro { get; set; } = null!;
+        public List<HourResponse> Hour { get; set; } = new();
     }
 
     private class DayResponse
@@ -144,5 +220,23 @@ public class WeatherApiService : IWeatherService
     {
         public string Sunrise { get; set; } = string.Empty;
         public string Sunset { get; set; } = string.Empty;
+    }
+
+    private class HourResponse
+    {
+        public string Time { get; set; } = string.Empty;
+        public decimal Temp_F { get; set; }
+        public decimal Feelslike_F { get; set; }
+        public decimal Windchill_f { get; set; }
+        public int Humidity { get; set; }
+        public decimal Wind_Kph { get; set; }
+        public decimal Gust_Kph { get; set; }
+        public int Wind_Degree { get; set; }
+        public ConditionResponse Condition { get; set; } = null!;
+        public decimal Precip_Mm { get; set; }
+        public decimal Vis_Km { get; set; }
+        public decimal Pressure_Mb { get; set; }
+        public int Cloud { get; set; }
+        public decimal Dewpoint_F { get; set; }
     }
 }

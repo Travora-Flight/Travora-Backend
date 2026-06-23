@@ -1,4 +1,5 @@
 using Travora.Application.DTOs.External.Airline;
+using Travora.Application.DTOs.Flights;
 
 namespace Travora.Application.Interfaces.External;
 
@@ -12,4 +13,6 @@ public interface IAirlineService
     Task<AirlineBaggageByTicketResponse> GetBaggageByTicketAsync(string ticketNumber, CancellationToken cancellationToken = default);
     Task<AirlineIssueBoardingPassResponse> IssueBoardingPassAsync(string ticketNumber, CancellationToken cancellationToken = default);
     Task<AirlineBaggageAllowanceResponse> GetBaggageAllowanceAsync(string ticketNumber, CancellationToken cancellationToken = default);
+    Task<AirlineSimulationFeaturesResponseDto?> GetDelayPredictionFeaturesAsync(string flightNumber, string departureIataCode, DateTime scheduledDepartureUtc, CancellationToken cancellationToken = default);
 }
+

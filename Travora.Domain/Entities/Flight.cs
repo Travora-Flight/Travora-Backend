@@ -68,7 +68,6 @@ public class Flight : IHasTimestamps
     public Airport? DepartureAirport { get; set; }
     public Airport? ArrivalAirport { get; set; }
     public ICollection<SavedFlight> SavedFlights { get; set; } = new List<SavedFlight>();
-    public ICollection<FlightPrediction> Predictions { get; set; } = new List<FlightPrediction>();
     public ICollection<Order> Orders { get; set; } = new List<Order>();
     public ICollection<BoardingPass> BoardingPasses { get; set; } = new List<BoardingPass>();
 }

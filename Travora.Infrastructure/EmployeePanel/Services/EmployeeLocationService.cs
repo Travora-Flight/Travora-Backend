@@ -55,9 +55,23 @@ public class EmployeeLocationService : IEmployeeLocationService
             };
         }
 
-        var status = request.OrderServiceId.HasValue ? "on_service" : "available";
+        var activeOrderServiceId = request.OrderServiceId;
+        if (!activeOrderServiceId.HasValue)
+        {
+            // Fail-safe: If mobile doesn't supply OrderServiceId, check DB for any InProgress task for this employee
+            var dbActiveTask = await _db.OrderServices
+                .Where(os => os.AssignedEmployeeId == employeeId && os.ServiceStatus == ServiceStatus.InProgress)
+                .Select(os => (int?)os.OrderServiceId)
+                .FirstOrDefaultAsync();
+            if (dbActiveTask.HasValue)
+            {
+                activeOrderServiceId = dbActiveTask;
+            }
+        }
 
-        // 1) Save to Redis (TTL: 2 minutes)
+        var status = activeOrderServiceId.HasValue ? "on_service" : "available";
+
+        // 1) Save to Redis (TTL: 3 minutes)
         var redisValue = JsonSerializer.Serialize(new
         {
             latitude = request.Latitude,
@@ -66,17 +80,17 @@ public class EmployeeLocationService : IEmployeeLocationService
             heading = request.HeadingDegrees,
             isMoving = request.IsMoving,
             updatedAt = request.TrackedAtUtc,
-            orderServiceId = request.OrderServiceId,
+            orderServiceId = activeOrderServiceId,
             status
         });
         await _redis.SetAsync($"employee:{employeeId}:last_location", redisValue, TimeSpan.FromMinutes(3));
 
-        // 2) Save to DB if orderServiceId exists and > 30s since last record
+        // 2) Save to DB if activeOrderServiceId exists and > 30s since last record
         var savedToDb = false;
-        if (request.OrderServiceId.HasValue)
+        if (activeOrderServiceId.HasValue)
         {
             var lastRecord = await _db.DriverTrackings
-                .Where(dt => dt.DriverId == employeeId && dt.OrderServiceId == request.OrderServiceId)
+                .Where(dt => dt.DriverId == employeeId && dt.OrderServiceId == activeOrderServiceId.Value)
                 .OrderByDescending(dt => dt.TrackedAt)
                 .FirstOrDefaultAsync();
 
@@ -85,7 +99,7 @@ public class EmployeeLocationService : IEmployeeLocationService
                 _db.DriverTrackings.Add(new DriverTracking
                 {
                     DriverId = employeeId,
-                    OrderServiceId = request.OrderServiceId,
+                    OrderServiceId = activeOrderServiceId.Value,
                     GpsLatitude = request.Latitude,
                     GpsLongitude = request.Longitude,
                     SpeedKmh = request.SpeedKmh,
@@ -102,12 +116,12 @@ public class EmployeeLocationService : IEmployeeLocationService
 
         // 3) SignalR to Admin Live Tracker
         string currentTask = "";
-        if (request.OrderServiceId.HasValue)
+        if (activeOrderServiceId.HasValue)
         {
             var os = await _db.OrderServices
                 .Include(x => x.PackageService).ThenInclude(ps => ps.Service)
                 .Include(x => x.Order).ThenInclude(o => o.PickupLocation)
-                .FirstOrDefaultAsync(x => x.OrderServiceId == request.OrderServiceId);
+                .FirstOrDefaultAsync(x => x.OrderServiceId == activeOrderServiceId.Value);
             if (os != null)
                 currentTask = $"{os.PackageService.Service.ServiceName} - {os.Order.PickupLocation.City}";
         }

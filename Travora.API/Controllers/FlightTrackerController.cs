@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Mvc;
 using Travora.Application.DTOs.Flights.Tracker;
 using Travora.Application.Interfaces.Services;
 using Travora.Application.DTOs.Customer.Profile;
+using Travora.Domain.Entities;
+using Travora.Domain.Enums;
 
 namespace Travora.API.Controllers;
 
@@ -220,6 +222,44 @@ public class FlightTrackerController : ControllerBase
         }
 
         return Ok(new { success, message });
+    }
+
+    /// <summary>
+    /// Test endpoint to trigger delay prediction for a specific flight.
+    /// </summary>
+    [HttpGet("predict-delay-test")]
+    [AllowAnonymous]
+    public async Task<IActionResult> TestPredictDelay(
+        [FromQuery] string flightNumber,
+        [FromQuery] string departureIata,
+        [FromQuery] string arrivalIata,
+        [FromQuery] DateTime scheduledDepartureUtc,
+        [FromServices] IFlightPredictionService predictionService)
+    {
+        var dummyFlight = new Flight
+        {
+            FlightId = 999999, // dummy ID
+            FlightNumber = flightNumber,
+            DepartureIataCode = departureIata,
+            ArrivalIataCode = arrivalIata,
+            ScheduledDepartureTime = scheduledDepartureUtc,
+            FlightStatus = FlightStatus.Scheduled
+        };
+
+        var predictionResult = await predictionService.PredictAndNotifyFlightDelayAsync(dummyFlight);
+ 
+        return Ok(new 
+        { 
+            message = "Prediction test process executed successfully.",
+            flightNumber,
+            departureIata,
+            scheduledDepartureUtc,
+            prediction = predictionResult != null ? new 
+            {
+                predictedDelayMinutes = predictionResult.PredictedDelayMinutes,
+                status = predictionResult.Status
+            } : null
+        });
     }
 }
 

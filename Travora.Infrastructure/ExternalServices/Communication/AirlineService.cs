@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using Travora.Application.DTOs.External.Airline;
+using Travora.Application.DTOs.Flights;
 using Travora.Application.Interfaces.External;
 
 namespace Travora.Infrastructure.ExternalServices.Communication;
@@ -194,5 +195,21 @@ public class AirlineService : IAirlineService
         var result = System.Text.Json.JsonSerializer.Deserialize<AirlineBaggageAllowanceResponse>(json, options);
 
         return result ?? new AirlineBaggageAllowanceResponse { TicketNumber = ticketNumber, AllowedBaggageCount = 0 };
+    }
+
+    public async Task<AirlineSimulationFeaturesResponseDto?> GetDelayPredictionFeaturesAsync(string flightNumber, string departureIataCode, DateTime scheduledDepartureUtc, CancellationToken cancellationToken = default)
+    {
+        var formattedTime = scheduledDepartureUtc.ToString("yyyy-MM-ddTHH:mm:ssZ");
+        var url = $"/api/airline/flights/delay-prediction-features?flightNumber={Uri.EscapeDataString(flightNumber)}&departureIataCode={Uri.EscapeDataString(departureIataCode)}&scheduledDepartureUtc={Uri.EscapeDataString(formattedTime)}";
+        
+        var response = await _httpClient.GetAsync(url, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        var options = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        return System.Text.Json.JsonSerializer.Deserialize<AirlineSimulationFeaturesResponseDto>(json, options);
     }
 }

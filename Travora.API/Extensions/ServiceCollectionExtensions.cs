@@ -72,6 +72,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAdminCheckpointService, Travora.Infrastructure.AdminPanel.Services.AdminCheckpointService>();
         services.AddScoped<IReportGeneratorJob, Travora.Infrastructure.BackgroundJobs.ReportGeneratorJob>();
         services.AddScoped<IFlightStatusUpdaterJob, Travora.Infrastructure.BackgroundJobs.FlightStatusUpdaterJob>();
+        services.AddScoped<IFlightDelayPredictionJob, Travora.Infrastructure.BackgroundJobs.FlightDelayPredictionJob>();
+        services.AddScoped<IFlightPredictionService, Travora.Infrastructure.Services.FlightPredictionService>();
 
         // Employee Services
         services.AddScoped<IEmployeeDashboardService, Travora.Infrastructure.EmployeePanel.Services.EmployeeDashboardService>();
