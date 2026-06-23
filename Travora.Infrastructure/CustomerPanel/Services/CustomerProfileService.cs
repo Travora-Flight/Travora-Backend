@@ -209,11 +209,10 @@ public class CustomerProfileService : ICustomerProfileService
             string name        = o.Package?.PackageName ?? "";
             string packageType = "unknown";
 
-            if      (name.Contains("Door To Door",    StringComparison.OrdinalIgnoreCase)) packageType = "door_to_door";
-            else if (name.Contains("To Airport",      StringComparison.OrdinalIgnoreCase)) packageType = "car_service";
-            else if (name.Contains("From Airport",    StringComparison.OrdinalIgnoreCase)) packageType = "car_service";
-            else if (name.Contains("Car Service",     StringComparison.OrdinalIgnoreCase)) packageType = "car_service";
-            else if (name.Contains("Track My Bags",   StringComparison.OrdinalIgnoreCase)) packageType = "bag_tracking";
+            if      (name.Contains("Door To Door",       StringComparison.OrdinalIgnoreCase)) packageType = "door_to_door";
+            else if (name.Contains("Pickup Service",     StringComparison.OrdinalIgnoreCase)) packageType = "car_service";
+            else if (name.Contains("Delivery Service",   StringComparison.OrdinalIgnoreCase)) packageType = "car_service";
+            else if (name.Contains("Track My Bags",      StringComparison.OrdinalIgnoreCase)) packageType = "bag_tracking";
 
             return new CustomerOrderDto
             {
