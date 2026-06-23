@@ -679,7 +679,7 @@ public class CustomerOrderService : ICustomerOrderService
         if (type == RescheduleType.Pickup)
         {
             if (packageName != PackageNames.DoorToDoor && packageName != PackageNames.CarServiceToAirport)
-                return new AvailableDatesResponse { IsValid = false, ErrorMessage = "Rescheduling pickup is only available for Door to Door or Car Service to Airport services" };
+                return new AvailableDatesResponse { IsValid = false, ErrorMessage = "Rescheduling pickup is only available for Door to Door or Pickup Service" };
 
             var departureTime = order.Flight.ScheduledDepartureTime;
             var today = DateTime.UtcNow.Date;
@@ -710,7 +710,7 @@ public class CustomerOrderService : ICustomerOrderService
         else if (type == RescheduleType.Delivery)
         {
             if (packageName != PackageNames.DoorToDoor && packageName != PackageNames.CarServiceFromAirport)
-                return new AvailableDatesResponse { IsValid = false, ErrorMessage = "Rescheduling delivery is only available for Door to Door or Car Service from Airport services" };
+                return new AvailableDatesResponse { IsValid = false, ErrorMessage = "Rescheduling delivery is only available for Door to Door or Delivery Service" };
 
             var arrivalTime = order.Flight.ScheduledArrivalTime;
             var executionStart = arrivalTime.AddHours(4);
@@ -761,12 +761,12 @@ public class CustomerOrderService : ICustomerOrderService
         if (type == RescheduleType.Pickup)
         {
             if (packageName != PackageNames.DoorToDoor && packageName != PackageNames.CarServiceToAirport)
-                return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Rescheduling pickup is only available for Door to Door or Car Service to Airport services" };
+                return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Rescheduling pickup is only available for Door to Door or Pickup Service" };
         }
         else if (type == RescheduleType.Delivery)
         {
             if (packageName != PackageNames.DoorToDoor && packageName != PackageNames.CarServiceFromAirport)
-                return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Rescheduling delivery is only available for Door to Door or Car Service from Airport services" };
+                return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Rescheduling delivery is only available for Door to Door or Delivery Service" };
         }
         else
         {
@@ -902,12 +902,12 @@ public class CustomerOrderService : ICustomerOrderService
         if (request.Type == RescheduleType.Pickup)
         {
             if (packageName != PackageNames.DoorToDoor && packageName != PackageNames.CarServiceToAirport)
-                return new RescheduleResponse { Success = false, Message = "Rescheduling pickup is only available for Door to Door or Car Service to Airport services" };
+                return new RescheduleResponse { Success = false, Message = "Rescheduling pickup is only available for Door to Door or Pickup Service" };
         }
         else if (request.Type == RescheduleType.Delivery)
         {
             if (packageName != PackageNames.DoorToDoor && packageName != PackageNames.CarServiceFromAirport)
-                return new RescheduleResponse { Success = false, Message = "Rescheduling delivery is only available for Door to Door or Car Service from Airport services" };
+                return new RescheduleResponse { Success = false, Message = "Rescheduling delivery is only available for Door to Door or Delivery Service" };
         }
         else
         {
