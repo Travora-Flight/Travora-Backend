@@ -129,7 +129,8 @@ public class AdminLiveTrackerService : IAdminLiveTrackerService
             SpeedKmh = speedKmh,
             IsMoving = isMoving,
             Heading = heading,
-            LastUpdated = lastUpdated
+            LastUpdated = lastUpdated,
+            Location = parsed?.LocationDescription ?? "Unknown"
         };
     }
 }

@@ -4,6 +4,7 @@ using Travora.Application.Interfaces;
 using Travora.Application.DTOs.Employee.Location;
 using Travora.Application.Interfaces.Hubs;
 using Travora.Application.Interfaces.Services.Employee;
+using Travora.Application.Interfaces.External;
 using Travora.Domain.Entities;
 using Travora.Domain.Enums;
 using Travora.Infrastructure.Data;
@@ -15,15 +16,18 @@ public class EmployeeLocationService : IEmployeeLocationService
     private readonly ApplicationDbContext _db;
     private readonly IUpstashRedisService _redis;
     private readonly ILiveTrackingHubService _liveTrackingHub;
+    private readonly IGeocodingService _geocodingService;
 
     public EmployeeLocationService(
         ApplicationDbContext db,
         IUpstashRedisService redis,
-        ILiveTrackingHubService liveTrackingHub)
+        ILiveTrackingHubService liveTrackingHub,
+        IGeocodingService geocodingService)
     {
         _db = db;
         _redis = redis;
         _liveTrackingHub = liveTrackingHub;
+        _geocodingService = geocodingService;
     }
 
     public async Task<DriverLocationResponse> UpdateLocationAsync(int employeeId, DriverLocationRequest request)
@@ -71,6 +75,24 @@ public class EmployeeLocationService : IEmployeeLocationService
 
         var status = activeOrderServiceId.HasValue ? "on_service" : "available";
 
+        // Reverse geocode latitude and longitude to a real location name
+        string? locationDesc = "Unknown";
+        if (request.Latitude != 0 || request.Longitude != 0)
+        {
+            try
+            {
+                var geoResult = await _geocodingService.ReverseGeocodeAsync((double)request.Latitude, (double)request.Longitude);
+                if (geoResult != null && !string.IsNullOrEmpty(geoResult.FormattedAddress))
+                {
+                    locationDesc = geoResult.FormattedAddress;
+                }
+            }
+            catch
+            {
+                // Ignore geocoding exceptions to prevent location updates from failing
+            }
+        }
+
         // 1) Save to Redis (TTL: 3 minutes)
         var redisValue = JsonSerializer.Serialize(new
         {
@@ -81,7 +103,8 @@ public class EmployeeLocationService : IEmployeeLocationService
             isMoving = request.IsMoving,
             updatedAt = request.TrackedAtUtc,
             orderServiceId = activeOrderServiceId,
-            status
+            status,
+            location = locationDesc
         });
         await _redis.SetAsync($"employee:{employeeId}:last_location", redisValue, TimeSpan.FromMinutes(3));
 
@@ -134,7 +157,8 @@ public class EmployeeLocationService : IEmployeeLocationService
             longitude = request.Longitude,
             status,
             currentTask,
-            lastUpdated = "Just now"
+            lastUpdated = "Just now",
+            location = locationDesc
         });
 
         return new DriverLocationResponse

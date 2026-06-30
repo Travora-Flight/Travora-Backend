@@ -13,4 +13,5 @@ public class EmployeeLocationDetailResponse
     public bool IsMoving { get; set; }
     public decimal? Heading { get; set; }
     public string LastUpdated { get; set; } = string.Empty;
+    public string? Location { get; set; }
 }
