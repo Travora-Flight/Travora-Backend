@@ -28,13 +28,13 @@ public class AuthService : IAuthService
         if (admin == null)
         {
             await LogLogin(null, null, null, UserType.Admin, LoginStatus.Failed, "Invalid credentials", ipAddress, userAgent);
-            throw new UnauthorizedAccessException("Invalid credentials");
+            throw new UnauthorizedAccessException("Incorrect email or password");
         }
 
         if (!BCrypt.Net.BCrypt.Verify(password, admin.PasswordHash))
         {
             await LogLogin(admin.AdminId, null, null, UserType.Admin, LoginStatus.Failed, "Invalid credentials", ipAddress, userAgent);
-            throw new UnauthorizedAccessException("Invalid credentials");
+            throw new UnauthorizedAccessException("Incorrect email or password");
         }
 
         if (!admin.IsActive)
@@ -73,7 +73,7 @@ public class AuthService : IAuthService
         if (employee == null)
         {
             await LogLogin(null, null, null, UserType.Employee, LoginStatus.Failed, "Invalid credentials", ipAddress, userAgent);
-            throw new UnauthorizedAccessException("Invalid credentials");
+            throw new UnauthorizedAccessException("Incorrect email or password");
         }
 
         if (employee.IsFirstLogin)
@@ -81,7 +81,7 @@ public class AuthService : IAuthService
             if (string.IsNullOrEmpty(employee.TempPassword) || !BCrypt.Net.BCrypt.Verify(password, employee.TempPassword))
             {
                 await LogLogin(null, null, employee.EmployeeId, UserType.Employee, LoginStatus.Failed, "Invalid credentials", ipAddress, userAgent);
-                throw new UnauthorizedAccessException("Invalid credentials");
+                throw new UnauthorizedAccessException("Incorrect email or password");
             }
         }
         else
@@ -89,7 +89,7 @@ public class AuthService : IAuthService
             if (string.IsNullOrEmpty(employee.PasswordHash) || !BCrypt.Net.BCrypt.Verify(password, employee.PasswordHash))
             {
                 await LogLogin(null, null, employee.EmployeeId, UserType.Employee, LoginStatus.Failed, "Invalid credentials", ipAddress, userAgent);
-                throw new UnauthorizedAccessException("Invalid credentials");
+                throw new UnauthorizedAccessException("Incorrect email or password");
             }
         }
 
@@ -128,13 +128,13 @@ public class AuthService : IAuthService
         if (customer == null)
         {
             await LogLogin(null, null, null, UserType.Customer, LoginStatus.Failed, "Invalid credentials", ipAddress, userAgent);
-            throw new UnauthorizedAccessException("Invalid credentials");
+            throw new UnauthorizedAccessException("Incorrect email or password");
         }
 
         if (!BCrypt.Net.BCrypt.Verify(password, customer.PasswordHash))
         {
             await LogLogin(null, customer.CustomerId, null, UserType.Customer, LoginStatus.Failed, "Invalid credentials", ipAddress, userAgent);
-            throw new UnauthorizedAccessException("Invalid credentials");
+            throw new UnauthorizedAccessException("Incorrect email or password");
         }
 
         if (!customer.IsActive)

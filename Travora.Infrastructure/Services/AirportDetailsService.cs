@@ -143,9 +143,10 @@ public class AirportDetailsService : IAirportDetailsService
 
         var flights = departures.Concat(arrivals).OrderBy(f => f.ScheduledTime).ToList();
 
-        // 2) Enrich flights with matching airline logos from local DB
+        // 2) Enrich flights with matching airline logos and city names from local DB
         if (flights.Any())
         {
+            // 2a) Enrich flights with matching airline logos
             var airlineIatas = flights.Select(f => f.AirlineIata).Where(code => !string.IsNullOrEmpty(code)).Distinct().ToList();
             if (airlineIatas.Any())
             {
@@ -171,6 +172,40 @@ public class AirportDetailsService : IAirportDetailsService
                     else if (!string.IsNullOrEmpty(f.AirlineIata))
                     {
                         f.AirlineLogoUrl = $"https://pics.avs.io/200/200/{f.AirlineIata.ToUpper()}@2x.png";
+                    }
+                }
+            }
+
+            // 2b) Enrich flights with destination city names
+            var destinationIatas = flights.Select(f => f.Destination).Where(code => !string.IsNullOrEmpty(code)).Distinct().ToList();
+            if (destinationIatas.Any())
+            {
+                var airportsList = await _db.Airports
+                    .Include(a => a.City)
+                    .Where(a => destinationIatas.Contains(a.CodeIataAirport))
+                    .ToListAsync();
+
+                var airportsDict = new Dictionary<string, Airport>(StringComparer.OrdinalIgnoreCase);
+                foreach (var airportItem in airportsList)
+                {
+                    if (!string.IsNullOrEmpty(airportItem.CodeIataAirport))
+                    {
+                        airportsDict.TryAdd(airportItem.CodeIataAirport, airportItem);
+                    }
+                }
+
+                foreach (var f in flights)
+                {
+                    if (airportsDict.TryGetValue(f.Destination, out var matchedAirport))
+                    {
+                        f.City = matchedAirport.City != null
+                            ? $"{matchedAirport.City.NameCity}, {matchedAirport.CodeIso2Country}"
+                            : matchedAirport.CodeIso2Country;
+                    }
+                    else
+                    {
+                        // Fallback if not found in db, just use Destination code
+                        f.City = f.Destination;
                     }
                 }
             }

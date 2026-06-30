@@ -112,7 +112,14 @@ public class EmployeeBaggageService : IEmployeeBaggageService
         if (!string.IsNullOrEmpty(tag.TagNumber))
         {
             var existingBag = await _db.Baggages
-                .FirstOrDefaultAsync(b => b.BaggageNumber == tag.TagNumber && b.BaggageId != baggage.BaggageId);
+                .Include(b => b.Order)
+                .FirstOrDefaultAsync(b => b.BaggageNumber == tag.TagNumber 
+                                          && b.BaggageId != baggage.BaggageId
+                                          && b.Order.OrderStatus != OrderStatus.Cancelled
+                                          && b.Order.OrderStatus != OrderStatus.Completed
+                                          && (b.Order.CustomerId != orderService.Order.CustomerId 
+                                              || b.OrderId == baggage.OrderId));
+
             if (existingBag != null)
                 throw new InvalidOperationException($"Tag number {tag.TagNumber} is already assigned to another baggage");
         }
@@ -386,8 +393,8 @@ public class EmployeeBaggageService : IEmployeeBaggageService
         if (baggage.SecurityLocks.Any(l => l.IsActive))
             throw new InvalidOperationException("This bag is already linked to an active lock.");
 
-        if (string.IsNullOrWhiteSpace(request.LockCode) || request.LockCode.Length != 9 || !request.LockCode.StartsWith("112371"))
-            throw new InvalidOperationException("Invalid lock code, it must consist of 9 digits and start with 112371.");
+        if (string.IsNullOrWhiteSpace(request.LockCode) || request.LockCode.Length != 7)
+            throw new InvalidOperationException("Invalid lock code, it must consist of 7 digits.");
 
         if (!request.LockCode.All(char.IsDigit))
             throw new InvalidOperationException("Lock code must contain digits only.");

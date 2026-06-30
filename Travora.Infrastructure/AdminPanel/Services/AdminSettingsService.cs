@@ -83,11 +83,17 @@ public class AdminSettingsService : IAdminSettingsService
         if (request.NewPassword != request.ConfirmPassword)
             throw new InvalidOperationException("New passwords do not match");
 
+        if (request.CurrentPassword == request.NewPassword)
+            throw new InvalidOperationException("New password cannot be the same as the current password");
+
         var admin = await _db.Admins.FindAsync(adminId)
             ?? throw new KeyNotFoundException("Admin not found");
 
         if (!BCrypt.Net.BCrypt.Verify(request.CurrentPassword, admin.PasswordHash))
             throw new InvalidOperationException("Invalid current password");
+
+        if (BCrypt.Net.BCrypt.Verify(request.NewPassword, admin.PasswordHash))
+            throw new InvalidOperationException("New password cannot be the same as the current password");
 
         admin.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
         await _db.SaveChangesAsync();

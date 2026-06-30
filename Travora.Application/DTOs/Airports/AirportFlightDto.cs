@@ -16,4 +16,5 @@ public class AirportFlightDto
     public string AirlineName { get; set; } = string.Empty;
     public string AirlineIata { get; set; } = string.Empty;
     public string? AirlineLogoUrl { get; set; }
+    public string City { get; set; } = string.Empty;
 }
