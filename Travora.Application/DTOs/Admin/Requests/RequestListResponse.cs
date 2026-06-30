@@ -8,4 +8,5 @@ public class RequestListResponse
     public string Status { get; set; } = string.Empty;
     public string AssignedEmployee { get; set; } = string.Empty;
     public string Time { get; set; } = string.Empty;
+    public string Date { get; set; } = string.Empty;
 }

@@ -20,6 +20,7 @@ public class AdminRequestService : IAdminRequestService
     {
         var query = _db.Orders
             .Include(o => o.Customer)
+            .Include(o => o.Package)
             .Include(o => o.OrderServices)
                 .ThenInclude(os => os.AssignedEmployee)
             .AsQueryable();
@@ -61,12 +62,15 @@ public class AdminRequestService : IAdminRequestService
             {
                 OrderId = o.OrderId,
                 ClientName = o.Customer != null ? $"{o.Customer.Firstname} {o.Customer.Lastname}" : "Unknown",
-                Type = o.PackageId > 0 ? "package_service" : "service",
+                Type = o.Package != null ? o.Package.PackageName : "Unknown",
                 Status = o.OrderStatus.ToString().ToLower(),
-                AssignedEmployee = o.OrderServices.FirstOrDefault(os => os.AssignedEmployee != null) != null
-                    ? (o.OrderServices.FirstOrDefault(os => os.AssignedEmployee != null)!.AssignedEmployee!.Firstname + " " + o.OrderServices.FirstOrDefault(os => os.AssignedEmployee != null)!.AssignedEmployee!.Lastname)
-                    : "Not Assigned",
-                Time = o.CreatedAt.ToString("hh:mm tt")
+                AssignedEmployee = (o.Package != null && o.Package.PackageCode == Travora.Domain.Constants.PackageCodes.TrackingBaggage)
+                    ? "not required"
+                    : (o.OrderServices.FirstOrDefault(os => os.AssignedEmployee != null) != null
+                        ? (o.OrderServices.FirstOrDefault(os => os.AssignedEmployee != null)!.AssignedEmployee!.Firstname + " " + o.OrderServices.FirstOrDefault(os => os.AssignedEmployee != null)!.AssignedEmployee!.Lastname)
+                        : "Not Assigned"),
+                Time = o.CreatedAt.ToString("HH:mm:ss"),
+                Date = o.CreatedAt.ToString("yyyy-MM-dd")
             })
             .ToListAsync();
 

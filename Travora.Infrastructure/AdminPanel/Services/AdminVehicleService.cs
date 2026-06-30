@@ -68,6 +68,25 @@ public class AdminVehicleService : IAdminVehicleService
 
     public async Task<VehicleResponse> CreateVehicleAsync(CreateVehicleRequest request)
     {
+        if (string.IsNullOrWhiteSpace(request.PlateNumber))
+            throw new InvalidOperationException("Plate number is required");
+        if (string.IsNullOrWhiteSpace(request.Brand))
+            throw new InvalidOperationException("Brand is required");
+        if (string.IsNullOrWhiteSpace(request.Model))
+            throw new InvalidOperationException("Model is required");
+        if (string.IsNullOrWhiteSpace(request.Color))
+            throw new InvalidOperationException("Color is required");
+
+        if (!request.Year.HasValue)
+            throw new InvalidOperationException("Manufacturing year is required");
+        if (request.Year.Value > DateTime.UtcNow.Year)
+            throw new InvalidOperationException($"Manufacturing year cannot be in the future (greater than {DateTime.UtcNow.Year})");
+
+        if (!request.Capacity.HasValue)
+            throw new InvalidOperationException("Capacity is required");
+        if (request.Capacity.Value <= 0)
+            throw new InvalidOperationException("Capacity must be greater than 0");
+
         if (await _db.Vehicles.AnyAsync(v => v.PlateNumber == request.PlateNumber))
             throw new InvalidOperationException("Plate number already exists");
 
@@ -76,9 +95,9 @@ public class AdminVehicleService : IAdminVehicleService
             PlateNumber = request.PlateNumber,
             Brand = request.Brand,
             Model = request.Model,
-            Year = request.Year,
+            Year = request.Year.Value,
             Color = request.Color,
-            Capacity = request.Capacity,
+            Capacity = request.Capacity.Value,
             IsActive = request.IsActive,
             IsDeleted = false,
             CreatedAt = DateTime.UtcNow
@@ -95,19 +114,56 @@ public class AdminVehicleService : IAdminVehicleService
         var vehicle = await _db.Vehicles.FindAsync(id)
             ?? throw new KeyNotFoundException("Vehicle not found");
 
-        if (!string.IsNullOrEmpty(request.PlateNumber) && request.PlateNumber != vehicle.PlateNumber)
+        if (request.PlateNumber != null)
         {
-            if (await _db.Vehicles.AnyAsync(v => v.PlateNumber == request.PlateNumber))
-                throw new InvalidOperationException("Plate number already exists");
-            vehicle.PlateNumber = request.PlateNumber;
+            if (string.IsNullOrWhiteSpace(request.PlateNumber))
+                throw new InvalidOperationException("Plate number cannot be empty");
+
+            if (request.PlateNumber != vehicle.PlateNumber)
+            {
+                if (await _db.Vehicles.AnyAsync(v => v.PlateNumber == request.PlateNumber))
+                    throw new InvalidOperationException("Plate number already exists");
+                vehicle.PlateNumber = request.PlateNumber;
+            }
         }
 
-        if (!string.IsNullOrEmpty(request.Brand)) vehicle.Brand = request.Brand;
-        if (!string.IsNullOrEmpty(request.Model)) vehicle.Model = request.Model;
-        if (request.Year.HasValue) vehicle.Year = request.Year.Value;
-        if (!string.IsNullOrEmpty(request.Color)) vehicle.Color = request.Color;
-        if (request.Capacity.HasValue) vehicle.Capacity = request.Capacity.Value;
-        if (request.IsActive.HasValue) vehicle.IsActive = request.IsActive.Value;
+        if (request.Brand != null)
+        {
+            if (string.IsNullOrWhiteSpace(request.Brand))
+                throw new InvalidOperationException("Brand cannot be empty");
+            vehicle.Brand = request.Brand;
+        }
+
+        if (request.Model != null)
+        {
+            if (string.IsNullOrWhiteSpace(request.Model))
+                throw new InvalidOperationException("Model cannot be empty");
+            vehicle.Model = request.Model;
+        }
+
+        if (request.Color != null)
+        {
+            if (string.IsNullOrWhiteSpace(request.Color))
+                throw new InvalidOperationException("Color cannot be empty");
+            vehicle.Color = request.Color;
+        }
+
+        if (request.Year.HasValue)
+        {
+            if (request.Year.Value > DateTime.UtcNow.Year)
+                throw new InvalidOperationException($"Manufacturing year cannot be in the future (greater than {DateTime.UtcNow.Year})");
+            vehicle.Year = request.Year.Value;
+        }
+
+        if (request.Capacity.HasValue)
+        {
+            if (request.Capacity.Value <= 0)
+                throw new InvalidOperationException("Capacity must be greater than 0");
+            vehicle.Capacity = request.Capacity.Value;
+        }
+
+        if (request.IsActive.HasValue) 
+            vehicle.IsActive = request.IsActive.Value;
 
         vehicle.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();

@@ -116,6 +116,7 @@ public class AdminDashboardService : IAdminDashboardService
                 .FirstOrDefault();
 
             var (status, statusCode) = MapOrderStatus(o.OrderStatus);
+            var isBagTracking = o.Package != null && o.Package.PackageCode == Travora.Domain.Constants.PackageCodes.TrackingBaggage;
 
             return new RecentOrderItem
             {
@@ -124,11 +125,13 @@ public class AdminDashboardService : IAdminDashboardService
                 Type = o.Package?.PackageName ?? "Service",
                 Status = status,
                 StatusCode = statusCode,
-                EmployeeName = lastService?.AssignedEmployee != null
-                    ? $"{lastService.AssignedEmployee.Firstname} {lastService.AssignedEmployee.Lastname}"
-                    : null,
-                Time = o.CreatedAt.ToString("hh:mm tt"),
-                Date = o.CreatedAt.ToString("dd/MM")
+                EmployeeName = isBagTracking
+                    ? "not required"
+                    : (lastService?.AssignedEmployee != null
+                        ? $"{lastService.AssignedEmployee.Firstname} {lastService.AssignedEmployee.Lastname}"
+                        : null),
+                Time = o.CreatedAt.ToString("HH:mm:ss"),
+                Date = o.CreatedAt.ToString("yyyy-MM-dd")
             };
         }).ToList();
 
