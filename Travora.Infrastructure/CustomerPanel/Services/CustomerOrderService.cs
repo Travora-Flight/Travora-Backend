@@ -13,6 +13,7 @@ using Travora.Application.Interfaces.Services.Customer;
 using Travora.Domain.Constants;
 using Travora.Domain.Enums;
 using Travora.Infrastructure.Data;
+using Travora.Infrastructure.Helpers;
 
 namespace Travora.Infrastructure.CustomerPanel.Services;
 
@@ -192,7 +193,8 @@ public class CustomerOrderService : ICustomerOrderService
     {
         var order = await _context.Orders
             .Include(o => o.Package)
-            .Include(o => o.Flight)
+            .Include(o => o.Flight).ThenInclude(f => f.DepartureAirport)
+            .Include(o => o.Flight).ThenInclude(f => f.ArrivalAirport)
             .Include(o => o.PickupLocation)
             .Include(o => o.DeliveryLocation)
             .Include(o => o.OrderCompanions).ThenInclude(oc => oc.Companion)
@@ -464,36 +466,43 @@ public class CustomerOrderService : ICustomerOrderService
         bool hasBoardingPass = packageName is PackageNames.DoorToDoor or PackageNames.CarServiceToAirport;
 
         // --- Appointment ---
+        // Dates are stored as UTC-midnight-local; convert back to airport local before formatting
+        var depAirport = order.Flight?.DepartureAirport;
+        var arrAirport = order.Flight?.ArrivalAirport;
+
         AppointmentDto? appointment = null;
         if (packageName != PackageNames.TrackingBaggage)
         {
             if (packageName == PackageNames.CarServiceFromAirport)
             {
+                var localDeliveryDate = TimezoneHelper.ConvertUtcToAirportLocal(arrAirport, order.DeliveryDate);
                 appointment = new AppointmentDto
                 {
                     Delivery = new AppointmentSlot
                     {
-                        Date = order.DeliveryDate.ToString("dddd, MMMM dd, yyyy"),
+                        Date = localDeliveryDate.ToString("dddd, MMMM dd, yyyy"),
                         Time = FormatSlotTime(order.DeliveryTimeSlot)
                     }
                 };
             }
             else
             {
+                var localPickupDate = TimezoneHelper.ConvertUtcToAirportLocal(depAirport, order.PickupDate);
                 appointment = new AppointmentDto
                 {
                     Pickup = new AppointmentSlot
                     {
-                        Date = order.PickupDate.ToString("dddd, MMMM dd, yyyy"),
+                        Date = localPickupDate.ToString("dddd, MMMM dd, yyyy"),
                         Time = FormatSlotTime(order.PickupTimeSlot)
                     }
                 };
 
                 if (packageName == PackageNames.DoorToDoor)
                 {
+                    var localDeliveryDate = TimezoneHelper.ConvertUtcToAirportLocal(arrAirport, order.DeliveryDate);
                     appointment.Delivery = new AppointmentSlot
                     {
-                        Date = order.DeliveryDate.ToString("dddd, MMMM dd, yyyy"),
+                        Date = localDeliveryDate.ToString("dddd, MMMM dd, yyyy"),
                         Time = FormatSlotTime(order.DeliveryTimeSlot)
                     };
                 }
@@ -661,7 +670,8 @@ public class CustomerOrderService : ICustomerOrderService
     {
         var order = await _context.Orders
             .Include(o => o.Package)
-            .Include(o => o.Flight)
+            .Include(o => o.Flight).ThenInclude(f => f.DepartureAirport)
+            .Include(o => o.Flight).ThenInclude(f => f.ArrivalAirport)
             .AsNoTracking()
             .FirstOrDefaultAsync(o => o.OrderId == orderId, cancellationToken);
 
@@ -682,22 +692,26 @@ public class CustomerOrderService : ICustomerOrderService
                 return new AvailableDatesResponse { IsValid = false, ErrorMessage = "Rescheduling pickup is only available for Door to Door or Pickup Service" };
 
             var departureTime = order.Flight.ScheduledDepartureTime;
-            var today = DateTime.UtcNow.Date;
-            var flightDate = departureTime.Date;
+            var airport = order.Flight.DepartureAirport;
 
-            if (flightDate < today)
+            var nowLocal = TimezoneHelper.ConvertUtcToAirportLocal(airport, DateTime.UtcNow);
+            var todayLocal = nowLocal.Date;
+            var flightDateLocal = TimezoneHelper.ConvertUtcToAirportLocal(airport, departureTime).Date;
+
+            if (flightDateLocal < todayLocal)
                 return new AvailableDatesResponse { IsValid = false, ErrorMessage = "The flight date has already passed" };
 
-            var windowStart = flightDate.AddDays(-4);
-            var startDate = windowStart < today ? today : windowStart;
+            var windowStartLocal = flightDateLocal.AddDays(-4);
+            var startDateLocal = windowStartLocal < todayLocal ? todayLocal : windowStartLocal;
 
             var availableDates = new List<DateTime>();
-            for (var d = startDate; d <= flightDate; d = d.AddDays(1))
+            for (var d = startDateLocal; d <= flightDateLocal; d = d.AddDays(1))
             {
+                var slotDateUtc = TimezoneHelper.ConvertAirportLocalToUtc(airport, d.Date);
                 // Must be at least 12 hours before departure
-                if ((departureTime - d.Date).TotalHours >= 12)
+                if ((departureTime - slotDateUtc).TotalHours >= 12)
                 {
-                    availableDates.Add(d);
+                    availableDates.Add(slotDateUtc);
                 }
             }
 
@@ -713,16 +727,22 @@ public class CustomerOrderService : ICustomerOrderService
                 return new AvailableDatesResponse { IsValid = false, ErrorMessage = "Rescheduling delivery is only available for Door to Door or Delivery Service" };
 
             var arrivalTime = order.Flight.ScheduledArrivalTime;
-            var executionStart = arrivalTime.AddHours(4);
-            var executionEnd = executionStart.AddDays(4);
-            var today = DateTime.UtcNow.Date;
+            var airport = order.Flight.ArrivalAirport;
 
-            var startDate = executionStart.Date < today ? today : executionStart.Date;
+            var executionStartUtc = arrivalTime.AddHours(4);
+            var executionStartLocal = TimezoneHelper.ConvertUtcToAirportLocal(airport, executionStartUtc);
+            var executionEndLocal = executionStartLocal.AddDays(4);
+
+            var nowLocal = TimezoneHelper.ConvertUtcToAirportLocal(airport, DateTime.UtcNow);
+            var todayLocal = nowLocal.Date;
+
+            var startDateLocal = executionStartLocal.Date < todayLocal ? todayLocal : executionStartLocal.Date;
             var availableDates = new List<DateTime>();
 
-            for (var d = startDate; d <= executionEnd.Date; d = d.AddDays(1))
+            for (var d = startDateLocal; d <= executionEndLocal.Date; d = d.AddDays(1))
             {
-                availableDates.Add(d);
+                var slotDateUtc = TimezoneHelper.ConvertAirportLocalToUtc(airport, d.Date);
+                availableDates.Add(slotDateUtc);
             }
 
             return new AvailableDatesResponse
@@ -743,7 +763,8 @@ public class CustomerOrderService : ICustomerOrderService
     {
         var order = await _context.Orders
             .Include(o => o.Package)
-            .Include(o => o.Flight)
+            .Include(o => o.Flight).ThenInclude(f => f.DepartureAirport)
+            .Include(o => o.Flight).ThenInclude(f => f.ArrivalAirport)
             .AsNoTracking()
             .FirstOrDefaultAsync(o => o.OrderId == orderId, cancellationToken);
 
@@ -773,8 +794,15 @@ public class CustomerOrderService : ICustomerOrderService
             return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Invalid reschedule type" };
         }
 
-        var today = DateTime.UtcNow.Date;
-        if (date.Date < today)
+        var airport = type == RescheduleType.Pickup 
+            ? order.Flight.DepartureAirport 
+            : order.Flight.ArrivalAirport;
+
+        var nowLocal = TimezoneHelper.ConvertUtcToAirportLocal(airport, DateTime.UtcNow);
+        var todayLocal = nowLocal.Date;
+        var localSelectedDate = TimezoneHelper.ConvertUtcToAirportLocal(airport, date).Date;
+
+        if (localSelectedDate < todayLocal)
             return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Cannot select a date in the past" };
 
         var response = new AvailableSlotsResponse { IsValid = true };
@@ -784,36 +812,38 @@ public class CustomerOrderService : ICustomerOrderService
         if (type == RescheduleType.Pickup)
         {
             var departureTime = order.Flight.ScheduledDepartureTime;
-            if ((departureTime - date.Date).TotalHours < 12)
+            if ((departureTime - date).TotalHours < 12)
                 return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Booking must be made at least 12 hours before departure" };
 
-            var flightDate = departureTime.Date;
-            if (date.Date > flightDate)
+            var flightDateLocal = TimezoneHelper.ConvertUtcToAirportLocal(airport, departureTime).Date;
+            if (localSelectedDate > flightDateLocal)
                 return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Booking cannot be made after the flight date" };
 
-            if (date.Date == flightDate)
+            if (localSelectedDate == flightDateLocal)
             {
                 var cutoffUtc = departureTime.AddHours(-12);
-                cutoffTimeSpan = cutoffUtc.TimeOfDay;
-                response.CutoffTime = cutoffTimeSpan.Value.ToString(@"hh\:mm");
+                var cutoffLocal = TimezoneHelper.ConvertUtcToAirportLocal(airport, cutoffUtc);
+                cutoffTimeSpan = cutoffLocal.TimeOfDay;
+                response.CutoffTime = cutoffUtc.ToString(@"HH\:mm");
                 response.Note = $"The last available slot must end before {response.CutoffTime}";
             }
         }
         else // Delivery
         {
             var arrivalTime = order.Flight.ScheduledArrivalTime;
-            var executionStart = arrivalTime.AddHours(4);
-            var executionEnd = executionStart.AddDays(4);
+            var executionStartUtc = arrivalTime.AddHours(4);
+            var executionStartLocal = TimezoneHelper.ConvertUtcToAirportLocal(airport, executionStartUtc);
+            var executionEndLocal = executionStartLocal.AddDays(4);
 
-            if (date.Date < executionStart.Date)
-                return new AvailableSlotsResponse { IsValid = false, ErrorMessage = $"Cannot select a date before the earliest arrival-based window ({executionStart:yyyy-MM-dd})" };
+            if (localSelectedDate < executionStartLocal.Date)
+                return new AvailableSlotsResponse { IsValid = false, ErrorMessage = $"Cannot select a date before the earliest arrival-based window ({executionStartLocal:yyyy-MM-dd})" };
 
-            if (date.Date > executionEnd.Date)
-                return new AvailableSlotsResponse { IsValid = false, ErrorMessage = $"Cannot book more than 4 days after delivery start window ({executionEnd:yyyy-MM-dd})" };
+            if (localSelectedDate > executionEndLocal.Date)
+                return new AvailableSlotsResponse { IsValid = false, ErrorMessage = $"Cannot book more than 4 days after delivery start window ({executionEndLocal:yyyy-MM-dd})" };
 
-            if (date.Date == executionStart.Date)
+            if (localSelectedDate == executionStartLocal.Date)
             {
-                startAfterTimeSpan = executionStart.TimeOfDay;
+                startAfterTimeSpan = executionStartLocal.TimeOfDay;
                 response.Note = $"Nearest available delivery after {startAfterTimeSpan.Value:hh\\:mm}";
             }
         }
@@ -845,7 +875,7 @@ public class CustomerOrderService : ICustomerOrderService
             bool isAvailable = true;
 
             // Skip slots that have already passed today
-            if (date.Date == DateTime.UtcNow.Date && start < DateTime.UtcNow.TimeOfDay)
+            if (localSelectedDate == todayLocal && start < nowLocal.TimeOfDay)
             {
                 isAvailable = false;
             }
@@ -864,18 +894,30 @@ public class CustomerOrderService : ICustomerOrderService
                 }
             }
 
+            var localStartDt = localSelectedDate.Date.Add(start);
+            var localEndDt = localSelectedDate.Date.Add(end);
+
+            var slotStartUtc = TimezoneHelper.ConvertAirportLocalToUtc(airport, localStartDt);
+            var slotEndUtc = TimezoneHelper.ConvertAirportLocalToUtc(airport, localEndDt);
+
+            var formattedUtcSlot = $"{slotStartUtc:HH:mm}-{slotEndUtc:HH:mm}";
+            if (slotEndUtc.TimeOfDay == TimeSpan.Zero && slotEndUtc.Date > slotStartUtc.Date)
+            {
+                formattedUtcSlot = $"{slotStartUtc:HH:mm}-24:00";
+            }
+
             if (isAvailable)
             {
                 var availableDrivers = allDrivers.Where(d =>
                     IsShiftCovering(d.ShiftType, start, end) &&
-                    !HasConflict(d, date.Date, start, end)
+                    !HasConflict(d, slotStartUtc, slotEndUtc)
                 ).ToList();
 
                 if (!availableDrivers.Any())
                     isAvailable = false;
             }
 
-            response.AvailableSlots.Add(new SlotItem { Slot = slot, Available = isAvailable });
+            response.AvailableSlots.Add(new SlotItem { Slot = formattedUtcSlot, Available = isAvailable });
         }
 
         response.AvailableSlots = response.AvailableSlots.Where(s => s.Available).ToList();
@@ -889,7 +931,8 @@ public class CustomerOrderService : ICustomerOrderService
     {
         var order = await _context.Orders
             .Include(o => o.Package)
-            .Include(o => o.Flight)
+            .Include(o => o.Flight).ThenInclude(f => f.DepartureAirport)
+            .Include(o => o.Flight).ThenInclude(f => f.ArrivalAirport)
             .Include(o => o.OrderServices).ThenInclude(os => os.PackageService)
             .FirstOrDefaultAsync(o => o.OrderId == orderId, cancellationToken);
 
@@ -925,10 +968,11 @@ public class CustomerOrderService : ICustomerOrderService
         if (chosenSlot == null || !chosenSlot.Available)
             return new RescheduleResponse { Success = false, Message = "This time slot is not available" };
 
-        // Parse slot times
-        var slotParts = request.NewTimeSlot.Split('-');
-        var slotStart = TimeSpan.Parse(slotParts[0]);
-        var slotEnd = slotParts[1] == "24:00" ? TimeSpan.FromHours(23).Add(TimeSpan.FromMinutes(59)) : TimeSpan.Parse(slotParts[1]);
+        var airport = request.Type == RescheduleType.Pickup 
+            ? order.Flight.DepartureAirport 
+            : order.Flight.ArrivalAirport;
+
+        var serviceTimes = TimezoneHelper.GetSlotUtcTimes(airport, request.NewDate, request.NewTimeSlot);
 
         if (request.Type == RescheduleType.Delivery)
         {
@@ -939,8 +983,8 @@ public class CustomerOrderService : ICustomerOrderService
                 .FirstOrDefault(os => os.PackageService?.ExecutionPhase == ExecutionPhase.Delivery);
             if (deliveryService != null)
             {
-                deliveryService.ScheduledStartTime = request.NewDate.Date + slotStart;
-                deliveryService.ScheduledEndTime = request.NewDate.Date + slotEnd;
+                deliveryService.ScheduledStartTime = serviceTimes.StartUtc;
+                deliveryService.ScheduledEndTime = serviceTimes.EndUtc;
             }
         }
         else
@@ -952,8 +996,16 @@ public class CustomerOrderService : ICustomerOrderService
                 .FirstOrDefault(os => os.PackageService?.ExecutionPhase == ExecutionPhase.Pickup);
             if (pickupService != null)
             {
-                pickupService.ScheduledStartTime = request.NewDate.Date + slotStart;
-                pickupService.ScheduledEndTime = request.NewDate.Date + slotEnd;
+                pickupService.ScheduledStartTime = serviceTimes.StartUtc;
+                pickupService.ScheduledEndTime = serviceTimes.EndUtc;
+
+                var checkinService = order.OrderServices
+                    .FirstOrDefault(os => os.PackageService?.ExecutionPhase == ExecutionPhase.DepartureCheckin);
+                if (checkinService != null)
+                {
+                    checkinService.ScheduledStartTime = serviceTimes.EndUtc;
+                    checkinService.ScheduledEndTime = order.Flight.ScheduledDepartureTime.AddHours(-1);
+                }
             }
         }
 
@@ -995,10 +1047,13 @@ public class CustomerOrderService : ICustomerOrderService
 
         await _context.SaveChangesAsync(cancellationToken);
 
+        // Convert UTC date back to airport local for display (matches service endpoint format)
+        var localNewDate = TimezoneHelper.ConvertUtcToAirportLocal(airport, request.NewDate);
+
         return new RescheduleResponse
         {
             Success = true,
-            NewDate = request.NewDate.ToString("yyyy-MM-dd"),
+            NewDate = localNewDate.ToString("dddd, MMMM dd, yyyy"),
             NewTimeSlot = request.NewTimeSlot,
             Message = "Appointment rescheduled successfully"
         };
@@ -1277,12 +1332,11 @@ public class CustomerOrderService : ICustomerOrderService
         };
     }
 
-    private static bool HasConflict(Domain.Entities.Employee driver, DateTime date, TimeSpan slotStart, TimeSpan slotEnd)
+    private static bool HasConflict(Domain.Entities.Employee driver, DateTime slotStartUtc, DateTime slotEndUtc)
     {
         return driver.AssignedOrderServices.Any(os =>
-            os.ScheduledStartTime.Date == date &&
-            os.ScheduledStartTime.TimeOfDay < slotEnd &&
-            os.ScheduledEndTime.TimeOfDay > slotStart
+            os.ScheduledStartTime < slotEndUtc &&
+            os.ScheduledEndTime > slotStartUtc
         );
     }
 }

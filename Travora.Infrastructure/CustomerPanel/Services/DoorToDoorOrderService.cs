@@ -488,7 +488,15 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         var earliestPossible = departure.AddDays(-4);
         var latestPossible = departure.AddHours(-12);
 
-        if (DateTime.UtcNow >= latestPossible)
+        var airport = await _context.Airports
+            .FirstOrDefaultAsync(a => a.CodeIataAirport == draft.FlightInfo.DepartureIataCode, cancellationToken);
+
+        var localDeparture = TimezoneHelper.ConvertUtcToAirportLocal(airport, departure);
+        var localEarliest = localDeparture.AddDays(-4);
+        var localLatest = localDeparture.AddHours(-12);
+        var localNow = TimezoneHelper.ConvertUtcToAirportLocal(airport, DateTime.UtcNow);
+
+        if (localNow >= localLatest)
         {
             return new AvailableDatesResponse
             {
@@ -498,12 +506,12 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         }
 
         var availableDates = new List<DateTime>();
-        var today = DateTime.UtcNow.Date;
-        var startPoint = earliestPossible.Date < today ? today : earliestPossible.Date;
+        var startPoint = localEarliest.Date < localNow.Date ? localNow.Date : localEarliest.Date;
 
-        for (var day = startPoint; day <= latestPossible.Date; day = day.AddDays(1))
+        for (var day = startPoint; day <= localLatest.Date; day = day.AddDays(1))
         {
-            availableDates.Add(day);
+            var utcMidnight = TimezoneHelper.ConvertAirportLocalToUtc(airport, day.Date);
+            availableDates.Add(utcMidnight);
         }
 
         return new AvailableDatesResponse
@@ -525,22 +533,30 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         if (string.IsNullOrEmpty(draft.DeliveryFormattedAddress))
             return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Delivery location must be specified first" };
 
-        var earliestPossible = draft.FlightInfo.DepartureTimeUtc.AddDays(-4);
-        var latestPossible = draft.FlightInfo.DepartureTimeUtc.AddHours(-12);
-        var today = DateTime.UtcNow.Date;
+        var departure = draft.FlightInfo.DepartureTimeUtc;
+        var earliestPossible = departure.AddDays(-4);
+        var latestPossible = departure.AddHours(-12);
 
-        if (date.Date < today)
+        var airport = await _context.Airports
+            .FirstOrDefaultAsync(a => a.CodeIataAirport == draft.FlightInfo.DepartureIataCode, cancellationToken);
+
+        var localDeparture = TimezoneHelper.ConvertUtcToAirportLocal(airport, departure);
+        var localEarliest = localDeparture.AddDays(-4);
+        var localLatest = localDeparture.AddHours(-12);
+        var localNow = TimezoneHelper.ConvertUtcToAirportLocal(airport, DateTime.UtcNow);
+        var localDate = TimezoneHelper.ConvertUtcToAirportLocal(airport, date);
+
+        if (localDate.Date < localNow.Date)
             return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Cannot select a day in the past" };
 
-        if (date.Date < earliestPossible.Date || date.Date > latestPossible.Date)
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = $"Execution date must be between {earliestPossible:yyyy-MM-dd} and {latestPossible:yyyy-MM-dd}" };
+        if (localDate.Date < localEarliest.Date || localDate.Date > localLatest.Date)
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = $"Execution date must be between {localEarliest:yyyy-MM-dd} and {localLatest:yyyy-MM-dd}" };
 
         var response = new AvailableSlotsResponse { IsValid = true };
-        DateTime? absoluteCutoffUtc = latestPossible;
 
-        if (date.Date == latestPossible.Date)
+        if (localDate.Date == localLatest.Date)
         {
-            response.CutoffTime = latestPossible.ToString(@"HH:mm");
+            response.CutoffTime = latestPossible.ToString(@"HH\:mm");
             response.Note = $"The last available slot must end before {response.CutoffTime}";
         }
 
@@ -568,15 +584,21 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
             var start = TimeSpan.Parse(parts[0]);
             var end = parts[1] == "24:00" ? TimeSpan.FromHours(24) : TimeSpan.Parse(parts[1]);
 
-            var slotEndUtc = date.Date.Add(end);
+            var localStartDt = localDate.Date.Add(start);
+            var localEndDt = localDate.Date.Add(end);
+
+            var slotStartUtc = TimezoneHelper.ConvertAirportLocalToUtc(airport, localStartDt);
+            var slotEndUtc = TimezoneHelper.ConvertAirportLocalToUtc(airport, localEndDt);
+
             bool isAvailable = true;
 
-            // Skip slots that have already passed today
-            if (date.Date == DateTime.UtcNow.Date && start < DateTime.UtcNow.TimeOfDay)
+            // Skip slots that have already passed
+            if (slotStartUtc < DateTime.UtcNow)
             {
                 isAvailable = false;
             }
-            else if (absoluteCutoffUtc.HasValue && slotEndUtc > absoluteCutoffUtc.Value)
+            // Cutoff check
+            else if (slotEndUtc > departure.AddHours(-12))
             {
                 isAvailable = false;
             }
@@ -584,7 +606,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
             {
                 var availableDrivers = allDrivers.Where(d => 
                     IsShiftCovering(d.ShiftType, start, end) &&
-                    !HasConflict(d, date.Date, start, end)
+                    !HasConflict(d, slotStartUtc, slotEndUtc)
                 ).ToList();
 
                 if (!availableDrivers.Any())
@@ -593,9 +615,15 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
                 }
             }
 
+            var formattedUtcSlot = $"{slotStartUtc:HH:mm}-{slotEndUtc:HH:mm}";
+            if (slotEndUtc.TimeOfDay == TimeSpan.Zero && slotEndUtc.Date > slotStartUtc.Date)
+            {
+                formattedUtcSlot = $"{slotStartUtc:HH:mm}-24:00";
+            }
+
             response.AvailableSlots.Add(new SlotItem
             {
-                Slot = slot,
+                Slot = formattedUtcSlot,
                 Available = isAvailable
             });
         }
@@ -619,15 +647,15 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         };
     }
 
-    private bool HasConflict(Domain.Entities.Employee driver, DateTime date, TimeSpan slotStart, TimeSpan slotEnd)
+    private bool HasConflict(Domain.Entities.Employee driver, DateTime slotStartUtc, DateTime slotEndUtc)
     {
-        // Check if the driver has any order service overlapping this slot on the given date
+        // Check if the driver has any order service overlapping this slot in UTC
         return driver.AssignedOrderServices.Any(os => 
-            os.ScheduledStartTime.Date == date &&
-            os.ScheduledStartTime.TimeOfDay < slotEnd &&
-            os.ScheduledEndTime.TimeOfDay > slotStart
+            os.ScheduledStartTime < slotEndUtc &&
+            os.ScheduledEndTime > slotStartUtc
         );
     }
+
 
     public async Task<SetCustomsTypeResponse> SetCustomsTypeAsync(int customerId, SetCustomsTypeRequest request, CancellationToken cancellationToken = default)
     {
@@ -1191,6 +1219,9 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
                     .Include(ps => ps.Service)
                     .ToListAsync(cancellationToken);
 
+                var depAirport = await _context.Airports.FirstOrDefaultAsync(a => a.CodeIataAirport == draft.FlightInfo.DepartureIataCode, cancellationToken);
+                var arrAirport = await _context.Airports.FirstOrDefaultAsync(a => a.CodeIataAirport == draft.FlightInfo.ArrivalIataCode, cancellationToken);
+
                 foreach (var packageService in packageServices)
                 {
                     DateTime scheduledStart, scheduledEnd;
@@ -1200,18 +1231,15 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
                     switch (packageService.ExecutionPhase)
                     {
                         case Domain.Enums.ExecutionPhase.Pickup:
-                            var slotParts = draft.SelectedSlot!.Split('-');
-                            var slotStart = TimeSpan.Parse(slotParts[0]);
-                            var slotEnd = slotParts[1] == "24:00" ? TimeSpan.FromHours(23).Add(TimeSpan.FromMinutes(59)) : TimeSpan.Parse(slotParts[1]);
-                            scheduledStart = draft.SelectedSlotDate!.Value.Date + slotStart;
-                            scheduledEnd = draft.SelectedSlotDate!.Value.Date + slotEnd;
+                            var pickupTimes = TimezoneHelper.GetSlotUtcTimes(depAirport, draft.SelectedSlotDate!.Value, draft.SelectedSlot!);
+                            scheduledStart = pickupTimes.StartUtc;
+                            scheduledEnd = pickupTimes.EndUtc;
                             break;
 
                         case Domain.Enums.ExecutionPhase.DepartureCheckin:
                             // Scheduled at end of Pickup slot (will be assigned when Pickup completes)
-                            var pickupSlotParts = draft.SelectedSlot!.Split('-');
-                            var pickupSlotEnd = pickupSlotParts[1] == "24:00" ? TimeSpan.FromHours(23).Add(TimeSpan.FromMinutes(59)) : TimeSpan.Parse(pickupSlotParts[1]);
-                            scheduledStart = draft.SelectedSlotDate!.Value.Date + pickupSlotEnd;
+                            var pickupTimesForCheckin = TimezoneHelper.GetSlotUtcTimes(depAirport, draft.SelectedSlotDate!.Value, draft.SelectedSlot!);
+                            scheduledStart = pickupTimesForCheckin.EndUtc;
                             scheduledEnd = draft.FlightInfo.DepartureTimeUtc.AddHours(-1);
                             break;
 
@@ -1223,11 +1251,9 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
                             break;
 
                         case Domain.Enums.ExecutionPhase.Delivery:
-                            var deliverySlotParts = draft.SelectedDeliverySlot!.Split('-');
-                            var deliverySlotStart = TimeSpan.Parse(deliverySlotParts[0]);
-                            var deliverySlotEnd = deliverySlotParts[1] == "24:00" ? TimeSpan.FromHours(23).Add(TimeSpan.FromMinutes(59)) : TimeSpan.Parse(deliverySlotParts[1]);
-                            scheduledStart = draft.SelectedDeliverySlotDate!.Value.Date + deliverySlotStart;
-                            scheduledEnd = draft.SelectedDeliverySlotDate!.Value.Date + deliverySlotEnd;
+                            var deliveryTimes = TimezoneHelper.GetSlotUtcTimes(arrAirport, draft.SelectedDeliverySlotDate!.Value, draft.SelectedDeliverySlot!);
+                            scheduledStart = deliveryTimes.StartUtc;
+                            scheduledEnd = deliveryTimes.EndUtc;
                             break;
 
                         default:
@@ -1309,13 +1335,21 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         var earliestDelivery = arrivalTimeUtc.AddHours(4);
         var latestDelivery = earliestDelivery.AddDays(4);
 
-        var availableDates = new List<DateTime>();
-        var today = DateTime.UtcNow.Date;
-        var startPoint = earliestDelivery.Date < today ? today : earliestDelivery.Date;
+        var airport = await _context.Airports
+            .FirstOrDefaultAsync(a => a.CodeIataAirport == draft.FlightInfo.ArrivalIataCode, cancellationToken);
 
-        for (var day = startPoint; day <= latestDelivery.Date; day = day.AddDays(1))
+        var localArrival = TimezoneHelper.ConvertUtcToAirportLocal(airport, arrivalTimeUtc);
+        var localEarliest = localArrival.AddHours(4);
+        var localLatest = localEarliest.AddDays(4);
+        var localNow = TimezoneHelper.ConvertUtcToAirportLocal(airport, DateTime.UtcNow);
+
+        var availableDates = new List<DateTime>();
+        var startPoint = localEarliest.Date < localNow.Date ? localNow.Date : localEarliest.Date;
+
+        for (var day = startPoint; day <= localLatest.Date; day = day.AddDays(1))
         {
-            availableDates.Add(day);
+            var utcMidnight = TimezoneHelper.ConvertAirportLocalToUtc(airport, day.Date);
+            availableDates.Add(utcMidnight);
         }
 
         return new AvailableDatesResponse
@@ -1337,25 +1371,32 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         if (string.IsNullOrEmpty(draft.DeliveryFormattedAddress))
             return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Delivery location must be specified first" };
 
-
-
         var arrivalTimeUtc = draft.FlightInfo.ArrivalTimeUtc ?? draft.FlightInfo.DepartureTimeUtc.AddHours(4);
         var earliestDelivery = arrivalTimeUtc.AddHours(4);
         var latestDelivery = earliestDelivery.AddDays(4);
 
-        if (date.Date < earliestDelivery.Date)
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = $"Cannot select a date before the earliest arrival-based window ({earliestDelivery:yyyy-MM-dd})" };
+        var airport = await _context.Airports
+            .FirstOrDefaultAsync(a => a.CodeIataAirport == draft.FlightInfo.ArrivalIataCode, cancellationToken);
 
-        if (date.Date > latestDelivery.Date)
-            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = $"Cannot book more than 4 days after delivery start window ({latestDelivery:yyyy-MM-dd})" };
+        var localArrival = TimezoneHelper.ConvertUtcToAirportLocal(airport, arrivalTimeUtc);
+        var localEarliest = localArrival.AddHours(4);
+        var localLatest = localEarliest.AddDays(4);
+        var localNow = TimezoneHelper.ConvertUtcToAirportLocal(airport, DateTime.UtcNow);
+        var localDate = TimezoneHelper.ConvertUtcToAirportLocal(airport, date);
+
+        if (localDate.Date < localEarliest.Date)
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = $"Cannot select a date before the earliest arrival-based window ({localEarliest:yyyy-MM-dd})" };
+
+        if (localDate.Date > localLatest.Date)
+            return new AvailableSlotsResponse { IsValid = false, ErrorMessage = $"Cannot book more than 4 days after delivery start window ({localLatest:yyyy-MM-dd})" };
 
         var response = new AvailableSlotsResponse { IsValid = true };
-        TimeSpan? startAfterTimeSpan = null;
+        DateTime? startAfterUtc = earliestDelivery;
 
-        if (date.Date == earliestDelivery.Date)
+        if (localDate.Date == localEarliest.Date)
         {
-            startAfterTimeSpan = earliestDelivery.TimeOfDay;
-            response.Note = $"Nearest available delivery after {startAfterTimeSpan.Value:hh\\:mm}";
+            var localEarliestTime = localEarliest.ToString(@"hh\:mm");
+            response.Note = $"Nearest available delivery after {localEarliestTime}";
         }
 
         var allDrivers = await _context.Employees
@@ -1382,9 +1423,19 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
             var start = TimeSpan.Parse(parts[0]);
             var end = parts[1] == "24:00" ? TimeSpan.FromHours(24) : TimeSpan.Parse(parts[1]);
 
+            var localStartDt = localDate.Date.Add(start);
+            var localEndDt = localDate.Date.Add(end);
+
+            var slotStartUtc = TimezoneHelper.ConvertAirportLocalToUtc(airport, localStartDt);
+            var slotEndUtc = TimezoneHelper.ConvertAirportLocalToUtc(airport, localEndDt);
+
             bool isAvailable = true;
 
-            if (startAfterTimeSpan.HasValue && start < startAfterTimeSpan.Value)
+            if (slotStartUtc < DateTime.UtcNow)
+            {
+                isAvailable = false;
+            }
+            else if (startAfterUtc.HasValue && slotStartUtc < startAfterUtc.Value)
             {
                 isAvailable = false;
             }
@@ -1392,16 +1443,22 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
             {
                 var availableDrivers = allDrivers.Where(d =>
                     IsShiftCovering(d.ShiftType, start, end) &&
-                    !HasConflict(d, date.Date, start, end)
+                    !HasConflict(d, slotStartUtc, slotEndUtc)
                 ).ToList();
 
                 if (!availableDrivers.Any())
                     isAvailable = false;
             }
 
+            var formattedUtcSlot = $"{slotStartUtc:HH:mm}-{slotEndUtc:HH:mm}";
+            if (slotEndUtc.TimeOfDay == TimeSpan.Zero && slotEndUtc.Date > slotStartUtc.Date)
+            {
+                formattedUtcSlot = $"{slotStartUtc:HH:mm}-24:00";
+            }
+
             response.AvailableSlots.Add(new SlotItem
             {
-                Slot = slot,
+                Slot = formattedUtcSlot,
                 Available = isAvailable
             });
         }
@@ -1414,11 +1471,16 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
     }
 
     private async Task<Domain.Entities.Employee?> FindAvailableDriverAsync(
-        DateTime scheduledStart, DateTime scheduledEnd, CancellationToken cancellationToken)
+        Airport? airport, DateTime scheduledStart, DateTime scheduledEnd, CancellationToken cancellationToken)
     {
-        var slotStart = scheduledStart.TimeOfDay;
-        var slotEnd = scheduledEnd.TimeOfDay;
-        var date = scheduledStart.Date;
+        var localStart = TimezoneHelper.ConvertUtcToAirportLocal(airport, scheduledStart);
+        var localEnd = TimezoneHelper.ConvertUtcToAirportLocal(airport, scheduledEnd);
+
+        var localEndTd = localEnd.TimeOfDay;
+        if (localEndTd == TimeSpan.Zero && localEnd.Date > localStart.Date)
+        {
+            localEndTd = TimeSpan.FromHours(24);
+        }
 
         var drivers = await _context.Employees
             .Include(e => e.Vehicle)
@@ -1432,19 +1494,27 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
             .ToListAsync(cancellationToken);
 
         return drivers.FirstOrDefault(d =>
-            IsShiftCovering(d.ShiftType, slotStart, slotEnd) &&
-            !HasConflict(d, date, slotStart, slotEnd));
+            IsShiftCovering(d.ShiftType, localStart.TimeOfDay, localEndTd) &&
+            !HasConflict(d, scheduledStart, scheduledEnd));
     }
 
     public async Task AssignEmployeesAfterPaymentAsync(int orderId, CancellationToken cancellationToken = default)
     {
+        var order = await _context.Orders
+            .Include(o => o.Flight).ThenInclude(f => f.DepartureAirport)
+            .FirstOrDefaultAsync(o => o.OrderId == orderId, cancellationToken);
+
+        if (order == null || order.Flight == null) return;
+
+        var airport = order.Flight.DepartureAirport;
+
         var servicesToAssign = await _context.OrderServices
             .Where(os => os.OrderId == orderId && os.ServiceStatus == Domain.Enums.ServiceStatus.Pending && os.PackageService.ExecutionPhase == Domain.Enums.ExecutionPhase.Pickup)
             .ToListAsync(cancellationToken);
 
         foreach (var service in servicesToAssign)
         {
-            var driver = await FindAvailableDriverAsync(service.ScheduledStartTime, service.ScheduledEndTime, cancellationToken);
+            var driver = await FindAvailableDriverAsync(airport, service.ScheduledStartTime, service.ScheduledEndTime, cancellationToken);
             if (driver != null)
             {
                 service.AssignedEmployeeId = driver.EmployeeId;
@@ -1465,7 +1535,6 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         }
 
         // Customer Notification — Driver assigned after payment
-        var order = await _context.Orders.FindAsync(new object[] { orderId }, cancellationToken);
         if (order != null)
         {
             _context.Notifications.Add(new Domain.Entities.Notification
@@ -1481,6 +1550,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         }
 
         await _context.SaveChangesAsync(cancellationToken);
+
 
         if (order != null)
         {
