@@ -547,40 +547,60 @@ public class CarServiceOrderService : ICarServiceOrderService
         if (string.IsNullOrEmpty(draft.LocationFormattedAddress))
             return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Location selection step must be completed first" };
 
+        var targetAirportCode = draft.ServiceType == CarServiceType.DeliveryToAirport 
+            ? draft.FlightInfo.DepartureIataCode 
+            : draft.FlightInfo.ArrivalIataCode;
+
+        var airport = await _context.Airports
+            .FirstOrDefaultAsync(a => a.CodeIataAirport == targetAirportCode, cancellationToken);
+
         var response = new AvailableSlotsResponse { IsValid = true };
         DateTime? absoluteCutoffUtc = null;
-        TimeSpan? startAfterTimeSpan = null;
+        DateTime? startAfterUtc = null;
 
         if (draft.ServiceType == CarServiceType.DeliveryFromAirport)
         {
-            var arrivalTime = draft.FlightInfo.ArrivalTimeUtc ?? draft.FlightInfo.DepartureTimeUtc.AddHours(4);
-            var executionStart = arrivalTime.AddHours(4);
-            var executionEnd = arrivalTime.AddDays(4);
+            var arrivalTimeUtc = draft.FlightInfo.ArrivalTimeUtc ?? draft.FlightInfo.DepartureTimeUtc.AddHours(4);
+            var earliestDelivery = arrivalTimeUtc.AddHours(4);
+            var latestDelivery = earliestDelivery.AddDays(4);
 
-            if (date.Date < executionStart.Date || date.Date > executionEnd.Date)
-                return new AvailableSlotsResponse { IsValid = false, ErrorMessage = $"Execution date must be between {executionStart:yyyy-MM-dd} and {executionEnd:yyyy-MM-dd}" };
+            var localArrival = TimezoneHelper.ConvertUtcToAirportLocal(airport, arrivalTimeUtc);
+            var localEarliest = localArrival.AddHours(4);
+            var localLatest = localEarliest.AddDays(4);
+            var localDate = TimezoneHelper.ConvertUtcToAirportLocal(airport, date);
 
-            if (date.Date == executionStart.Date)
+            if (localDate.Date < localEarliest.Date || localDate.Date > localLatest.Date)
+                return new AvailableSlotsResponse { IsValid = false, ErrorMessage = $"Execution date must be between {localEarliest:yyyy-MM-dd} and {localLatest:yyyy-MM-dd}" };
+
+            startAfterUtc = earliestDelivery;
+            if (localDate.Date == localEarliest.Date)
             {
-                startAfterTimeSpan = executionStart.TimeOfDay;
+                var localEarliestTime = localEarliest.ToString(@"hh\:mm");
+                response.Note = $"Nearest available delivery after {localEarliestTime}";
             }
         }
         else
         {
-            var earliestPossible = draft.FlightInfo.DepartureTimeUtc.AddDays(-4);
-            var latestPossible = draft.FlightInfo.DepartureTimeUtc.AddHours(-12);
-            var today = DateTime.UtcNow.Date;
+            var departure = draft.FlightInfo.DepartureTimeUtc;
+            var earliestPossible = departure.AddDays(-4);
+            var latestPossible = departure.AddHours(-12);
 
-            if (date.Date < today)
+            var localDeparture = TimezoneHelper.ConvertUtcToAirportLocal(airport, departure);
+            var localEarliest = localDeparture.AddDays(-4);
+            var localLatest = localDeparture.AddHours(-12);
+            var localNow = TimezoneHelper.ConvertUtcToAirportLocal(airport, DateTime.UtcNow);
+            var localDate = TimezoneHelper.ConvertUtcToAirportLocal(airport, date);
+
+            if (localDate.Date < localNow.Date)
                 return new AvailableSlotsResponse { IsValid = false, ErrorMessage = "Cannot select a day in the past" };
             
-            if (date.Date < earliestPossible.Date || date.Date > latestPossible.Date)
-                return new AvailableSlotsResponse { IsValid = false, ErrorMessage = $"Execution date must be between {earliestPossible:yyyy-MM-dd} and {latestPossible:yyyy-MM-dd}" };
+            if (localDate.Date < localEarliest.Date || localDate.Date > localLatest.Date)
+                return new AvailableSlotsResponse { IsValid = false, ErrorMessage = $"Execution date must be between {localEarliest:yyyy-MM-dd} and {localLatest:yyyy-MM-dd}" };
 
             absoluteCutoffUtc = latestPossible;
-            if (date.Date == latestPossible.Date)
+            if (localDate.Date == localLatest.Date)
             {
-                response.CutoffTime = latestPossible.ToString(@"HH:mm");
+                response.CutoffTime = latestPossible.ToString(@"HH\:mm");
                 response.Note = $"The last available slot must end before {response.CutoffTime}";
             }
         }
@@ -603,17 +623,24 @@ public class CarServiceOrderService : ICarServiceOrderService
             "16:00-18:00", "18:00-20:00", "20:00-22:00", "22:00-24:00"
         };
 
+        var localTargetDate = TimezoneHelper.ConvertUtcToAirportLocal(airport, date);
+
         foreach (var slot in slots)
         {
             var parts = slot.Split('-');
             var start = TimeSpan.Parse(parts[0]);
             var end = parts[1] == "24:00" ? TimeSpan.FromHours(24) : TimeSpan.Parse(parts[1]);
 
-            bool isAvailable = true;
-            var slotEndUtc = date.Date.Add(end);
+            var localStartDt = localTargetDate.Date.Add(start);
+            var localEndDt = localTargetDate.Date.Add(end);
 
-            // Skip slots that have already passed today
-            if (date.Date == DateTime.UtcNow.Date && start < DateTime.UtcNow.TimeOfDay)
+            var slotStartUtc = TimezoneHelper.ConvertAirportLocalToUtc(airport, localStartDt);
+            var slotEndUtc = TimezoneHelper.ConvertAirportLocalToUtc(airport, localEndDt);
+
+            bool isAvailable = true;
+
+            // Skip slots that have already passed
+            if (slotStartUtc < DateTime.UtcNow)
             {
                 isAvailable = false;
             }
@@ -621,7 +648,7 @@ public class CarServiceOrderService : ICarServiceOrderService
             {
                 isAvailable = false;
             }
-            else if (startAfterTimeSpan.HasValue && start < startAfterTimeSpan.Value)
+            else if (startAfterUtc.HasValue && slotStartUtc < startAfterUtc.Value)
             {
                 isAvailable = false;
             }
@@ -629,14 +656,20 @@ public class CarServiceOrderService : ICarServiceOrderService
             {
                 var availableDrivers = allDrivers.Where(d =>
                     IsShiftCovering(d.ShiftType, start, end) &&
-                    !HasConflict(d, date.Date, start, end)
+                    !HasConflict(d, slotStartUtc, slotEndUtc)
                 ).ToList();
 
                 if (!availableDrivers.Any())
                     isAvailable = false;
             }
 
-            response.AvailableSlots.Add(new SlotItem { Slot = slot, Available = isAvailable });
+            var formattedUtcSlot = $"{slotStartUtc:HH:mm}-{slotEndUtc:HH:mm}";
+            if (slotEndUtc.TimeOfDay == TimeSpan.Zero && slotEndUtc.Date > slotStartUtc.Date)
+            {
+                formattedUtcSlot = $"{slotStartUtc:HH:mm}-24:00";
+            }
+
+            response.AvailableSlots.Add(new SlotItem { Slot = formattedUtcSlot, Available = isAvailable });
         }
 
         response.AvailableSlots = response.AvailableSlots.Where(s => s.Available).ToList();
@@ -652,28 +685,46 @@ public class CarServiceOrderService : ICarServiceOrderService
         if (string.IsNullOrEmpty(draft.LocationFormattedAddress))
             return new AvailableDatesResponse { IsValid = false, ErrorMessage = "Location selection step must be completed first" };
 
+        var targetAirportCode = draft.ServiceType == CarServiceType.DeliveryToAirport 
+            ? draft.FlightInfo.DepartureIataCode 
+            : draft.FlightInfo.ArrivalIataCode;
+
+        var airport = await _context.Airports
+            .FirstOrDefaultAsync(a => a.CodeIataAirport == targetAirportCode, cancellationToken);
+
         var availableDates = new List<DateTime>();
 
         if (draft.ServiceType == CarServiceType.DeliveryFromAirport)
         {
-            var arrivalTime = draft.FlightInfo.ArrivalTimeUtc ?? draft.FlightInfo.DepartureTimeUtc.AddHours(4);
-            var executionStart = arrivalTime.AddHours(4);
-            var executionEnd = arrivalTime.AddDays(4);
+            var arrivalTimeUtc = draft.FlightInfo.ArrivalTimeUtc ?? draft.FlightInfo.DepartureTimeUtc.AddHours(4);
+            var earliestDelivery = arrivalTimeUtc.AddHours(4);
+            var latestDelivery = earliestDelivery.AddDays(4);
 
-            var currentDate = executionStart.Date;
-            while (currentDate <= executionEnd.Date)
+            var localArrival = TimezoneHelper.ConvertUtcToAirportLocal(airport, arrivalTimeUtc);
+            var localEarliest = localArrival.AddHours(4);
+            var localLatest = localEarliest.AddDays(4);
+            var localNow = TimezoneHelper.ConvertUtcToAirportLocal(airport, DateTime.UtcNow);
+
+            var startPoint = localEarliest.Date < localNow.Date ? localNow.Date : localEarliest.Date;
+
+            for (var day = startPoint; day <= localLatest.Date; day = day.AddDays(1))
             {
-                availableDates.Add(currentDate);
-                currentDate = currentDate.AddDays(1);
+                var utcMidnight = TimezoneHelper.ConvertAirportLocalToUtc(airport, day.Date);
+                availableDates.Add(utcMidnight);
             }
         }
         else
         {
-            var todayUtc = DateTime.UtcNow;
-            var executionStart = draft.FlightInfo.DepartureTimeUtc.AddDays(-4);
-            var executionEnd = draft.FlightInfo.DepartureTimeUtc.AddHours(-12);
+            var departure = draft.FlightInfo.DepartureTimeUtc;
+            var earliestPossible = departure.AddDays(-4);
+            var latestPossible = departure.AddHours(-12);
 
-            if (todayUtc > executionEnd)
+            var localDeparture = TimezoneHelper.ConvertUtcToAirportLocal(airport, departure);
+            var localEarliest = localDeparture.AddDays(-4);
+            var localLatest = localDeparture.AddHours(-12);
+            var localNow = TimezoneHelper.ConvertUtcToAirportLocal(airport, DateTime.UtcNow);
+
+            if (localNow >= localLatest)
             {
                 return new AvailableDatesResponse 
                 { 
@@ -682,12 +733,12 @@ public class CarServiceOrderService : ICarServiceOrderService
                 };
             }
 
-            var windowStart = executionStart > todayUtc ? executionStart : todayUtc;
-            var currentDate = windowStart.Date;
-            while (currentDate <= executionEnd.Date)
+            var startPoint = localEarliest.Date < localNow.Date ? localNow.Date : localEarliest.Date;
+
+            for (var day = startPoint; day <= localLatest.Date; day = day.AddDays(1))
             {
-                availableDates.Add(currentDate);
-                currentDate = currentDate.AddDays(1);
+                var utcMidnight = TimezoneHelper.ConvertAirportLocalToUtc(airport, day.Date);
+                availableDates.Add(utcMidnight);
             }
         }
 
@@ -1053,10 +1104,12 @@ public class CarServiceOrderService : ICarServiceOrderService
                 await _context.SaveChangesAsync(cancellationToken);
 
                 // Order
-                var slotParts = draft.SelectedSlot!.Split('-');
-                var slotStart = TimeSpan.Parse(slotParts[0]);
-                var slotEnd = slotParts[1] == "24:00" ? TimeSpan.FromHours(23).Add(TimeSpan.FromMinutes(59)) : TimeSpan.Parse(slotParts[1]);
-                var slotDate = draft.SelectedSlotDate ?? draft.FlightInfo.DepartureTimeUtc.Date;
+                var targetAirportCode = draft.ServiceType == CarServiceType.DeliveryToAirport 
+                    ? draft.FlightInfo.DepartureIataCode 
+                    : draft.FlightInfo.ArrivalIataCode;
+
+                var airport = await _context.Airports
+                    .FirstOrDefaultAsync(a => a.CodeIataAirport == targetAirportCode, cancellationToken);
 
                 var order = new Domain.Entities.Order
                 {
@@ -1074,14 +1127,14 @@ public class CarServiceOrderService : ICarServiceOrderService
                     ExtraBaggageFee = invoiceDto.Breakdown.BaggageDetails.ExtraBaggageFee,
                     TotalAmount = invoiceDto.Breakdown.TotalAmount,
                     PickupDate = draft.ServiceType == CarServiceType.DeliveryToAirport 
-                        ? slotDate 
+                        ? draft.SelectedSlotDate!.Value 
                         : (draft.FlightInfo.ArrivalTimeUtc?.Date ?? draft.FlightInfo.DepartureTimeUtc.Date),
                     PickupTimeSlot = draft.ServiceType == CarServiceType.DeliveryToAirport 
                         ? (draft.SelectedSlot ?? "10:00-12:00") 
                         : "N/A",
                     DeliveryDate = draft.ServiceType == CarServiceType.DeliveryToAirport 
                         ? draft.FlightInfo.DepartureTimeUtc.Date 
-                        : slotDate,
+                        : draft.SelectedSlotDate!.Value,
                     DeliveryTimeSlot = draft.ServiceType == CarServiceType.DeliveryToAirport 
                         ? "N/A" 
                         : (draft.SelectedSlot ?? "10:00-12:00")
@@ -1321,14 +1374,15 @@ public class CarServiceOrderService : ICarServiceOrderService
                     switch (packageService.ExecutionPhase)
                     {
                         case ExecutionPhase.Pickup:
-                            // Use the customer-selected time slot
-                            scheduledStart = slotDate.Date + slotStart;
-                            scheduledEnd = slotDate.Date + slotEnd;
+                            var pickupTimes = TimezoneHelper.GetSlotUtcTimes(airport, draft.SelectedSlotDate!.Value, draft.SelectedSlot!);
+                            scheduledStart = pickupTimes.StartUtc;
+                            scheduledEnd = pickupTimes.EndUtc;
                             break;
 
                         case ExecutionPhase.DepartureCheckin:
                             // To Airport: scheduled at end of Pickup slot (assigned when Pickup completes)
-                            scheduledStart = slotDate.Date + slotEnd;
+                            var checkinTimes = TimezoneHelper.GetSlotUtcTimes(airport, draft.SelectedSlotDate!.Value, draft.SelectedSlot!);
+                            scheduledStart = checkinTimes.EndUtc;
                             scheduledEnd = draft.FlightInfo.DepartureTimeUtc.AddHours(-1);
                             break;
 
@@ -1342,14 +1396,15 @@ public class CarServiceOrderService : ICarServiceOrderService
                         }
 
                         case ExecutionPhase.Delivery:
-                            // Use the customer-selected time slot
-                            scheduledStart = slotDate.Date + slotStart;
-                            scheduledEnd = slotDate.Date + slotEnd;
+                            var deliveryTimes = TimezoneHelper.GetSlotUtcTimes(airport, draft.SelectedSlotDate!.Value, draft.SelectedSlot!);
+                            scheduledStart = deliveryTimes.StartUtc;
+                            scheduledEnd = deliveryTimes.EndUtc;
                             break;
 
                         default:
-                            scheduledStart = slotDate.Date + slotStart;
-                            scheduledEnd = slotDate.Date + slotEnd;
+                            var defaultTimes = TimezoneHelper.GetSlotUtcTimes(airport, draft.SelectedSlotDate!.Value, draft.SelectedSlot!);
+                            scheduledStart = defaultTimes.StartUtc;
+                            scheduledEnd = defaultTimes.EndUtc;
                             break;
                     }
 
@@ -1420,9 +1475,15 @@ public class CarServiceOrderService : ICarServiceOrderService
     {
         var order = await _context.Orders
             .Include(o => o.Package)
+            .Include(o => o.Flight).ThenInclude(f => f.DepartureAirport)
+            .Include(o => o.Flight).ThenInclude(f => f.ArrivalAirport)
             .FirstOrDefaultAsync(o => o.OrderId == orderId, cancellationToken);
 
         if (order == null) return;
+
+        var airport = order.Package.PackageCode == PackageCodes.CarServiceToAirport
+            ? order.Flight.DepartureAirport
+            : order.Flight.ArrivalAirport;
 
         // Get only the FIRST phase to assign (ordered by ExecutionPhase)
         var firstPendingService = await _context.OrderServices
@@ -1439,6 +1500,7 @@ public class CarServiceOrderService : ICarServiceOrderService
         {
             // Pickup phase → assign a Driver
             var driver = await FindAvailableDriverAsync(
+                airport,
                 firstPendingService.ScheduledStartTime,
                 firstPendingService.ScheduledEndTime,
                 cancellationToken);
@@ -1531,21 +1593,25 @@ public class CarServiceOrderService : ICarServiceOrderService
         };
     }
 
-    private bool HasConflict(Domain.Entities.Employee driver, DateTime date, TimeSpan slotStart, TimeSpan slotEnd)
+    private bool HasConflict(Domain.Entities.Employee driver, DateTime slotStartUtc, DateTime slotEndUtc)
     {
         return driver.AssignedOrderServices.Any(os =>
-            os.ScheduledStartTime.Date == date &&
-            os.ScheduledStartTime.TimeOfDay < slotEnd &&
-            os.ScheduledEndTime.TimeOfDay > slotStart
+            os.ScheduledStartTime < slotEndUtc &&
+            os.ScheduledEndTime > slotStartUtc
         );
     }
 
     private async Task<Domain.Entities.Employee?> FindAvailableDriverAsync(
-        DateTime scheduledStart, DateTime scheduledEnd, CancellationToken cancellationToken)
+        Airport? airport, DateTime scheduledStart, DateTime scheduledEnd, CancellationToken cancellationToken)
     {
-        var slotStart = scheduledStart.TimeOfDay;
-        var slotEnd = scheduledEnd.TimeOfDay;
-        var date = scheduledStart.Date;
+        var localStart = TimezoneHelper.ConvertUtcToAirportLocal(airport, scheduledStart);
+        var localEnd = TimezoneHelper.ConvertUtcToAirportLocal(airport, scheduledEnd);
+
+        var localEndTd = localEnd.TimeOfDay;
+        if (localEndTd == TimeSpan.Zero && localEnd.Date > localStart.Date)
+        {
+            localEndTd = TimeSpan.FromHours(24);
+        }
 
         var drivers = await _context.Employees
             .Include(e => e.Vehicle)
@@ -1559,8 +1625,8 @@ public class CarServiceOrderService : ICarServiceOrderService
             .ToListAsync(cancellationToken);
 
         return drivers.FirstOrDefault(d =>
-            IsShiftCovering(d.ShiftType, slotStart, slotEnd) &&
-            !HasConflict(d, date, slotStart, slotEnd));
+            IsShiftCovering(d.ShiftType, localStart.TimeOfDay, localEndTd) &&
+            !HasConflict(d, scheduledStart, scheduledEnd));
     }
 
     
@@ -1578,10 +1644,9 @@ public class CarServiceOrderService : ICarServiceOrderService
                 PackageCodes.CarServiceFromAirport,
                 PackageCodes.TrackingBaggage
             }
-            : new[]   // CarServiceFromAirport — only blocked by non-BagTracking packages
+            : new[]   // CarServiceFromAirport (Delivery) — only blocked by DoorToDoor and CarServiceFromAirport
             {
                 PackageCodes.DoorToDoor,
-                PackageCodes.CarServiceToAirport,
                 PackageCodes.CarServiceFromAirport
             };
 
