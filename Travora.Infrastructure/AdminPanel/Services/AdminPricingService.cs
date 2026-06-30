@@ -236,28 +236,10 @@ public class AdminPricingService : IAdminPricingService
         decimal totalPrice = 0;
         var serviceDetails = new List<PackageServiceDetail>();
 
-        foreach(var s in request.Services)
-        {
-            var srv = await _db.Services.FindAsync(s.ServiceId);
-            if (srv != null)
-            {
-                if (!s.IsFree)
-                {
-                    totalPrice += srv.BasePrice;
-                }
-                serviceDetails.Add(new PackageServiceDetail 
-                {
-                    Name = srv.ServiceName,
-                    Phase = s.Phase,
-                    IsFree = s.IsFree
-                });
-            }
-        }
-
         var package = new Travora.Domain.Entities.Package
         {
             PackageName = request.PackageName,
-            TotalBasePrice = totalPrice,
+            TotalBasePrice = 0,
             Discount = request.Discount ?? 0,
             IsActive = request.IsActive,
             IncludedCompanionsCount = request.IncludedCompanions,
@@ -271,13 +253,33 @@ public class AdminPricingService : IAdminPricingService
 
         foreach (var s in request.Services)
         {
-            package.PackageServices.Add(new Travora.Domain.Entities.PackageService
+            var srv = await _db.Services.FindAsync(s.ServiceId);
+            if (srv != null)
             {
-                ServiceId = s.ServiceId,
-                ExecutionPhase = MapExecutionPhase(s.Phase),
-                IncludedInBase = s.IsFree
-            });
+                if (!s.IsFree)
+                {
+                    totalPrice += srv.BasePrice;
+                }
+
+                var resolvedPhase = GetExecutionPhaseForServiceType(srv.ServiceType);
+
+                serviceDetails.Add(new PackageServiceDetail 
+                {
+                    Name = srv.ServiceName,
+                    Phase = resolvedPhase.ToString().ToLower(),
+                    IsFree = s.IsFree
+                });
+
+                package.PackageServices.Add(new Travora.Domain.Entities.PackageService
+                {
+                    ServiceId = s.ServiceId,
+                    ExecutionPhase = resolvedPhase,
+                    IncludedInBase = s.IsFree
+                });
+            }
         }
+
+        package.TotalBasePrice = totalPrice;
 
         _db.Packages.Add(package);
         await _db.SaveChangesAsync();
@@ -369,12 +371,13 @@ public class AdminPricingService : IAdminPricingService
                     newTotalPrice += dbService.BasePrice;
                 }
 
+                var resolvedPhase = GetExecutionPhaseForServiceType(dbService.ServiceType);
                 var existingPs = currentPackageServices.FirstOrDefault(ps => ps.ServiceId == requestedService.ServiceId);
 
                 if (existingPs != null)
                 {
                     // In-place update
-                    existingPs.ExecutionPhase = MapExecutionPhase(requestedService.Phase);
+                    existingPs.ExecutionPhase = resolvedPhase;
                     existingPs.IncludedInBase = requestedService.IsFree;
                     existingPs.UpdatedAt = DateTime.UtcNow;
                 }
@@ -384,7 +387,7 @@ public class AdminPricingService : IAdminPricingService
                     package.PackageServices.Add(new Travora.Domain.Entities.PackageService
                     {
                         ServiceId = requestedService.ServiceId,
-                        ExecutionPhase = MapExecutionPhase(requestedService.Phase),
+                        ExecutionPhase = resolvedPhase,
                         IncludedInBase = requestedService.IsFree,
                         CreatedAt = DateTime.UtcNow
                     });
@@ -421,6 +424,19 @@ public class AdminPricingService : IAdminPricingService
     }
 
     // --- Helpers ---
+    private Travora.Domain.Enums.ExecutionPhase GetExecutionPhaseForServiceType(Travora.Domain.Enums.ServiceType serviceType)
+    {
+        return serviceType switch
+        {
+            Travora.Domain.Enums.ServiceType.Pickup => Travora.Domain.Enums.ExecutionPhase.Pickup,
+            Travora.Domain.Enums.ServiceType.DepartureBaggageHandling => Travora.Domain.Enums.ExecutionPhase.DepartureCheckin,
+            Travora.Domain.Enums.ServiceType.ArrivalBaggageHandling => Travora.Domain.Enums.ExecutionPhase.ArrivalCheckin,
+            Travora.Domain.Enums.ServiceType.Delivery => Travora.Domain.Enums.ExecutionPhase.Delivery,
+            Travora.Domain.Enums.ServiceType.Tracking => Travora.Domain.Enums.ExecutionPhase.Tracking,
+            _ => throw new ArgumentException($"No execution phase mapping defined for ServiceType {serviceType}")
+        };
+    }
+
     private Travora.Domain.Enums.ServiceType MapServiceType(string type) => type.ToLower() switch
     {
         "pickup" => Travora.Domain.Enums.ServiceType.Pickup,
