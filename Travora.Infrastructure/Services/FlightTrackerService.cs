@@ -25,8 +25,8 @@ public class FlightTrackerService : IFlightTrackerService
     private const string LiveFlightsTimestampKey = "flights:live:timestamp";
     private const string TimetableCachePrefix = "timetable:";
 
-    // ADSB data updates every ~2s — cache for 3 minutes (180s) to reduce API consumption
-    private static readonly TimeSpan AdsbCacheTtl = TimeSpan.FromMinutes(3);
+    // ADSB data updates every ~2s — cache for 8 seconds to reduce API consumption
+    private static readonly TimeSpan AdsbCacheTtl = TimeSpan.FromSeconds(8);
     // Aviation Edge updates every 5-8 min — cache aligned to 5 min (used as fallback)
     private static readonly TimeSpan GlobalCacheTtl = TimeSpan.FromMinutes(5);
     // Timetables are semi-static — 15 min is safe
@@ -75,11 +75,11 @@ public class FlightTrackerService : IFlightTrackerService
             var latSpanNm = (double)(maxLat - minLat) * 60;
             var lonSpanNm = (double)(maxLng - minLng) * 60 * Math.Cos((double)cLat * Math.PI / 180);
             var diagonalNm = Math.Sqrt(latSpanNm * latSpanNm + lonSpanNm * lonSpanNm);
-            distance = (int)Math.Clamp(diagonalNm / 2, 5, 750);
+            distance = (int)Math.Clamp(diagonalNm / 2, 5, 1600);
         }
         else
         {
-            distance = Math.Clamp(distance.Value, 5, 750);
+            distance = Math.Clamp(distance.Value, 5, 1600);
         }
 
         // ----- Step 2: Try ADSB cache first (Raw aircraft list) -----

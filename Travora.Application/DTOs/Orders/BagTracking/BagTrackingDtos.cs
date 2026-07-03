@@ -38,6 +38,8 @@ public class ScanBagResponse
 public class ScannedBagMinimalDto
 {
     public string TagNumber { get; set; } = string.Empty;
+    public decimal WeightKg { get; set; }
+    public string? Destination { get; set; }
 }
 
 public class ScannedBagDto

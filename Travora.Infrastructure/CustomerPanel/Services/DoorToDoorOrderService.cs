@@ -835,7 +835,7 @@ public class DoorToDoorOrderService : IDoorToDoorOrderService
         decimal customsValue = draft.CustomsItems.Sum(x => x.TotalValue);
         decimal customsFee = draft.TotalCustomsFee;
 
-        decimal subtotal = basePrice + extraBagFee + extraCompFee + customsFee + customsValue;
+        decimal subtotal = basePrice + extraBagFee + extraCompFee + customsFee;
         decimal taxAmount = subtotal * 0m;
         decimal totalAmount = subtotal - discountAmount + taxAmount;
 

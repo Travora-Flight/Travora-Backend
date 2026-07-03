@@ -252,6 +252,7 @@ public class EmployeeBaggageService : IEmployeeBaggageService
         // Verify baggage belongs to employee's order
         var baggage = await _db.Baggages
             .Include(b => b.Order).ThenInclude(o => o.OrderServices)
+            .Include(b => b.Order).ThenInclude(o => o.Package)
             .Include(b => b.BaggagePhotos)
             .FirstOrDefaultAsync(b =>
                 b.BaggageId == baggageId &&
@@ -269,12 +270,18 @@ public class EmployeeBaggageService : IEmployeeBaggageService
             .FirstOrDefault()
             ?? throw new InvalidOperationException("No active task found for this employee");
 
-        // Requires active lock before uploading photos
-        var hasActiveLock = await _db.SecurityLocks
-            .AnyAsync(l => l.BaggageId == baggageId && l.IsActive && !l.IsDeleted);
-        
-        if (!hasActiveLock)
-            throw new InvalidOperationException("Must register the lock code first");
+        // Requires active lock before uploading photos (only for packages that have a Pickup phase)
+        var requiresLock = baggage.Order.Package?.PackageCode == Travora.Domain.Constants.PackageCodes.DoorToDoor || 
+                           baggage.Order.Package?.PackageCode == Travora.Domain.Constants.PackageCodes.CarServiceToAirport;
+
+        if (requiresLock)
+        {
+            var hasActiveLock = await _db.SecurityLocks
+                .AnyAsync(l => l.BaggageId == baggageId && l.IsActive && !l.IsDeleted);
+            
+            if (!hasActiveLock)
+                throw new InvalidOperationException("Must register the lock code first");
+        }
 
         // Validate photo count per THIS order service (each employee has their own limit of 6)
         var existingCount = await _db.BaggagePhotos

@@ -372,7 +372,9 @@ public class BagTrackingOrderService : IBagTrackingOrderService
             Found = true,
             Bag = new ScannedBagMinimalDto
             {
-                TagNumber = scannedBag.TagNumber
+                TagNumber = scannedBag.TagNumber,
+                WeightKg = scannedBag.WeightKg,
+                Destination = scannedBag.Destination
             },
             TotalScanned = draft.ScannedBags.Count,
             TotalRequired = draft.TotalBaggageCount
